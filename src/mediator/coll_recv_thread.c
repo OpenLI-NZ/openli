@@ -331,6 +331,7 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
             etsili_clear_preencoded_fields(known->preencoded_etsi);
             free(known->preencoded_etsi);
         }
+        clear_digest_key_map(known);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -677,6 +678,7 @@ static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
     found->provisioner_withdrawn = 0;
     found->preencoded_etsi = calloc(OPENLI_PREENCODE_LAST,
             sizeof(wandder_encode_job_t));
+    found->digest_cin_keys = NULL;
 
     snprintf(qname, 1024, "%s-iri", found->liid);
     found->queuenames[0] = strdup(qname);
@@ -1301,8 +1303,13 @@ static void cleanup_collector_thread(coll_recv_t *col) {
             etsili_clear_preencoded_fields(known->preencoded_etsi);
             free(known->preencoded_etsi);
         }
+        clear_digest_key_map(known);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
+    }
+
+    if (col->zmq_requests) {
+        zmq_close(col->zmq_requests);
     }
 
     if (col->ipaddr && col->forwarder_id >= 0) {
@@ -1359,6 +1366,7 @@ static void *start_collector_thread(void *params) {
     int epoll_fd = -1, timerexpired, nfds;
     med_epoll_ev_t *timerev, *queuecheck = NULL;
     struct epoll_event evs[64];
+    int zero = 0;
 
     if (col->ipaddr == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: started collector thread for NULL collector IP??");
@@ -1375,6 +1383,26 @@ static void *start_collector_thread(void *params) {
         col->internalpass = strdup(col->parentconfig->rmqconf->internalpass);
     }
     unlock_med_collector_config(col->parentconfig);
+
+    /* create ZMQ requests queue for publishing requests */
+    col->zmq_requests = zmq_socket(col->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_connect(col->zmq_requests, "inproc://openlimed_collrecv_requests")
+            < 0) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: collector thread for %s failed to connect to the ZMQ for pushing requests back to the main thread: %s",
+                col->ipaddr, strerror(errno));
+        zmq_close(col->zmq_requests);
+        col->zmq_requests = NULL;
+    }
+
+    if (col->zmq_requests && zmq_setsockopt(col->zmq_requests, ZMQ_LINGER,
+            &zero, sizeof(zero)) != 0) {
+        logger(LOG_INFO,
+                "OpenLI Mediator: collector thread for %s failed to configure the ZMQ for pushing requests back to the main thread: %s",
+                col->ipaddr, strerror(errno));
+        zmq_close(col->zmq_requests);
+        col->zmq_requests = NULL;
+    }
 
     epoll_fd = epoll_create1(0);
 
@@ -1664,8 +1692,10 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
 
     libtrace_message_queue_init(&(newcol->in_main),
             sizeof(col_thread_msg_t));
-    libtrace_message_queue_init(&(newcol->out_main),
-            sizeof(col_thread_msg_t));
+
+    newcol->zmq_ctxt = medcol->zmq_ctxt;
+    newcol->zmq_requests = NULL;
+
     pthread_create(&(newcol->tid), NULL, start_collector_thread, newcol);
 }
 
@@ -1743,7 +1773,6 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol) {
 
             pthread_join(col->tid, NULL);
             libtrace_message_queue_destroy(&(col->in_main));
-            libtrace_message_queue_destroy(&(col->out_main));
             tofree = col;
             col = col->next;
             free(tofree);
@@ -1834,7 +1863,10 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
 
             pthread_join(tofree->tid, NULL);
             libtrace_message_queue_destroy(&(tofree->in_main));
-            libtrace_message_queue_destroy(&(tofree->out_main));
+
+            if (tofree->zmq_requests) {
+                zmq_close(tofree->zmq_requests);
+            }
 
             if (tofree == col && newhead != oldhead) {
                 /* we are removing the head, so we need

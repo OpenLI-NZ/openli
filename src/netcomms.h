@@ -92,6 +92,7 @@ typedef struct openli_mediator {
 struct ics_sign_request_message {
     char *ics_key;
     char *requestedby;
+    uint32_t requestedby_fwd;
     int64_t seqno;
     unsigned char *digest;
     unsigned int digest_len;
@@ -100,6 +101,7 @@ struct ics_sign_request_message {
 struct ics_sign_response_message {
     char *ics_key;
     char *requestedby;
+    uint32_t requestedby_fwd;
     int64_t seqno;
     unsigned char *signature;
     uint32_t sign_len;
@@ -236,6 +238,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_HANDOVER_RETRY,
     OPENLI_PROTO_FIELD_WINDOW_SIZE,
     OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
+    OPENLI_PROTO_FIELD_THREADID,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct

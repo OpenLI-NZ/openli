@@ -31,6 +31,7 @@
 #include <libwandder.h>
 #include <libwandder_etsili.h>
 #include <uthash.h>
+#include <zmq.h>
 #include "netcomms.h"
 #include "export_buffer.h"
 #include "util.h"
@@ -114,6 +115,13 @@ typedef struct med_state {
 
     /** The RabbitMQ configuration for the mediator */
     openli_RMQ_config_t RMQ_conf;
+
+    /** ZeroMQ context for creating ZMQ sockets */
+    void *zmq_ctxt;
+
+    /** ZeroMQ socket for receiving requests from collector threads */
+    void *zmq_request_collrecv;
+
 
 } mediator_state_t;
 

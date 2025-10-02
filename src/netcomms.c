@@ -1291,7 +1291,8 @@ int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
 
 #define ICS_REQUEST_BODY_LEN(req) \
     (strlen(req->ics_key) + sizeof(req->seqno) + sizeof(uint32_t) + \
-     strlen(req->requestedby) + (req->digest_len + 1) + (5 * 4))
+     strlen(req->requestedby) + sizeof(req->requestedby_fwd) + \
+     (req->digest_len + 1) + (6 * 4))
 
 int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
         struct ics_sign_request_message *req) {
@@ -1338,6 +1339,12 @@ int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
         return -1;
     }
 
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_THREADID,
+            (uint8_t *)&(req->requestedby_fwd),
+            sizeof(req->requestedby_fwd))) == -1) {
+        return -1;
+    }
+
 
 
     return (int)totallen;
@@ -1346,7 +1353,8 @@ int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
 
 #define ICS_RESPONSE_BODY_LEN(resp) \
     (strlen(resp->ics_key) + sizeof(resp->seqno) + sizeof(uint32_t) + \
-     (resp->sign_len ) + strlen(resp->requestedby) + (5 * 4))
+     (resp->sign_len ) + strlen(resp->requestedby) + \
+     sizeof(resp->requestedby_fwd) + (6 * 4))
 
 int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
         struct ics_sign_response_message *resp) {
@@ -1384,6 +1392,12 @@ int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LENGTH_BYTES,
             (uint8_t *)&(resp->sign_len), sizeof(resp->sign_len))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_THREADID,
+            (uint8_t *)&(resp->requestedby_fwd),
+            sizeof(resp->requestedby_fwd))) == -1) {
         return -1;
     }
 
@@ -2112,6 +2126,7 @@ int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
     req->seqno = 0;
     req->digest = calloc(EVP_MAX_MD_SIZE + 1, sizeof(unsigned char));
     req->requestedby = NULL;
+    req->requestedby_fwd = 0xffffffff;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2128,6 +2143,8 @@ int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(req->requestedby, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LENGTH_BYTES) {
             req->digest_len = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_THREADID) {
+            req->requestedby_fwd = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_SEQNO) {
             req->seqno = *((int64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_DIGEST) {
@@ -2162,6 +2179,7 @@ int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
     resp->seqno = 0;
     resp->signature = NULL;
     resp->requestedby = NULL;
+    resp->requestedby_fwd = 0xffffffff;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2178,6 +2196,8 @@ int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(resp->requestedby, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LENGTH_BYTES) {
             resp->sign_len = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_THREADID) {
+            resp->requestedby_fwd = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_SEQNO) {
             resp->seqno = *((int64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_DIGEST) {

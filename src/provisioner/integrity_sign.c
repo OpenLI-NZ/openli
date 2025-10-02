@@ -92,6 +92,7 @@ int prov_handle_ics_signing_request(provision_state_t *state,
     resp.ics_key = req.ics_key;
     resp.sign_len = (uint32_t)signlen;
     resp.requestedby = req.requestedby;
+    resp.requestedby_fwd = req.requestedby_fwd;
     resp.seqno = req.seqno;
 
     if (push_ics_signing_response_onto_net_buffer(cs->outgoing, &resp) < 0) {

@@ -191,6 +191,13 @@ static void destroy_med_state(mediator_state_t *state) {
 		free(state->col_clean_timerev);
 	}
 
+    if (state->zmq_request_collrecv) {
+        zmq_close(state->zmq_request_collrecv);
+    }
+    if (state->zmq_ctxt) {
+        zmq_ctx_destroy(state->zmq_ctxt);
+    }
+
 }
 
 /** Reads the configuration for a mediator instance and sets the relevant
@@ -281,11 +288,32 @@ static int init_mediator_config(mediator_state_t *state,
  *  @return -1 if an error occurs, 0 otherwise
  */
 static int init_med_state(mediator_state_t *state, char *configfile) {
+    int zero = 0;
+
     state->listenerev = NULL;
     state->timerev = NULL;
     state->col_clean_timerev = NULL;
     state->epoll_fd = -1;
     state->saved_agencies = NULL;
+
+    state->zmq_ctxt = zmq_ctx_new();
+    state->zmq_request_collrecv = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
+    if (zmq_bind(state->zmq_request_collrecv,
+            "inproc://openlimed_collrecv_requests") < 0) {
+        logger(LOG_INFO,
+                "OpenLI mediator: unable to bind to ZMQ socket for receiving requests from the collrecv threads: %s", strerror(errno));
+        zmq_close(state->zmq_request_collrecv);
+        state->zmq_request_collrecv = NULL;
+    }
+
+    if (state->zmq_request_collrecv &&
+            zmq_setsockopt(state->zmq_request_collrecv, ZMQ_LINGER, &zero,
+                    sizeof(zero)) != 0) {
+        logger(LOG_INFO,
+                "OpenLI mediator: unable to configure ZMQ socket for receiving requests from the collrecv threads: %s", strerror(errno));
+        zmq_close(state->zmq_request_collrecv);
+        state->zmq_request_collrecv = NULL;
+    }
 
     init_provisioner_instance(&(state->provisioner), &(state->sslconf.ctx));
     if (init_mediator_config(state, configfile) < 0) {
@@ -306,6 +334,7 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
 
     /* Initialise state and config for the collector receive threads */
     state->collector_threads.threads = NULL;
+    state->collector_threads.zmq_ctxt = state->zmq_ctxt;
     init_med_collector_config(&(state->collector_threads.config),
             state->etsitls,
             &(state->sslconf), &(state->RMQ_conf), state->mediatorid,
@@ -932,11 +961,17 @@ static int receive_ics_signature(mediator_state_t *state, uint8_t *msgbody,
         goto tidyup_err;
     }
 
-    memset(&msg, 0, sizeof(msg));
-    msg.type = MED_COLL_INTEGRITY_SIGN_RESULT;
-    msg.arg = (uint64_t)resp;
+    while (col != NULL) {
+        if (col->forwarder_id >= 0 &&
+                (uint32_t)col->forwarder_id == resp->requestedby_fwd) {
+            memset(&msg, 0, sizeof(msg));
+            msg.type = MED_COLL_INTEGRITY_SIGN_RESULT;
+            msg.arg = (uint64_t)resp;
 
-    libtrace_message_queue_put(&(col->in_main), &msg);
+            libtrace_message_queue_put(&(col->in_main), &msg);
+        }
+        col = col->next;
+    }
 
     return 0;
 
@@ -1593,6 +1628,48 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
 }
 
+static void process_collector_thread_requests(mediator_state_t *state) {
+
+    int reqs_processed = 0;
+    unsigned char buf[1024];
+    col_thread_msg_t *colmsg;
+    int r;
+
+    while (reqs_processed < 10 && state->zmq_request_collrecv) {
+        if ((r = zmq_recv(state->zmq_request_collrecv, buf, 1024,
+                        ZMQ_DONTWAIT)) < 0) {
+            if (errno == EAGAIN || errno == EINTR) {
+                /* no requests available */
+                break;
+            }
+            logger(LOG_INFO, "OpenLI mediator: error while reading a request from one of the collector threads: %s", strerror(errno));
+            zmq_close(state->zmq_request_collrecv);
+            state->zmq_request_collrecv = NULL;
+            continue;
+        }
+
+        if (r < (int)(sizeof(col_thread_msg_t))) {
+            logger(LOG_INFO, "OpenLI mediator: unexpected message size received from one of the collector threads: %d\n", r);
+            continue;
+        }
+
+        colmsg = (col_thread_msg_t *)(buf);
+
+        if (colmsg->type == MED_COLL_INTEGRITY_SIGN_REQUEST) {
+            struct ics_sign_request_message *signreq;
+            signreq = (struct ics_sign_request_message *)(colmsg->arg);
+            if (send_ics_signing_request_to_provisioner(
+                        &state->provisioner, signreq) < 0) {
+                logger(LOG_INFO, "OpenLI mediator: failed to pass on integrity check signing request to the provisioner");
+            }
+
+        } else {
+            logger(LOG_INFO, "OpenLI mediator: invalid message type received by main thread from collector thread (%u)", colmsg->type);
+        }
+        reqs_processed ++;
+    }
+}
+
 /** The main loop of the mediator process.
  *
  *  Continually checks for registered epoll events, e.g. timers expiring,
@@ -1611,7 +1688,6 @@ static void run(mediator_state_t *state) {
 	struct epoll_event evs[64];
     int provfail = 0;
     med_epoll_ev_t *signalev;
-    coll_recv_t *col_t, *tmp;
 
     /* Register the epoll event for received signals */
     signalev = create_mediator_fdevent(state->epoll_fd, NULL,
@@ -1638,9 +1714,6 @@ static void run(mediator_state_t *state) {
         goto runfailure;
     }
 
-    /* TODO this timer should be longer, but for testing I've set to fire
-     * more frequently
-     */
     if (start_mediator_timer(state->col_clean_timerev, 30) < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: failed to start collector cleanup timer");
@@ -1689,23 +1762,7 @@ static void run(mediator_state_t *state) {
         /* Check for integrity check signing requests from the collector
          * threads.
          */
-        HASH_ITER(hh, state->collector_threads.threads, col_t, tmp) {
-            col_thread_msg_t colmsg;
-            while (libtrace_message_queue_try_get(&(col_t->out_main),
-                    (void *)&colmsg) != LIBTRACE_MQ_FAILED) {
-                if (colmsg.type == MED_COLL_INTEGRITY_SIGN_REQUEST) {
-                    struct ics_sign_request_message *signreq;
-                    signreq = (struct ics_sign_request_message *)(colmsg.arg);
-                    if (send_ics_signing_request_to_provisioner(
-                            &state->provisioner, signreq) < 0) {
-                        logger(LOG_INFO, "OpenLI mediator: failed to pass on integrity check signing request to the provisioner");
-                    }
-
-                } else {
-                    logger(LOG_INFO, "OpenLI mediator: invalid message type received by main thread from collector thread (%u)", colmsg.type);
-                }
-            }
-        }
+        process_collector_thread_requests(state);
 
         /* This timer will force us to stop checking epoll and go back
          * to the start of this loop (i.e. checking if we should halt the

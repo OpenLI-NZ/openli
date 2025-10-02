@@ -52,6 +52,7 @@ AC_CHECK_LIB([uuid], [uuid_parse],,libuuid_found=0)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lzmq"
 fi
 
 if test "x$libssl11_found" = "x1"; then

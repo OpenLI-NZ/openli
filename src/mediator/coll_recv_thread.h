@@ -29,6 +29,7 @@
 
 #include <libtrace/message_queue.h>
 #include <libwandder_etsili.h>
+#include <zmq.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
 #include "netcomms.h"
@@ -123,6 +124,13 @@ typedef struct col_thread_msg {
 
 typedef struct agency_digest_config agency_digest_config_t;
 
+typedef struct digest_map_key {
+    uint64_t key_cin;
+    const char *keystring;
+
+    UT_hash_handle hh;
+} digest_map_key_t;
+
 /** Structure for keeping track of the LIIDs that a collector receive thread
  *  has seen
  */
@@ -157,6 +165,8 @@ typedef struct col_known_liid {
     uint8_t provisioner_withdrawn;
 
     wandder_encode_job_t *preencoded_etsi;
+
+    digest_map_key_t *digest_cin_keys;
 
     UT_hash_handle hh;
 } col_known_liid_t;
@@ -389,10 +399,13 @@ struct single_coll_receiver {
      */
     libtrace_message_queue_t in_main;
 
+    /** Global ZMQ context for the entire mediator process */
+    void *zmq_ctxt;
+
     /** The message queue on which this thread will send requests (e.g.
      *  integrity check signing requests) back to the main mediator thread.
      */
-    libtrace_message_queue_t out_main;
+    void *zmq_requests;
 
     /** Flag that indicates whether RMQ has told us that it is "connection
      *  blocked, i.e. no longer able to accept published messages
@@ -449,6 +462,8 @@ struct single_coll_receiver {
 typedef struct mediator_collectors {
     /** A hashmap containing the set of collector receive threads */
     coll_recv_t *threads;
+
+    void *zmq_ctxt;
 
     /** Shared configuration for all collector receive threads */
     mediator_collector_config_t config;
@@ -613,6 +628,7 @@ int send_integrity_check_signing_request(coll_recv_t *col,
 void handle_integrity_check_signature_response(coll_recv_t *col,
         struct ics_sign_response_message *resp);
 void destroy_integrity_sign_job(ics_sign_request_t *job);
+void clear_digest_key_map(col_known_liid_t *known);
 
 /* defined in mediator_encryption.c */
 payload_encryption_method_t check_encryption_requirements(

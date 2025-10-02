@@ -34,6 +34,18 @@
 #include "mediator_rmq.h"
 #include "etsiencoding.h"
 
+void clear_digest_key_map(col_known_liid_t *known) {
+    digest_map_key_t *k, *tmp;
+
+    HASH_ITER(hh, known->digest_cin_keys, k, tmp) {
+        if (k->keystring) {
+            free((void *)k->keystring);
+        }
+        HASH_DELETE(hh, known->digest_cin_keys, k);
+        free(k);
+    }
+}
+
 int update_agency_digest_config_map(agency_digest_config_t **map,
         liagency_t *lea) {
 
@@ -288,23 +300,9 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     int64_t seqno;
     uint8_t action = INTEGRITY_CHECK_NO_ACTION;
     uint32_t cin;
-    char key[64];
-    char *ptr = key;
+    digest_map_key_t *dmk;
+    uint64_t dmk_kval = 0;
 
-    /** map key is LIID, CIN and msgtype, separated by space characeters.
-     *  For performance reasons, CIN and msgtype are encoded in binary format
-     *  so we don't have to call snprintf on every intercept record.
-     */
-    memset(ptr, 0, 64);
-
-    memcpy(key, known->liid, strlen(known->liid));
-    ptr += strlen(known->liid);
-    *ptr = ' ';
-    ptr ++;
-    *ptr = (uint8_t)msgtype;
-    ptr ++;
-    *ptr = ' ';
-    ptr ++;
 
     wandder_attach_etsili_buffer(decoder, msgbody, msglen, false);
     cin = wandder_etsili_get_cin(decoder);
@@ -313,17 +311,33 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         return action;
     }
 
-    memcpy(ptr, &cin, sizeof(uint32_t));
 
     if (msgtype != OPENLI_PROTO_ETSI_IRI && msgtype != OPENLI_PROTO_ETSI_CC) {
         *chain = NULL;
         return action;
     }
 
-    HASH_FIND(hh, *map, key, strlen(key), found);
+    /* save the key string in a local map so we don't need to call
+     * snprintf() for every single intercept record
+     */
+    dmk_kval = cin | (((uint64_t)msgtype) << 32);
+    HASH_FIND(hh, known->digest_cin_keys, &dmk_kval, sizeof(dmk_kval), dmk);
+    if (!dmk) {
+        char key[128];
+        dmk = calloc(1, sizeof(digest_map_key_t));
+        dmk->key_cin = dmk_kval;
+        snprintf(key, 128, "%s %u %u", known->liid, msgtype, cin);
+        dmk->keystring = strdup(key);
+
+        HASH_ADD_KEYPTR(hh, known->digest_cin_keys, &(dmk->key_cin),
+                sizeof(dmk->key_cin), dmk);
+    }
+
+    /** map key is LIID, CIN and msgtype, separated by space characters. */
+    HASH_FIND(hh, *map, dmk->keystring, strlen(dmk->keystring), found);
     if (!found) {
         found = calloc(1, sizeof(integrity_check_state_t));
-        found->key = strdup(key);
+        found->key = strdup(dmk->keystring);
         found->agency = NULL;
         found->cin = cin;
         found->msgtype = msgtype;
@@ -544,6 +558,7 @@ static void push_signing_request(coll_recv_t *col, integrity_check_state_t *ics,
     body->seqno = job->seqno;
     body->digest = calloc(job->digest_len + 1, sizeof(unsigned char));
     body->requestedby = strdup(col->ipaddr);
+    body->requestedby_fwd = col->forwarder_id;
     memcpy(body->digest, job->digest, job->digest_len);
     body->digest_len = job->digest_len;
 
@@ -551,7 +566,12 @@ static void push_signing_request(coll_recv_t *col, integrity_check_state_t *ics,
     msg.type = MED_COLL_INTEGRITY_SIGN_REQUEST;
     msg.arg = (uint64_t)(body);
 
-    libtrace_message_queue_put(&(col->out_main), &msg);
+    if (zmq_send(col->zmq_requests, &msg, sizeof(msg), 0) < 0) {
+        logger(LOG_INFO, "OpenLI mediator: error pushing signing request %ld onto request queue for ICS chain %s:%u:%u: %s",
+                job->seqno, job->chain->liid, job->chain->cin,
+                job->chain->msgtype, strerror(errno));
+        logger(LOG_INFO, "OpenLI mediator: will try again soon");
+    }
 
     job->attempts ++;
     start_mediator_timer(job->reply_timer, 30);
@@ -602,14 +622,14 @@ void handle_integrity_check_signature_response(coll_recv_t *col,
     HASH_FIND(hh, col->integrity_state, resp->ics_key, strlen(resp->ics_key),
             found);
     if (!found) {
-        logger(LOG_INFO, "OpenLI mediator: failed to find integrity state entry for received response: %s", strtok(resp->ics_key, " "));
+        logger(LOG_INFO, "OpenLI mediator: failed to find integrity state entry for received response: %s", resp->ics_key);
         goto tidyup;
     }
 
     HASH_FIND(hh, found->sign_jobs, &(resp->seqno), sizeof(resp->seqno), job);
     if (!job) {
         logger(LOG_INFO, "OpenLI mediator: received integrity check signature for seqno %ld, but could not find it in the pending jobs list for %s",
-                resp->seqno, strtok(resp->ics_key, " "));
+                resp->seqno, resp->ics_key);
         goto tidyup;
     }
 
@@ -649,6 +669,10 @@ int send_integrity_check_signing_request(coll_recv_t *col,
     ics_sign_request_t *job = NULL;
 
     if (ics->signing_seqno_next_index == 0) {
+        return 0;
+    }
+
+    if (col->forwarder_id < 0) {
         return 0;
     }
 
