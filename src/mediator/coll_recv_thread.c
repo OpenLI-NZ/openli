@@ -36,6 +36,10 @@
 #include "med_epoll.h"
 #include "etsili_core.h"
 
+#define COLL_OUTSTANDING_PUB_CONFIRMS(col) \
+    (col->saved_iri_msg_cnt > 0 || col->saved_cc_msg_cnt > 0 || \
+            col->saved_raw_msg_cnt > 0)
+
 /** This file implements a "collector receive" thread for the OpenLI mediator.
  *  Each OpenLI collector that reports to a mediator will be handled using
  *  a separate instance of one of these threads.
@@ -1116,6 +1120,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
 
 processacks:
     if (col->amqp_producer_state &&
+            COLL_OUTSTANDING_PUB_CONFIRMS(col) && 
             consume_mediator_RMQ_producer_acks(col) == 0) {
         /* RMQ failed to acknowledge everything we published, have to
          * reconnect and re-publish
@@ -1619,6 +1624,13 @@ static void *start_collector_thread(void *params) {
                     /* We're in an error state -- disable this thread for now */
                     move_thread_into_error_state(col, 1);
                     break;
+                }
+                if (col->amqp_producer_state == NULL) {
+                    /* We've dropped our internal RMQ session -- no point
+                     * in continuing processing data / responding to timer
+                     * events until we've had a change to reconnect
+                     */
+                     break;
                 }
             }
         }

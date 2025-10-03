@@ -146,70 +146,6 @@ static int register_RMQ_consumer(amqp_connection_state_t state,
     return 0;
 }
 
-static int update_mediator_rmq_connection_block_status(
-        amqp_connection_state_t state, uint8_t *is_blocked) {
-
-    /* copy of code from export_buffer.c, but with different log
-     * messages when things go awry
-     */
-    amqp_frame_t frame;
-    struct timeval tv;
-    int x, ret;
-
-    tv.tv_sec = tv.tv_usec = 0;
-    x = amqp_simple_wait_frame_noblock(state, &frame, &tv);
-
-    if (x != AMQP_STATUS_OK && x != AMQP_STATUS_TIMEOUT) {
-        logger(LOG_INFO,
-                "OpenLI mediator: unable to check status of an internal RMQ publishing socket");
-        return -1;
-    }
-
-    if (*is_blocked) {
-        ret = 0;
-    } else {
-        ret = 1;
-    }
-
-    if (x == AMQP_STATUS_TIMEOUT) {
-        return ret;
-    }
-
-    if (AMQP_FRAME_METHOD == frame.frame_type) {
-        switch(frame.payload.method.id) {
-            case AMQP_CONNECTION_BLOCKED_METHOD:
-                if ((*is_blocked) == 0) {
-                    logger(LOG_INFO,
-                            "OpenLI mediator: RMQ is unable to handle any more published ETSI records!");
-                    logger(LOG_INFO,
-                            "OpenLI mediator: this is a SERIOUS problem -- received ETSI records are going to be dropped!");
-                }
-                *is_blocked = 1;
-                ret = 0;
-                break;
-            case AMQP_CONNECTION_UNBLOCKED_METHOD:
-                if ((*is_blocked) == 1) {
-                    logger(LOG_INFO,
-                            "OpenLI mediator: RMQ has become unblocked and will resume publishing ETSI records.");
-                    ret = 0;
-                } else {
-                    ret = 1;
-                }
-                *is_blocked = 0;
-                break;
-            case AMQP_CONNECTION_CLOSE_METHOD:
-                logger(LOG_INFO,
-                        "OpenLI mediator: 'close' exception occurred on an internal RMQ connection -- must restart connection");
-                return -1;
-            case AMQP_CHANNEL_CLOSE_METHOD:
-                logger(LOG_INFO,
-                        "OpenLI mediator: channel exception occurred on an internal RMQ connection -- must reset connection");
-                return -1;
-        }
-    }
-    return ret;
-}
-
 /** Disables consumption from a RabbitMQ queue by an existing connection
  *
  *  @param state            The RMQ connection to disassociate the queue from
@@ -253,11 +189,6 @@ int declare_mediator_liid_RMQ_queue(amqp_connection_state_t state,
       return 0;
     }
 
-    /*
-    if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
-        return -1;
-    }
-    */
     if (*is_blocked) {
         return 0;
     }
@@ -285,11 +216,7 @@ int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
         char *liid, uint8_t *is_blocked) {
 
     char queuename[1024];
-    /*
-    if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
-        return -1;
-    }
-    */
+
     if (*is_blocked == 0) {
         snprintf(queuename, 1024, "%s-rawip", liid);
         return declare_RMQ_queue(state, queuename, 4);
@@ -330,10 +257,6 @@ static int produce_mediator_RMQ(amqp_connection_state_t state,
     if (expiry != 0) {
         snprintf(expirystr, 1024, "%u", expiry * 1000);
         props.expiration = amqp_cstring_bytes(expirystr);
-    }
-
-    if (update_mediator_rmq_connection_block_status(state, is_blocked) < 0) {
-        return -1;
     }
 
     if ((*is_blocked) == 0) {
@@ -992,7 +915,7 @@ static int consume_other_frame(amqp_connection_state_t state) {
 int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
 
     size_t i;
-    int r, elapsed;
+    int r;
     amqp_frame_t frame;
     saved_received_data_t *sav;
     struct timeval tv;
@@ -1027,7 +950,6 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
         }
     }
 
-    elapsed = 0;
     while (cc_await > 0 || iri_await > 0 || raw_await > 0) {
         /* keep consuming until we get an ACK or a NACK -- everything else
          * can just be ignored (note that this will block until we get what
@@ -1038,13 +960,25 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
                 &tv);
 
         if (r == AMQP_STATUS_TIMEOUT) {
-            elapsed ++;
-            if (elapsed >= 3) {
-                /* we've gone 3 seconds with no acknowledgement, we'll
-                 * have to retry the publish
-                 */
-                return 0;
+            /* No acknowledgements this second, we need to move on instead so
+             * that we're not blocking and hope that something turns up
+             * next time we check for acks.
+             */
+            if (cc_await == 0) {
+                col->saved_cc_msg_cnt = 0;
             }
+            if (iri_await == 0) {
+                col->saved_iri_msg_cnt = 0;
+            }
+            if (raw_await == 0) {
+                col->saved_raw_msg_cnt = 0;
+            }
+            if (col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
+                    col->saved_iri_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
+                    col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA) {
+                col->queue_full = 0;
+            }
+            return 1;
         } else if (r != AMQP_STATUS_OK) {
             /* broker failure, must retry */
             return 0;
@@ -1055,7 +989,12 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
 
             switch(frame.payload.method.id) {
                 case AMQP_CONNECTION_CLOSE_METHOD:
+                    logger(LOG_INFO,
+                            "OpenLI mediator: 'close' exception occurred on an internal RMQ connection -- must restart connection");
+                    return 0;
                 case AMQP_CHANNEL_CLOSE_METHOD:
+                    logger(LOG_INFO,
+                            "OpenLI mediator: channel exception occurred on an internal RMQ connection -- must reset connection");
                     return 0;
                 case AMQP_BASIC_ACK_METHOD:
                     ack = (amqp_basic_ack_t *)frame.payload.method.decoded;
@@ -1078,7 +1017,6 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
                     } else {
                         break;
                     }
-
                     while (*start < MAX_SAVED_RECEIVED_DATA && *await > 0) {
                         saved_received_data_t *next = &(sav[*start]);
 
@@ -1103,6 +1041,22 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
 
                 case AMQP_BASIC_NACK_METHOD:
                     return 0;
+                case AMQP_CONNECTION_BLOCKED_METHOD:
+                    if ((col->rmq_blocked) == 0) {
+                        logger(LOG_INFO,
+                                "OpenLI mediator: RMQ is unable to handle any more published ETSI records!");
+                        logger(LOG_INFO,
+                                "OpenLI mediator: this is a SERIOUS problem -- received ETSI records are going to be dropped!");
+                    }
+                    col->rmq_blocked = 1;
+                    break;
+                case AMQP_CONNECTION_UNBLOCKED_METHOD:
+                    if ((col->rmq_blocked) == 1) {
+                        logger(LOG_INFO,
+                                "OpenLI mediator: RMQ has become unblocked and will resume publishing ETSI records.");
+                    }
+                    col->rmq_blocked = 0;
+                    break;
             }
         }
     }

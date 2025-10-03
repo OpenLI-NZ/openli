@@ -453,6 +453,12 @@ uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
 
     encres = generate_integrity_check_hash_pdu(ics, medid, operatorid,
             col->etsiencoder, col->etsidecoder);
+    if (collrecv_save_message(col, (unsigned char *)ics->liid, encres->encoded,
+            encres->len, ics->msgtype) < 0) {
+        wandder_release_encoded_result(col->etsiencoder, encres);
+        return -1;
+    }
+
     if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
         r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
                 encres->encoded, encres->len, found->liid,
@@ -522,6 +528,9 @@ int send_integrity_check_sign_pdu(coll_recv_t *col,
 
     if (collrecv_save_message(col, (unsigned char *)ics->liid, encres->encoded,
             encres->len, ics->msgtype) < 0) {
+        if (operatorid) {
+            free(operatorid);
+        }
         wandder_release_encoded_result(col->etsiencoder, encres);
         return -1;
     }
