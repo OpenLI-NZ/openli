@@ -153,7 +153,7 @@ fi
 
 if [ ! -f /etc/openli/integrity-key.pem ]; then
     openssl ecparam -name prime256v1 -genkey -noout -out /etc/openli/integrity-key.pem
-    openssl ec -in /etc/openli/integritykey.pem -pubout -out /etc/openli/integrity-public.pem
+    openssl ec -in /etc/openli/integrity-key.pem -pubout -out /etc/openli/integrity-public.pem
 
     chmod 0600 /etc/openli/integrity-key.pem /etc/openli/integrity-public.pem
 fi
