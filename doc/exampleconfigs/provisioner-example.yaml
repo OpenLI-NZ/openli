@@ -38,6 +38,13 @@ encrypt-intercept-config-file: no
 # if an LEA reports difficulty with decoding your intercepted RTP streams.
 voip-ignorecomfort: no
 
+# You may be required to send integrity check messages to at least one of
+# the agencies for which you are providing intercepts. If so, some of these
+# messages will need to be signed, and this configuration option allows you
+# to specify where to find the DSA private key that should be used for
+# generating those signatures.
+integrity-signing-private-key: /etc/openli/integrity-key.pem
+
 # Location of the SQLite3 database where credentials and API keys are stored
 # for authorised access to the REST API. If this option is not present,
 # then the REST API can be used without authentication.

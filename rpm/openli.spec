@@ -151,7 +151,12 @@ if [ ! -f /etc/openli/.intercept-encrypt ]; then
         chmod 0640 /etc/openli/.intercept-encrypt
 fi
 
+if [ ! -f /etc/openli/integrity-key.pem ]; then
+    openssl ecparam -name prime256v1 -genkey -noout -out /etc/openli/integrity-key.pem
+    openssl ec -in /etc/openli/integritykey.pem -pubout -out /etc/openli/integrity-public.pem
 
+    chmod 0600 /etc/openli/integrity-key.pem /etc/openli/integrity-public.pem
+fi
 
 chown -R openli: /etc/openli
 chown -R openli: /var/lib/openli
@@ -171,6 +176,8 @@ if [ $1 -eq 0 ]; then
         rm -f /var/lib/openli/provauth.db
         rm -f /etc/openli/provauthdb.phrase
         rm -f /etc/openli/.intercept-encrypt
+        rm -f /etc/openli/integrity-key.pem
+        rm -f /etc/openli/integrity-public.pem
 fi
 
 %postun provisioner
