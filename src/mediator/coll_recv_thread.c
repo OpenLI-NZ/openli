@@ -1431,7 +1431,6 @@ static void *start_collector_thread(void *params) {
 
     col->epoll_fd = epoll_fd;
     while (!is_halted) {
-
         /* Check for messages on the control socket */
         if (libtrace_message_queue_try_get(&(col->in_main), (void *)&msg) !=
                 LIBTRACE_MQ_FAILED) {

@@ -677,6 +677,10 @@ int send_integrity_check_signing_request(coll_recv_t *col,
 
     ics_sign_request_t *job = NULL;
 
+    if (ics->sign_timer->fd != -1) {
+        halt_mediator_timer(ics->sign_timer);
+    }
+
     if (ics->signing_seqno_next_index == 0) {
         return 0;
     }
@@ -711,6 +715,7 @@ int send_integrity_check_signing_request(coll_recv_t *col,
     ics->signing_seqnos = calloc(16, sizeof(int64_t));
     ics->signing_seqno_array_size = 16;
     ics->signing_seqno_next_index = 0;
+    ics->hashes_since_last_signrec = 0;
 
     EVP_DigestFinal_ex(ics->signature_ctx, job->digest, &(job->digest_len));
     push_signing_request(col, ics, job);
@@ -746,8 +751,6 @@ int integrity_sign_timer_callback(coll_recv_t *col, med_epoll_ev_t *mev) {
     }
 
     ics = (integrity_check_state_t *)(mev->state);
-
-    halt_mediator_timer(ics->sign_timer);
     return send_integrity_check_signing_request(col, ics);
 
 }
@@ -778,6 +781,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
         HASH_DELETE(hh, integ->sign_jobs, job);
         destroy_integrity_sign_job(job);
     }
+
     if (integ->key) free(integ->key);
     if (integ->liid) free(integ->liid);
     if (integ->hash_ctx) EVP_MD_CTX_free(integ->hash_ctx);
