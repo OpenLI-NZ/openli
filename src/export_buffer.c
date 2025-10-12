@@ -44,9 +44,15 @@ void init_export_buffer(export_buffer_t *buf) {
     buf->partialfront = 0;
     buf->partialrem = 0;
     buf->deadfront = 0;
+    buf->writeoffset = 0;
     buf->nextwarn = BUFFER_WARNING_THRESH;
     buf->record_offsets = NULL;
     buf->since_last_saved_offset = 0;
+    buf->deadwindow = 0;
+}
+
+void set_export_buffer_ack_window(export_buffer_t *buf, uint32_t window) {
+    buf->deadwindow = window;
 }
 
 void release_export_buffer(export_buffer_t *buf) {
@@ -56,7 +62,7 @@ void release_export_buffer(export_buffer_t *buf) {
 }
 
 uint64_t get_buffered_amount(export_buffer_t *buf) {
-    return (buf->buftail - (buf->bufhead + buf->deadfront));
+    return (buf->buftail - (buf->bufhead + buf->writeoffset));
 }
 
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
@@ -64,10 +70,11 @@ uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
     if (*rem == 0) {
         return NULL;
     }
-    return (buf->bufhead + buf->deadfront);
+    return (buf->bufhead + buf->writeoffset);
 }
 
 void reset_export_buffer(export_buffer_t *buf) {
+    buf->writeoffset = buf->deadfront;
     buf->partialfront = 0;
     buf->partialrem = 0;
 }
@@ -116,6 +123,7 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
     /* Add some space to the buffer */
     uint8_t *space = NULL;
     uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
+    uint32_t writeroffset = buf->writeoffset - buf->deadfront;
 
     if (buf->deadfront > 0) {
         slide_buffer(buf, buf->bufhead + buf->deadfront, bufused);
@@ -133,6 +141,7 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
 
     buf->deadfront = 0;
+    buf->writeoffset = writeroffset;
     buf->bufhead = space;
     buf->buftail = space + bufused;
     buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
@@ -310,6 +319,7 @@ static inline void post_transmit(export_buffer_t *buf) {
     uint64_t rem = 0;
     uint8_t *newbuf = NULL;
     uint64_t resize = 0;
+    uint32_t writeoff = buf->writeoffset - buf->deadfront;
 
     assert(buf->buftail >= buf->bufhead + buf->deadfront);
     rem = (buf->buftail - (buf->bufhead + buf->deadfront));
@@ -324,6 +334,7 @@ static inline void post_transmit(export_buffer_t *buf) {
         buf->buftail = newbuf + rem;
         buf->bufhead = newbuf;
         buf->alloced = resize;
+        buf->writeoffset = writeoff;
         buf->deadfront = 0;
     } else if (buf->alloced - (buf->buftail - buf->bufhead) <
             0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
@@ -332,6 +343,7 @@ static inline void post_transmit(export_buffer_t *buf) {
         buf->buftail = buf->bufhead + rem;
         assert(buf->buftail < buf->bufhead + buf->alloced);
         buf->deadfront = 0;
+        buf->writeoffset = writeoff;
     }
 
     buf->partialfront = 0;
@@ -342,7 +354,7 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
     uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->deadfront;
+    uint8_t *bhead = buf->bufhead + buf->writeoffset;
     uint64_t offset = buf->partialfront;
     int ret, rcint;
     Word_t index = 0;
@@ -353,13 +365,13 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
         sent = (buf->buftail - (bhead + offset));
 
         if (sent > bytelimit) {
-            index = bytelimit + 1 + buf->deadfront;
+            index = bytelimit + 1 + buf->writeoffset;
             J1P(rcint, buf->record_offsets, index);
             if (rcint == 0) {
                 assert(rcint != 0);
                 return 0;
             }
-            sent = index - buf->deadfront;
+            sent = index - buf->writeoffset;
         }
         buf->partialrem = sent;
     }
@@ -399,7 +411,16 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             buf->partialrem -= (uint32_t)ret;
             return ret;
         }
-        buf->deadfront += ((uint32_t)ret + buf->partialfront);
+        buf->writeoffset += ((uint32_t)ret + buf->partialfront);
+        if (buf->deadwindow != 0 && buf->writeoffset > buf->deadwindow) {
+            int rcint;
+            Word_t index = buf->writeoffset - buf->deadwindow;
+            J1P(rcint, buf->record_offsets, index);
+
+            buf->deadfront = (uint32_t)index;
+        } else if (buf->deadwindow == 0) {
+            buf->deadfront = buf->writeoffset;
+        }
     }
 
     post_transmit(buf);
@@ -474,8 +495,12 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         uint64_t bytelimit, uint8_t *is_blocked) {
 
     uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->deadfront;
-    int ret, x;
+    uint8_t *bhead = buf->bufhead + buf->writeoffset;
+    int ret, x, elapsed, timeout;
+    amqp_frame_t frame;
+    amqp_bytes_t message_bytes;
+    amqp_basic_properties_t props;
+    struct timeval tv;
 
     sent = (buf->buftail - (bhead));
 
@@ -483,48 +508,106 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         sent = bytelimit;
     }
 
-    if (sent != 0) {
-        amqp_bytes_t message_bytes;
-        amqp_basic_properties_t props;
-        message_bytes.len = sent;
-        message_bytes.bytes = bhead;
+    if (sent == 0) {
+        return sent;
+    }
 
-        props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
-        props.delivery_mode = 2;        /* persistent mode */
-	ret = 0;
+    message_bytes.len = sent;
+    message_bytes.bytes = bhead;
 
-        if ((*is_blocked) == 0) {
-            int pub_ret = amqp_basic_publish(
-                    amqp_state,
-                    channel,
-                    exchange,
-                    routing_key,
-                    0,
-                    0,
-                    &props,
-                    message_bytes);
+    props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
+    props.delivery_mode = 2;        /* persistent mode */
+    ret = 0;
 
-            if ( pub_ret != 0 ){
-                logger(LOG_INFO,
-                        "OpenLI: RMQ publish error %d", pub_ret);
-                return -1;
-            } else {
-                ret = sent;
+    if ((x = check_rmq_connection_block_status(amqp_state, is_blocked)) < 0) {
+        return -1;
+    }
+
+    if (*is_blocked) {
+        return 0;
+    }
+
+    int pub_ret = amqp_basic_publish(
+            amqp_state,
+            channel,
+            exchange,
+            routing_key,
+            0,
+            0,
+            &props,
+            message_bytes);
+
+    if ( pub_ret != 0 ){
+        logger(LOG_INFO,
+                "OpenLI: RMQ publish error %d", pub_ret);
+        return -1;
+    } else {
+        ret = sent;
+    }
+
+    elapsed = 0;
+    timeout = 3;
+
+    while (1) {
+        tv.tv_sec = 1; tv.tv_usec = 0;
+        ret = amqp_simple_wait_frame_noblock(amqp_state, &frame, &tv);
+        if (ret == AMQP_STATUS_OK) {
+            if (frame.frame_type == AMQP_FRAME_METHOD) {
+                if (frame.payload.method.id == AMQP_BASIC_ACK_METHOD) {
+                    break;
+                }
+                if (frame.payload.method.id == AMQP_BASIC_NACK_METHOD) {
+                    return 0;
+                }
+                if (frame.payload.method.id == AMQP_CONNECTION_BLOCKED_METHOD) {
+                    *is_blocked = 1;
+                }
+                if (frame.payload.method.id ==
+                        AMQP_CONNECTION_UNBLOCKED_METHOD) {
+                    *is_blocked = 0;
+                }
+                if (frame.payload.method.id ==
+                        AMQP_CONNECTION_CLOSE_METHOD) {
+                    return -1;
+                }
+                if (frame.payload.method.id ==
+                        AMQP_CHANNEL_CLOSE_METHOD) {
+                    return -1;
+                }
             }
-        }
-
-        if ((x = check_rmq_connection_block_status(amqp_state,
-                        is_blocked)) < 0) {
+        } else if (ret == AMQP_STATUS_TIMEOUT) {
+            elapsed ++;
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI collector: RMQ error while waiting for publisher confirm");
             return -1;
         }
-
-        if (x > 0) {
-            buf->deadfront += ((uint32_t)ret);
+        if (elapsed >= timeout) {
+            /* Didn't see an ACK in a reasonable time frame, normally it
+             * would make sense to assume that message wasn't published but
+             * there are certain situations (usually after the RMQ broker
+             * has been restarted) where RMQ won't produce acks for
+             * re-published messages.
+             * At this stage, we can't tell if what we are sending is a
+             * republication. It is most likely, however,
+             * that if 3 seconds have passed without an ACK or CLOSE result
+             * then we are probably dealing with a broker that is not going
+             * to acknowledge this message.
+             */
+            break;
         }
     }
 
+    /* if we get here, the publish was successful and confirmed by the
+     * broker (or we got no feedback from the broker and have to assume
+     * a successful publication...)
+     */
+    buf->writeoffset += ((uint32_t)sent);
+    if (buf->writeoffset > buf->deadwindow) {
+        buf->deadfront = buf->writeoffset - buf->deadwindow;
+    }
     post_transmit(buf);
-    return sent;
+    return 1;
 }
 
 int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount) {
@@ -535,7 +618,12 @@ int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount) {
         amount = rem;
     }
 
-    buf->deadfront += amount;
+    /* This is only used in the pcap output context, so there's no real
+     * need to maintain a retransmit window, so just set deadfront to
+     * match the write offset.
+     */
+    buf->writeoffset += amount;
+    buf->deadfront = buf->writeoffset;
     post_transmit(buf);
     return 0;
 }

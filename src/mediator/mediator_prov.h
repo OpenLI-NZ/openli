@@ -153,6 +153,16 @@ int send_mediator_details_to_provisioner(mediator_prov_t *prov,
 int reload_provisioner_socket_config(mediator_prov_t *currstate,
         mediator_prov_t *newstate);
 
+/** Sends an integrity check signing request to a connected provisioner.
+ *
+ *  @param prov         The provisioner that needs to receive the request
+ *  @param req          The request that needs to be sent
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+int send_ics_signing_request_to_provisioner(mediator_prov_t *prov,
+        struct ics_sign_request_message *req);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

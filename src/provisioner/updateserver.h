@@ -65,6 +65,7 @@ enum {
     TARGET_OPENLIVERSION,
     TARGET_COLLECTOR,
     TARGET_MEDIATOR,
+    TARGET_DIGESTHASHKEY,
 };
 
 extern const char *update_success_page;

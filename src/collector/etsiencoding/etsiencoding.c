@@ -69,6 +69,89 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
     return len_space_req + 2 + (2 + liidlen);
 }
 
+void encode_etsili_pshdr(wandder_encoder_t *encoder,
+        wandder_etsipshdr_data_t *hdrdata, int64_t cin,
+        int64_t seqno, struct timeval *tv,
+        openli_timestamp_encoding_fmt_t timefmt) {
+
+    uint32_t tvclass = 1;       // timeOfInterception
+
+    /* hdrdata should be pretty static for each ETSI LI record, so
+     * you can populate it once and repeatedly use it.
+     * CIN, seqno and tv will change for each record, so I've made them
+     * into separate parameters.
+     */
+
+    ENC_USEQUENCE(encoder);             // starts outermost sequence
+
+    ENC_CSEQUENCE(encoder, 1);
+    wandder_encode_next(encoder, WANDDER_TAG_OID,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0,
+            (uint8_t *)WANDDER_ETSILI_PSDOMAINID,
+            sizeof(WANDDER_ETSILI_PSDOMAINID));
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->liid,
+            hdrdata->liid_len);
+    wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, hdrdata->authcc,
+            hdrdata->authcc_len);
+
+    ENC_CSEQUENCE(encoder, 3);
+
+    ENC_CSEQUENCE(encoder, 0);
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, hdrdata->operatorid,
+            hdrdata->operatorid_len);
+
+    if (hdrdata->networkelemid) {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->networkelemid,
+                hdrdata->networkelemid_len);
+    }
+    wandder_encode_endseq(encoder);
+
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(cin),
+            sizeof(int64_t));
+    wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, hdrdata->delivcc,
+            hdrdata->delivcc_len);
+    wandder_encode_endseq(encoder);
+
+    wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
+            sizeof(int64_t));
+
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, tv,
+                sizeof(struct timeval));
+    }
+
+    if (hdrdata->intpointid) {
+        wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, hdrdata->intpointid,
+                hdrdata->intpointid_len);
+    }
+
+
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        ENC_CSEQUENCE(encoder, 7);
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 0, &(tv->tv_sec),
+                sizeof(tv->tv_sec));
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &(tv->tv_usec),
+                sizeof(tv->tv_usec));
+        wandder_encode_endseq(encoder);
+    }
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 8, &tvclass, sizeof(tvclass));
+    wandder_encode_endseq(encoder);
+}
+
+
 void encode_ipaddress(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, etsili_ipaddress_t *addr) {
 

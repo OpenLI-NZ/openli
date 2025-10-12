@@ -1141,7 +1141,6 @@ static void add_or_update_xid_voipintercept(x_input_t *xinp,
                 msg->destid);
     } else {
         found = calloc(1, sizeof(voipintercept_t));
-
         populate_intercept_common(&(msg->data.cept), &(found->common),
                 msg->destid);
         HASH_ADD_KEYPTR(hh_liid, xinp->voipintercepts, found->common.liid,

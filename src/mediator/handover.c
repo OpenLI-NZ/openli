@@ -30,7 +30,7 @@
 #include "logger.h"
 #include "util.h"
 #include "netcomms.h"
-#include "etsili_core.h"
+#include "etsiencoding.h"
 #include "handover.h"
 #include "med_epoll.h"
 #include "config.h"
@@ -209,7 +209,8 @@ void trigger_handover_ka_failure(handover_t *ho) {
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id, char *agency_cc) {
+        char *operator_id, char *agency_cc,
+        openli_timestamp_encoding_fmt_t timefmt) {
 
     wandder_encoded_result_t *kamsg;
     wandder_etsipshdr_data_t hdrdata;
@@ -281,7 +282,7 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         hdrdata.intpointid_len = 0;
 
         kamsg = encode_etsi_keepalive(ho->ho_state->encoder, &hdrdata,
-                ho->ho_state->lastkaseq + 1);
+                ho->ho_state->lastkaseq + 1, timefmt);
         if (kamsg == NULL) {
             logger(LOG_INFO,
                     "OpenLI Mediator: failed to construct a keep-alive.");
@@ -370,6 +371,7 @@ void disconnect_handover(handover_t *ho) {
      * until / unless it reconnects.
      */
     ho->disconnect_msg = 1;
+    ho->last_connect_attempt = 0;
 	pthread_mutex_unlock(&(ho->ho_state->ho_mutex));
 }
 
@@ -422,6 +424,9 @@ void destroy_agency(mediator_agency_t *ag) {
     }
     if (ag->agencyid) {
         free(ag->agencyid);
+    }
+    if (ag->agencycc) {
+        free(ag->agencycc);
     }
 }
 
@@ -491,6 +496,7 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
 
         if (ho->rmq_consumer == NULL) {
             ho->amqp_log_failure = 0;
+            return 0;
         } else {
             ho->amqp_log_failure = 1;
         }
@@ -513,6 +519,7 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
         }
         ho->amqp_log_failure = 1;
         ho->rmq_registered = 1;
+        logger(LOG_INFO, "OpenLI Mediator: successfully registered consumer queues for HI%d for agency %s", ho->handover_type, agencyid);
     }
 
     return 1;
@@ -532,15 +539,26 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
  *
  *  @return -1 if the connection fails, 0 otherwise.
  */
-int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id) {
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
+        uint16_t reconnect_interval) {
 
 	uint32_t epollev;
 	int outsock;
+    struct timeval tv;
 
 	/* Check if we're already connected? */
     if (ho->outev) {
         return 0;
     }
+
+    gettimeofday(&tv, NULL);
+    if (ho->last_connect_attempt != 0) {
+        if (tv.tv_sec < ho->last_connect_attempt + reconnect_interval) {
+            return 0;
+        }
+    }
+
+    ho->last_connect_attempt = tv.tv_sec;
 
     /* Connect the handover socket */
     outsock = connect_socket(ho->ipstr, ho->portstr, ho->disconnect_msg, 1);
@@ -612,11 +630,14 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id) {
  * @param kafreq        The frequency to send keep alive requests (in seconds).
  * @param kawait        The time to wait before assuming a keep alive has
  *                      failed (in seconds).
+ * @param resendwin     The amount of previously-sent bytes to retransmit upon
+ *                      a handover reconnection, in KBs.
  *
  * @return a pointer to a new handover instance, or NULL if an error occurs.
  */
 handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
-        int handover_type, uint32_t kafreq, uint32_t kawait) {
+        int handover_type, uint32_t kafreq, uint32_t kawait,
+        uint32_t resendwin) {
 
     handover_t *ho = (handover_t *)malloc(sizeof(handover_t));
 
@@ -634,6 +655,7 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 
     /* Initialise all of the handover-specific state for this handover */
     init_export_buffer(&(ho->ho_state->buf));
+    set_export_buffer_ack_window(&(ho->ho_state->buf), resendwin * 1024);
     ho->ho_state->katimer_setsec = 0;
     ho->ho_state->incoming = NULL;
     ho->ho_state->encoder = NULL;
@@ -646,6 +668,7 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     ho->rmq_consumer = NULL;
     ho->rmq_registered = 0;
     ho->amqp_log_failure = 1;
+    ho->last_connect_attempt = 0;
 
 	pthread_mutex_init(&(ho->ho_state->ho_mutex), NULL);
 
@@ -671,8 +694,16 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 	ho->outev = NULL;
 
     /* Initialise the remaining handover state */
-    ho->ipstr = ipstr;
-    ho->portstr = portstr;
+    if (ipstr) {
+        ho->ipstr = strdup(ipstr);
+    } else {
+        ho->ipstr = NULL;
+    }
+    if (portstr) {
+        ho->portstr = strdup(portstr);
+    } else {
+        ho->portstr = NULL;
+    }
     ho->handover_type = handover_type;
     ho->disconnect_msg = 0;
 

@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.1.14
+Version:        1.1.15
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -14,10 +14,10 @@ BuildRequires: bison
 BuildRequires: doxygen
 BuildRequires: flex
 BuildRequires: libyaml-devel
-BuildRequires: libtrace4-devel >= 4.0.27
+BuildRequires: libtrace4-devel >= 4.0.28
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder2-devel >= 2.0.13
+BuildRequires: libwandder2-devel >= 2.0.16
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel >= 5.0.0
@@ -151,7 +151,12 @@ if [ ! -f /etc/openli/.intercept-encrypt ]; then
         chmod 0640 /etc/openli/.intercept-encrypt
 fi
 
+if [ ! -f /etc/openli/integrity-key.pem ]; then
+    openssl ecparam -name prime256v1 -genkey -noout -out /etc/openli/integrity-key.pem
+    openssl ec -in /etc/openli/integrity-key.pem -pubout -out /etc/openli/integrity-public.pem
 
+    chmod 0600 /etc/openli/integrity-key.pem /etc/openli/integrity-public.pem
+fi
 
 chown -R openli: /etc/openli
 chown -R openli: /var/lib/openli
@@ -171,6 +176,8 @@ if [ $1 -eq 0 ]; then
         rm -f /var/lib/openli/provauth.db
         rm -f /etc/openli/provauthdb.phrase
         rm -f /etc/openli/.intercept-encrypt
+        rm -f /etc/openli/integrity-key.pem
+        rm -f /etc/openli/integrity-public.pem
 fi
 
 %postun provisioner
@@ -310,6 +317,9 @@ fi
 
 
 %changelog
+* Mon Sep 29 2025 Shane Alcock <salcock@searchlight.nz> - 1.1.15-1
+- Updated for 1.1.15 release
+
 * Mon Aug 18 2025 Shane Alcock <salcock@searchlight.nz> - 1.1.14-1
 - Updated for 1.1.14 release
 

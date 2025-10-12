@@ -41,6 +41,8 @@
 #include "util.h"
 #include "openli_tls.h"
 
+#define DEFAULT_DIGEST_HASH_KEY_LOCATION "/etc/openli/digesthash/private.pem"
+
 #define DEFAULT_INTERCEPT_CONFIG_FILE "/etc/openli/running-intercept-config.yaml"
 
 #define DEFAULT_ENCPASSFILE_LOCATION "/etc/openli/.intercept-encrypt"
@@ -60,6 +62,8 @@ typedef struct known_client {
     /** If the client is a mediator, this field contains their mediator ID */
     uint32_t medid;
 
+    const char *colname;
+
     /** Set to TARGET_COLLECTOR if this client was a collector,
      *  TARGET_MEDIATOR if it was a mediator.
      */
@@ -76,6 +80,14 @@ typedef struct known_client {
      */
     time_t lastseen;
 } known_client_t;
+
+/** Describes a single X2/X3 listening socket that is available on a collector
+ */
+typedef struct x2x3_listener {
+    char *ipaddr;
+    char *port;
+    time_t lastseen;
+} x2x3_listener_t;
 
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
@@ -150,6 +162,17 @@ typedef struct liid_hash {
     char *agency;
     /** The LIID for the intercept */
     char *liid;
+
+    /** The encryption method to use if/when encrypting intercept payload */
+    payload_encryption_method_t encryptmethod;
+
+    /** The encryption key to use if/when encrypting intercept payload */
+    char *encryptkey;
+
+    /** Flag to indicate if any of the configuration in this mapping has
+     *  changed and therefore needs to be announced to the mediators
+     */
+    uint8_t need_announce;
 
     UT_hash_handle hh;
 } liid_hash_t;
@@ -353,6 +376,16 @@ typedef struct prov_state {
     char *clientdbkey;
     void *clientdb;
 
+    /** The location of the private key to use when signing digest hash
+     *  integrity checks */
+    char *integrity_sign_private_key_location;
+    /** The private key to use when signing digest hash integrity checks */
+    EVP_PKEY *integrity_sign_private_key;
+
+    /** context for signing digests, used if the mediator requires
+     *  us to sign integrity checks */
+    EVP_PKEY_CTX *sign_ctx;
+
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
      */
@@ -388,6 +421,7 @@ struct prov_sock_state {
 
     /** The type of client, e.g. either collector or mediator */
     int clientrole;
+
 };
 
 /* Implemented in provisioner.c, but included here to be available
@@ -412,6 +446,12 @@ size_t read_encryption_password_file(const char *encpassfile, uint8_t *space);
 /* Implemented in configwriter.c */
 int emit_intercept_config(char *configfile, const char *encpassfile,
         prov_intercept_conf_t *conf);
+
+/* Implemented in integrity_sign.c */
+int load_integrity_signing_privatekey(provision_state_t *state);
+int prov_handle_ics_signing_request(provision_state_t *state,
+        uint8_t *msgbody, uint16_t msglen, prov_sock_state_t *cs,
+        prov_epoll_ev_t *pev );
 
 /* Implemented in clientupdates.c */
 int compare_sip_targets(provision_state_t *currstate,
@@ -456,10 +496,19 @@ int remove_all_sip_targets(provision_state_t *state, voipintercept_t *vint);
 int announce_single_intercept(provision_state_t *state,
         void *cept, int (*sendfunc)(net_buffer_t *, void *));
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
-        char *liid, char *agency);
+        intercept_common_t *common);
+int announce_all_updated_liidmappings_to_mediators(provision_state_t *state);
+void clear_liid_announce_flags(prov_intercept_conf_t *conf);
 int announce_hi1_notification_to_mediators(provision_state_t *state,
         intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type);
 int announce_latest_default_email_decompress(provision_state_t *state);
+void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
+        intercept_common_t *common);
+void update_inherited_encryption_settings(provision_state_t *state,
+        liagency_t *agency);
+int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
+void update_intercept_timeformats(provision_state_t *state,
+        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);
@@ -472,11 +521,16 @@ void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
+int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
+       char *listenaddr, char *listenport, uint64_t timestamp);
 void update_all_client_rows(provision_state_t *state);
 known_client_t *fetch_all_collector_clients(provision_state_t *state,
         size_t *clientcount);
 known_client_t *fetch_all_mediator_clients(provision_state_t *state,
         size_t *clientcount);
+x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
+        size_t *listenercount, const char *collectorid);
+int remove_collector_from_clientdb(provision_state_t *state, const char *idstr);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

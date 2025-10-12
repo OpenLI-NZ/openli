@@ -1,3 +1,51 @@
+openli (1.1.15-1) unstable; urgency=medium
+
+  * Collector: fix buffer overflow bug in GTP parsing code.
+  * Collector: fix crash if the RabbitMQ server is restarted while the
+    collector is running.
+  * Mediator: enable RabbitMQ publisher confirms and some local buffering
+    to reduce the possibility of ETSI records being lost if RabbitMQ
+    is restarted during an active intercept.
+  * Collector: enable RabbitMQ publisher confirms when using RMQ to send
+    ETSI records to the mediator(s).
+  * Mediator: fix crashes that can occur if the country code for an
+    agency is not configured.
+  * Add option to choose the timestamp format to be used in encoded ETSI
+    PSHeaders (either microsecondTimestamp or generalizedTime).
+  * Collector: fix bug where long running SIP calls would be incorrectly
+    expired due to "inactivity".
+  * Collector: fix crash if the collector is configured to operate with
+    zero SIP worker threads.
+  * REST API: fix bug where the 'lastseen' property for a mediator was
+    being updated even when the mediator had disconnected.
+  * REST API: fix bug where it was not possible to change the destination
+    mediator for an intercept via the REST API.
+  * Add ability to configure a retransmit window for agency
+    handovers (i.e. the amount of handover data that should be retransmitted
+    if the TCP session for that handover fails). Defaults to zero kilobytes.
+  * Add configuration option to specify how many seconds to
+    wait between connection attempts for handovers. Defaults to 10 seconds.
+  * Add experimental support for including Integrity Check PDUs in the
+    handover stream, as per Annex J of ETSI TS 102 232-1. By default,
+    integrity checks are disabled but may be enabled on a per-agency basis.
+  * Provisioner: fix crash that occurred if using the REST API when the running
+    intercept configuration file was not writable.
+  * REST API: add information about the listening X2/X3 endpoints to the
+    response to a 'collectors/' request.
+  * REST API: collector identifiers now include the operator ID,
+    network element ID and intercept point ID -- this replaces the previous
+    identifier which simply used the collector's IP address.
+  * Provisioner: fix crash when a collector reconnects to the provisioner,
+    due to an idle timer for the previous collector instance remaining active
+    upon reconnection.
+  * Collector: fix 100% CPU loop when a forwarding thread failed to connect
+    to a RabbitMQ broker.
+  * Payload encryption is now performed by the mediator(s) rather than by
+    the collectors -- this change was required to support the integrity
+    check feature.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Sun, 12 Oct 2025 18:31:41 +1300
+
 openli (1.1.14-1) unstable; urgency=medium
 
   * Add support for new RabbitMQ header file structure added in

@@ -38,16 +38,45 @@
 static json_object *convert_lea_to_json(prov_agency_t *lea) {
 
     json_object *jobj;
+    json_object *integrity;
+
     json_object *hi3addr;
     json_object *hi3port;
     json_object *hi2addr;
     json_object *hi2port;
     json_object *ka_freq;
     json_object *ka_wait;
+    json_object *ho_retry;
+    json_object *resend_win;
     json_object *agencyid;
     json_object *agencycc = NULL;
+    json_object *digest_hash_method;
+    json_object *digest_sign_method;
+    json_object *digest_required;
+    json_object *digest_hash_timeout;
+    json_object *digest_hash_pdulimit;
+    json_object *digest_sign_timeout;
+    json_object *digest_sign_hashlimit;
+    json_object *encryptkey, *encryptmethod;
+    json_object *timefmt;
+
+    const char *encrypt_str;
+    const char *timefmt_str;
+
+    if (lea->ag->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        encrypt_str = "aes-192-cbc";
+    } else {
+        encrypt_str = "none";
+    }
+
+    if (lea->ag->time_fmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        timefmt_str = "generalized";
+    } else {
+        timefmt_str = "microseconds";
+    }
 
     jobj = json_object_new_object();
+    integrity = json_object_new_object();
 
     agencyid = json_object_new_string(lea->ag->agencyid);
     if (lea->ag->agencycc) {
@@ -59,6 +88,15 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     hi2port = json_object_new_string(lea->ag->hi2_portstr);
     ka_freq = json_object_new_int(lea->ag->keepalivefreq);
     ka_wait = json_object_new_int(lea->ag->keepalivewait);
+    ho_retry = json_object_new_int(lea->ag->handover_retry);
+    resend_win = json_object_new_int(lea->ag->resend_window_kbs);
+    timefmt = json_object_new_string(timefmt_str);
+    encryptmethod = json_object_new_string(encrypt_str);
+    if (lea->ag->encryptkey) {
+        encryptkey = json_object_new_string(lea->ag->encryptkey);
+    } else {
+        encryptkey = NULL;
+    }
 
     json_object_object_add(jobj, "agencyid", agencyid);
     if (agencycc) {
@@ -70,6 +108,79 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "hi2port", hi2port);
     json_object_object_add(jobj, "keepalivefreq", ka_freq);
     json_object_object_add(jobj, "keepalivewait", ka_wait);
+    json_object_object_add(jobj, "connectretrywait", ho_retry);
+    json_object_object_add(jobj, "resendwindow", resend_win);
+    json_object_object_add(jobj, "timestampformat", timefmt);
+    json_object_object_add(jobj, "payloadencryption", encryptmethod);
+    if (encryptkey) {
+        json_object_object_add(jobj, "encryptionkey", encryptkey);
+    }
+
+    digest_required = json_object_new_boolean(lea->ag->digest_required);
+    json_object_object_add(integrity, "enabled", digest_required);
+
+    if (lea->ag->digest_required) {
+        digest_hash_timeout = json_object_new_int(lea->ag->digest_hash_timeout);
+        digest_sign_timeout = json_object_new_int(lea->ag->digest_sign_timeout);
+        digest_hash_pdulimit = json_object_new_int(lea->ag->digest_hash_pdulimit);
+        digest_sign_hashlimit = json_object_new_int(lea->ag->digest_sign_hashlimit);
+
+        if (lea->ag->digest_hash_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
+            digest_hash_method = json_object_new_string("sha-1");
+        } else if (lea->ag->digest_hash_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA256) {
+            digest_hash_method = json_object_new_string("sha-256");
+        } else if (lea->ag->digest_hash_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA384) {
+            digest_hash_method = json_object_new_string("sha-384");
+        } else if (lea->ag->digest_hash_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA512) {
+            digest_hash_method = json_object_new_string("sha-512");
+        } else {
+            digest_hash_method = NULL;
+        }
+
+        if (lea->ag->digest_sign_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
+            digest_sign_method = json_object_new_string("sha-1");
+        } else if (lea->ag->digest_sign_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA256) {
+            digest_sign_method = json_object_new_string("sha-256");
+        } else if (lea->ag->digest_sign_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA384) {
+            digest_sign_method = json_object_new_string("sha-384");
+        } else if (lea->ag->digest_sign_method ==
+                OPENLI_DIGEST_HASH_ALGO_SHA512) {
+            digest_sign_method = json_object_new_string("sha-512");
+        } else {
+            digest_sign_method = NULL;
+        }
+
+        if (digest_hash_method) {
+            json_object_object_add(integrity, "hashmethod", digest_hash_method);
+        }
+        if (digest_sign_method) {
+            json_object_object_add(integrity, "signedhashmethod",
+                    digest_sign_method);
+        }
+        if (digest_hash_timeout) {
+            json_object_object_add(integrity, "hashtimeout",
+                    digest_hash_timeout);
+        }
+        if (digest_hash_pdulimit) {
+            json_object_object_add(integrity, "datapducount",
+                    digest_hash_pdulimit);
+        }
+        if (digest_sign_timeout) {
+            json_object_object_add(integrity, "signtimeout",
+                    digest_sign_timeout);
+        }
+        if (digest_sign_hashlimit) {
+            json_object_object_add(integrity, "hashpducount",
+                    digest_sign_hashlimit);
+        }
+    }
+
+    json_object_object_add(jobj, "integrity", integrity);
 
     return jobj;
 }
@@ -81,6 +192,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
     json_object *encryptkey, *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
+    json_object *encrypt_inherited;
     char uuid[64];
 
     if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
@@ -112,6 +224,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
     agencyid = json_object_new_string(common->targetagency);
     mediator = json_object_new_int(common->destid);
     tomediate = json_object_new_int(common->tomediate);
+    encrypt_inherited = json_object_new_boolean(common->encrypt_inherited);
     encryption = json_object_new_string(encrypt_str);
 
     if (common->encryptkey) {
@@ -126,6 +239,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
+    json_object_object_add(jobj, "encrypt_inherited", encrypt_inherited);
     json_object_object_add(jobj, "payloadencryption", encryption);
     if (encryptkey) {
         json_object_object_add(jobj, "encryptionkey", encryptkey);
@@ -316,7 +430,7 @@ static inline struct json_object *openli_json_object_new_uint64(uint64_t val) {
 
 static json_object *convert_client_to_json(known_client_t *c) {
     json_object *jobj;
-    json_object *medid, *ipaddress, *firstseen, *lastseen;
+    json_object *medid, *ipaddress, *firstseen, *lastseen, *colname;
 
     medid = ipaddress = firstseen = lastseen = NULL;
 
@@ -325,12 +439,14 @@ static json_object *convert_client_to_json(known_client_t *c) {
     if (c->type == TARGET_MEDIATOR) {
         medid = openli_json_object_new_uint64(c->medid);
         json_object_object_add(jobj, "mediatorid", medid);
+    } else if (c->type == TARGET_COLLECTOR) {
+        colname = json_object_new_string(c->colname);
+        json_object_object_add(jobj, "name", colname);
     }
 
     if (c->ipaddress) {
         ipaddress = json_object_new_string(c->ipaddress);
         json_object_object_add(jobj, "ipaddress", ipaddress);
-        free((void *)c->ipaddress);
     }
 
     firstseen = openli_json_object_new_uint64(c->firstseen);
@@ -390,9 +506,10 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
 json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
-    json_object *jarray, *jobj;
+    json_object *jarray, *jobj, *x2x3obj;
     known_client_t *cols;
-    size_t colcount, i;
+    size_t colcount, x2x3count, i, j;
+    x2x3_listener_t *x2x3;
 
     cols = fetch_all_collector_clients(state, &colcount);
     if (!cols || colcount == 0) {
@@ -402,7 +519,39 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
     jarray = json_object_new_array();
     for (i = 0; i < colcount; i++) {
         jobj = convert_client_to_json(&(cols[i]));
+        x2x3obj = json_object_new_array();
+
+        if (cols[i].colname) {
+            x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
+                    cols[i].colname);
+        } else {
+            x2x3 = NULL;
+        }
+        if (x2x3) {
+            for (j = 0; j < x2x3count; j++) {
+                json_object *base, *ipaddr, *port, *lastseen;
+                base = json_object_new_object();
+
+                ipaddr = json_object_new_string(x2x3[j].ipaddr);
+                port = json_object_new_string(x2x3[j].port);
+                lastseen = openli_json_object_new_uint64(x2x3[j].lastseen);
+
+                json_object_object_add(base, "ipaddress", ipaddr);
+                json_object_object_add(base, "port", port);
+                json_object_object_add(base, "lastseen", lastseen);
+
+                free(x2x3[j].ipaddr);
+                free(x2x3[j].port);
+                json_object_array_add(x2x3obj, base);
+            }
+            free(x2x3);
+        }
+        json_object_object_add(jobj, "x2x3listeners", x2x3obj);
         json_object_array_add(jarray, jobj);
+        if (cols[i].colname) {
+            free((void *)(cols[i].colname));
+        }
+        free((void *)(cols[i].ipaddress));
     }
     free(cols);
 
@@ -425,6 +574,7 @@ json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
     for (i = 0; i < medcount; i++) {
         jobj = convert_client_to_json(&(meds[i]));
         json_object_array_add(jarray, jobj);
+        free((void *)(meds[i].ipaddress));
     }
     free(meds);
 

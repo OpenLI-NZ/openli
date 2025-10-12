@@ -53,6 +53,7 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->toend_time = src->toend_time;
     dest->tomediate = src->tomediate;
     dest->encrypt = src->encrypt;
+    dest->encrypt_inherited = src->encrypt_inherited;
 
     if (src->encryptkey) {
         dest->encryptkey = strdup(src->encryptkey);
@@ -64,6 +65,26 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->xid_count = src->xid_count;
 
     memcpy(dest->xids, src->xids, src->xid_count * sizeof(uuid_t));
+}
+
+int compare_intercept_encrypt_configuration(intercept_common_t *a,
+        intercept_common_t *b) {
+
+    if (a->encrypt != b->encrypt) {
+        return 1;
+    }
+
+    if (a->encryptkey == NULL && b->encryptkey == NULL) {
+        return 0;
+    }
+    if (a->encryptkey == NULL && b->encryptkey != NULL) {
+        return 1;
+    }
+    if (a->encryptkey != NULL && b->encryptkey == NULL) {
+        return 1;
+    }
+    return strcmp(a->encryptkey, b->encryptkey);
+
 }
 
 int compare_xid_list(intercept_common_t *a, intercept_common_t *b) {
@@ -120,6 +141,20 @@ int update_modified_intercept_common(intercept_common_t *current,
         current->tostart_time = update->tostart_time;
         current->toend_time = update->toend_time;
         *updatereq = 1;
+    }
+
+    if (update->destid != current->destid) {
+        current->destid = update->destid;
+        logger(LOG_INFO,
+                "OpenLI: %s intercept %s is now using exporting to mediator %u",
+                cepttype_strings[cepttype], update->liid, current->destid);
+        *updatereq = 1;
+    }
+
+    if (update->time_fmt != current->time_fmt) {
+        current->time_fmt = update->time_fmt;
+        *updatereq = 1;
+        encodingchanged = 1;
     }
 
     if (update->tomediate != current->tomediate) {
@@ -1436,6 +1471,13 @@ const char *get_access_type_string(internet_access_method_t method) {
     }
 
     return "undefined";
+}
+
+openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr) {
+    if (strcasecmp(fmtstr, "generalized") == 0) {
+        return OPENLI_ENCODED_TIMESTAMP_GENERALIZED;
+    }
+    return OPENLI_ENCODED_TIMESTAMP_MICROSECONDS;
 }
 
 payload_encryption_method_t map_encrypt_method_string(char *encstr) {

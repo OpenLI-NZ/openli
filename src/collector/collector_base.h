@@ -257,6 +257,8 @@ typedef struct forwarding_thread_data {
     openli_RMQ_config_t RMQ_conf;
     halt_info_t *haltinfo;
 
+    uint8_t logged_rmq_connect_failure;
+
 } forwarding_thread_data_t;
 
 typedef struct encoder_state {

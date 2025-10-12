@@ -25,3 +25,7 @@ src/openliprovisioner
 compile
 src/openlicollector
 src/openlimediator
+/*.yaml
+/*.pcap
+/*.pcap.gz
+/*.sh

@@ -1,6 +1,6 @@
 # Super primitive configure script
 
-AC_INIT([openli],[1.1.14],[shane@alcock.co.nz])
+AC_INIT([openli],[1.1.15],[shane@alcock.co.nz])
 
 AM_INIT_AUTOMAKE([subdir-objects])
 AC_CONFIG_SRCDIR(src/collector/collector.c)
@@ -52,6 +52,7 @@ AC_CHECK_LIB([uuid], [uuid_parse],,libuuid_found=0)
 
 if test "x$libzmq_found" = "x1"; then
         COLLECTOR_LIBS="$COLLECTOR_LIBS -lzmq"
+        MEDIATOR_LIBS="$MEDIATOR_LIBS -lzmq"
 fi
 
 if test "x$libssl11_found" = "x1"; then
@@ -121,10 +122,10 @@ if test "x$enable_provisioner" != "xno"; then
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
-        AC_CHECK_LIB([wandder], [wandder_decode_integer_value],libwandder_found=1,libwandder_found=0)
+        AC_CHECK_LIB([wandder], [wandder_timeval_to_generalizedts],libwandder_found=1,libwandder_found=0)
 
         if test "$libwandder_found" = 0; then
-                AC_MSG_ERROR(Required library libwandder 2.0.6 or later not found; use LDFLAGS to specify library location)
+                AC_MSG_ERROR(Required library libwandder 2.0.16 or later not found; use LDFLAGS to specify library location)
         fi
 
 

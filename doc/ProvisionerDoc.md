@@ -469,6 +469,20 @@ following options:
 * `restauthkey` -- the passphrase needed to decrypt the SQLite3 database
 
 
+If you are enabling the sending of Integrity Check PDUs to any of the
+law enforcement agencies that will be managed by this provisioner, you
+will need to supply a TLS private key for signing some of the hash digests
+included in those PDUs. To do this, you will need to provide the following
+option:
+
+* `integrity-signing-private-key` -- the path to the file containing the
+                                     private key that is to be used to
+                                     sign integrity checks.
+
+See https://github.com/OpenLI-NZ/openli/wiki/Integrity-Checks for more
+information on how to create a key and enable Integrity Checks for a
+particular agency.
+
 ### Intercept Configuration Syntax
 Intercept configuration, i.e. current intercepts, recipient agencies and
 special servers, is stored in a separate YAML file. Ideally, a user would
@@ -507,6 +521,68 @@ key-value elements:
                    connection. Defaults to 30. If set to zero, the mediator
                    will not require a response to keep alives to maintain the
                    handover connections.
+* `connectretrywait` -- the amount of time (in seconds) to wait between attempts
+                        to connect to an agency handover. Defaults to 10
+                        seconds.
+* `resendwindow`  -- the amount of buffered data to retransmit when a handover
+                     reconnects after a disconnection event (in KBs). Defaults
+                     to zero (i.e. don't retransmit anything that was sent
+                     prior to the disconnection).
+* `timestampformat` -- the timestamp field to include in the ETSI PS Header
+                       when encoding records to send to this agency. Allowed
+                       options are "microseconds" to use the
+                       "MicroSecondTimeStamp" field, and "generalized" to use
+                       the "GeneralizedTime" field. The default is
+                       "microseconds".
+* `payloadencryption`     -- Specifies if the CC and IRI contents sent to this
+                             agency should be encrypted and, if so, which
+                             encryption method to use. If set to "none", no
+                             encryption is performed.
+                             The only encryption method supported right now is
+                             "aes-192-cbc".
+                             The default setting is "none".
+* `encryptionkey`         -- The encryption key to use when encrypting CC and
+                             IRI contents. This option is mandatory if
+                             `payloadencryption` is NOT set to "none". The
+                             ideal key length is 24 characters. Shorter keys
+                             will be padded with null bytes, longer keys will be
+                             truncated to 24 characters.
+* `integrity` -- a YAML mapping object that defines whether integrity check
+                 messages should be sent to this agency, and how these messages
+                 should be generated.
+
+If Integrity Check records are required, the configuration parameters for
+these records can be set by specifying fields inside the `integrity` object
+mentioned above. Note that the agency will most likely tell you what values
+it wants configured for these options, so do not worry too much about having
+to decide what to choose for each option.
+
+The available fields are:
+* `enabled`     -- if true, integrity check records will be sent to this agency.
+                   Defaults to false (i.e. no integrity checks).
+* `hashmethod`  -- the algorithm to use when generating message digests from
+                   the intercepted data PDUs. Defaults to `sha-256`, but
+                   `sha-1`, `sha-384` and `sha-512` are also supported.
+* `signedhashmethod`    -- the algorithm to use when generated a digest from
+                           previous message digests that is going to be signed
+                           using a private key. Defaults to `sha-256` but
+                           `sha-1`, `sha-384` and `sha-512` are also supported.
+* `hashtimeout`  -- produce an integrity check containing a message digest hash
+                    within this number of seconds after seeing the oldest
+                    unhashed data PDU. Defaults to 1 second.
+* `datapducount` -- produce an integrity check containing a message digest hash
+                    as soon as this number of unhashed data PDUs have been seen.
+                    Defaults to 1000 PDUs.
+* `signtimeout`  -- produce an integrity check containing a signed digest hash
+                    of the preceding message digests within this number of
+                    seconds after sending the oldest unsigned digest hash.
+                    Defaults to 30 seconds.
+* `hashpducount` -- produce an integrity check containing a signed digest hash
+                    of the preceding message digests as soon as the number of
+                    unsigned digest hashes exceeds this value. Defaults to 15
+                    digest hashes.
+
+---
 
 VOIP, Email and IPintercepts are also expressed as a YAML sequence, with a key
 of `voipintercepts:`, `emailintercepts:`, and `ipintercepts:` respectively.
@@ -670,6 +746,11 @@ All intercept types also support the following optional key-value elements:
                              ideal key length is 24 characters. Shorter keys
                              will be padded with null bytes, longer keys will be
                              truncated to 24 characters.
+
+Note that encryption configuration provided at the intercept level will
+override any encryption configuration that has been set at the agency level
+for the agency that the intercept is destined for.
+
 ---
 
 The default approach for delivering compressed email content to the agencies

@@ -28,9 +28,26 @@
 #define OPENLI_AGENCY_H_
 
 #include <libtrace/linked_list.h>
+#include "intercept.h"
 
 #define DEFAULT_AGENCY_KEEPALIVE_WAIT (30)
 #define DEFAULT_AGENCY_KEEPALIVE_FREQ (300)
+#define DEFAULT_AGENCY_HANDOVER_RETRY (10)
+#define DEFAULT_AGENCY_RESEND_WINDOW (0)
+
+#define DEFAULT_DIGEST_HASH_TIMEOUT 1
+#define DEFAULT_DIGEST_SIGN_TIMEOUT 300
+#define DEFAULT_DIGEST_HASH_PDULIMIT 1000
+#define DEFAULT_DIGEST_SIGN_HASHLIMIT 15
+#define DEFAULT_DIGEST_HASH_METHOD OPENLI_DIGEST_HASH_ALGO_SHA256
+#define DEFAULT_AGENCY_TIMESTAMP_FORMAT OPENLI_ENCODED_TIMESTAMP_MICROSECONDS
+
+typedef enum {
+    OPENLI_DIGEST_HASH_ALGO_SHA1 = 1,
+    OPENLI_DIGEST_HASH_ALGO_SHA256 = 2,
+    OPENLI_DIGEST_HASH_ALGO_SHA384 = 3,
+    OPENLI_DIGEST_HASH_ALGO_SHA512 = 4,
+} openli_integrity_hash_method_t;
 
 typedef struct liagency {
 
@@ -42,6 +59,20 @@ typedef struct liagency {
     char *agencycc;
     uint32_t keepalivefreq;
     uint32_t keepalivewait;
+    uint16_t handover_retry;
+    uint32_t resend_window_kbs;
+    openli_timestamp_encoding_fmt_t time_fmt;
+
+    openli_integrity_hash_method_t digest_hash_method;
+    openli_integrity_hash_method_t digest_sign_method;
+    uint8_t digest_required;
+    uint32_t digest_hash_timeout;
+    uint32_t digest_hash_pdulimit;
+    uint32_t digest_sign_timeout;
+    uint32_t digest_sign_hashlimit;
+
+    payload_encryption_method_t encrypt;
+    char *encryptkey;
 } liagency_t;
 
 #define agency_equal(a, b) \
@@ -50,12 +81,32 @@ typedef struct liagency {
      (strcmp(a->hi3_ipstr, b->hi3_ipstr) == 0) && \
      (strcmp(a->hi3_portstr, b->hi3_portstr) == 0) && \
      (strcmp(a->agencyid, b->agencyid) == 0) && \
+     a->keepalivefreq == b->keepalivefreq && \
+     a->keepalivewait == b->keepalivewait && \
+     a->handover_retry == b->handover_retry && \
+     a->resend_window_kbs == b->resend_window_kbs && \
+     a->digest_required == b->digest_required && \
+     a->time_fmt == b->time_fmt && \
+         ((!a->digest_required) || ( \
+             a->digest_hash_timeout == b->digest_hash_timeout && \
+             a->digest_hash_pdulimit == b->digest_hash_pdulimit && \
+             a->digest_sign_timeout == b->digest_sign_timeout && \
+             a->digest_sign_hashlimit == b->digest_sign_hashlimit && \
+             a->digest_sign_method == b->digest_sign_method && \
+             a->digest_hash_method == b->digest_hash_method)) && \
      ((a->agencycc == NULL && b->agencycc == NULL) || \
         (a->agencycc != NULL && b->agencycc != NULL && \
-         strcmp(a->agencycc, b->agencycc) == 0)))
+         strcmp(a->agencycc, b->agencycc) == 0)) && \
+     ((a->encryptkey == NULL && b->encryptkey == NULL) || \
+        (a->encryptkey != NULL && b->encryptkey != NULL && \
+         strcmp(a->encryptkey, b->encryptkey) == 0)) && \
+     a->encrypt == b->encrypt \
+     )
 
 #endif
 
+openli_integrity_hash_method_t map_digest_hash_method_string(char *str);
 void free_liagency(liagency_t *ag);
+liagency_t *copy_liagency(liagency_t *lea);
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

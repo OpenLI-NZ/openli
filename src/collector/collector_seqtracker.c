@@ -44,9 +44,6 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->delivcc) {
         free(msg->delivcc);
     }
-    if (msg->encryptkey) {
-        free(msg->encryptkey);
-    }
 }
 
 static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
@@ -206,21 +203,14 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         remove_preencoded(seqdata, intstate);
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
-        if (intstate->details.encryptkey) {
-            free(intstate->details.encryptkey);
-        }
 
         /* leave the CIN seqno state as is for now */
         intstate->details.authcc = strdup(cept->authcc);
         intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        if (intstate->details.encryptkey) {
-            intstate->details.encryptkey = strdup(cept->encryptkey);
-        } else {
-            intstate->details.encryptkey = NULL;
-        }
         intstate->details.encryptmethod = cept->encryptmethod;
+        intstate->details.timefmt = cept->timefmt;
         intstate->version ++;
 
     } else {
@@ -233,12 +223,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        if (cept->encryptkey) {
-            intstate->details.encryptkey = strdup(cept->encryptkey);
-        } else {
-            intstate->details.encryptkey = NULL;
-        }
         intstate->details.encryptmethod = cept->encryptmethod;
+        intstate->details.timefmt = cept->timefmt;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
 
@@ -297,12 +283,8 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.delivcc = strdup(msg->delivcc);
     intstate->details.delivcc_len = strlen(msg->delivcc);
 
-    if (intstate->details.encryptkey) {
-        free(intstate->details.encryptkey);
-    }
-    intstate->details.encryptkey = msg->encryptkey;
     intstate->details.encryptmethod = msg->encryptmethod;
-
+    intstate->details.timefmt = msg->timefmt;
 
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
@@ -384,11 +366,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cin = (int64_t)cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
-    if (intstate->details.encryptkey) {
-        job.encryptkey = strdup(intstate->details.encryptkey);
-    } else {
-        job.encryptkey = NULL;
-    }
+    job.timefmt = intstate->details.timefmt;
 
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||

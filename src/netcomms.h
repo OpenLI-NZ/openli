@@ -89,6 +89,24 @@ typedef struct openli_mediator {
     char *portstr;
 } openli_mediator_t;
 
+struct ics_sign_request_message {
+    char *ics_key;
+    char *requestedby;
+    uint32_t requestedby_fwd;
+    int64_t seqno;
+    unsigned char *digest;
+    unsigned int digest_len;
+};
+
+struct ics_sign_response_message {
+    char *ics_key;
+    char *requestedby;
+    uint32_t requestedby_fwd;
+    int64_t seqno;
+    unsigned char *signature;
+    uint32_t sign_len;
+};
+
 typedef enum {
     NETBUF_RECV,
     NETBUF_SEND,
@@ -145,6 +163,9 @@ typedef enum {
     OPENLI_PROTO_RAWIP_CC,
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
+    OPENLI_PROTO_X2X3_LISTENER,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -203,7 +224,32 @@ typedef enum {
     OPENLI_PROTO_FIELD_CORESERVER_LOWER_PORT,
     OPENLI_PROTO_FIELD_LEACC,
     OPENLI_PROTO_FIELD_XID,
+    OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD,
+    OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD,
+    OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT,
+    OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT,
+    OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
+    OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
+    OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+    OPENLI_PROTO_FIELD_COMPONENT_NAME,
+    OPENLI_PROTO_FIELD_DIGEST,
+    OPENLI_PROTO_FIELD_LENGTH_BYTES,
+    OPENLI_PROTO_FIELD_COLLECTORID,
+    OPENLI_PROTO_FIELD_HANDOVER_RETRY,
+    OPENLI_PROTO_FIELD_WINDOW_SIZE,
+    OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
+    OPENLI_PROTO_FIELD_THREADID,
+
 } openli_proto_fieldtype_t;
+/* XXX one day we may need to separate these field types into distinct
+ * enums for each "message type" as there is only one byte available for
+ * storing the field type in a field.
+ *
+ * But since we always know the context of the message type that we are
+ * parsing, we can re-purpose each field type value to mean different fields
+ * depending on whether we are parsing an LEA announcement vs an intercept vs
+ * a core server etc...
+ */
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
 int fd_set_nonblock(int fd);
@@ -220,6 +266,10 @@ int push_default_radius_onto_net_buffer(net_buffer_t *nb,
 int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
         default_radius_user_t *defuser);
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
+int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
+        struct ics_sign_request_message *req);
+int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
+        struct ics_sign_response_message *resp);
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
@@ -236,9 +286,11 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype);
+        authtype, char *name);
+int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid);
+        char *liid, char *encryptkey, payload_encryption_method_t method);
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
@@ -282,6 +334,10 @@ int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
         default_radius_user_t *defuser);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
+int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
+        struct ics_sign_request_message *req);
+int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
+        struct ics_sign_response_message *resp);
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
@@ -305,7 +361,9 @@ int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid);
+        char **liid, char **encryptkey, payload_encryption_method_t *method);
+int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, uint64_t *ts);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
 int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);
@@ -327,6 +385,7 @@ int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

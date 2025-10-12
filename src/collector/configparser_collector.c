@@ -351,7 +351,7 @@ static void parse_col_thread_count(int *toset, const char *expectedkey,
     if (*toset < min) {
         *toset = min;
         logger(LOG_INFO,
-                "OpenLI: must have at least %s %s thread per collector!",
+                "OpenLI: you must have at least %d %s thread(s) per collector!",
                 min, errlabel);
     }
 }

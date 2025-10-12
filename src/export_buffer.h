@@ -60,11 +60,25 @@ typedef struct export_buffer {
     uint8_t *buftail;
     uint64_t alloced;
 
+    /* all data prior to this offset can be considered "successfully written" */
     uint32_t deadfront;
+
+    /* offset pointing to the first record that has not been sent */
+    uint32_t writeoffset;
+
+    /* offset pointing to where a previous partial write ended */
     uint32_t partialfront;
+
+    /* number of bytes remaining to be written following a previous partial
+     * write */
     uint32_t partialrem;
 
     uint64_t nextwarn;
+
+    /* number of subsequent bytes that must be sent before data in the buffer
+     * can be considered "sent"
+     */
+    uint32_t deadwindow;
 
     Pvoid_t record_offsets;
     uint32_t since_last_saved_offset;
@@ -91,6 +105,7 @@ int check_rmq_connection_block_status(amqp_connection_state_t amqp_state,
 int transmit_heartbeat(int fd, SSL *ssl);
 int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount);
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem);
+void set_export_buffer_ack_window(export_buffer_t *buf, uint32_t window);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -90,6 +90,8 @@ typedef struct handover {
     med_epoll_ev_t *aliverespev;
     per_handover_state_t *ho_state;
     uint8_t disconnect_msg;
+
+    time_t last_connect_attempt;
 } handover_t;
 
 typedef struct mediator_agency {
@@ -98,6 +100,8 @@ typedef struct mediator_agency {
     int awaitingconfirm;
     int disabled;
     int disabled_msg;
+    uint16_t handover_retry;
+    openli_timestamp_encoding_fmt_t timefmt;
     handover_t *hi2;
     handover_t *hi3;
 } mediator_agency_t;
@@ -139,11 +143,13 @@ void trigger_handover_ka_failure(handover_t *ho);
  *  @param ho           The handover that needs to send a keep alive
  *  @param mediator_id  The ID of this mediator (to be included in the KA msg)
  *  @param operator_id  The operator ID string (to be included in the KA msg)
+ *  @param timefmt      The type of timestamp to include in keep alive PSHeader
  *
  *  @return -1 if an error occurs, 0 otherwise
  */
 int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
-        char *operator_id, char *agency_cc);
+        char *operator_id, char *agency_cc,
+        openli_timestamp_encoding_fmt_t timefmt);
 
 /** Disconnects a single mediator handover connection to an LEA.
  *
@@ -174,11 +180,14 @@ int receive_handover(handover_t *ho);
  * @param kafreq        The frequency to send keep alive requests (in seconds).
  * @param kawait        The time to wait before assuming a keep alive has
  *                      failed (in seconds).
+ * @param resendwin     The amount of previously-sent bytes to retransmit upon
+ *                      a handover reconnection, in KBs.
  *
  * @return a pointer to a new handover instance, or NULL if an error occurs.
  */
 handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
-        int handover_type, uint32_t kafreq, uint32_t kawait);
+        int handover_type, uint32_t kafreq, uint32_t kawait,
+        uint32_t resendwin);
 
 /** Establish an agency handover connection
  *
@@ -191,10 +200,13 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
  *  @param ho           The handover object that is to be connected
  *  @param epoll_fd     The epoll fd to add handover events to
  *  @param ho_id        The unique ID number for this handover
+ *  @param reconnect_interval   The number of seconds we should wait between
+ *                              connection attempts for this agency.
  *
  *  @return -1 if the connection fails, 0 otherwise.
  */
-int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id);
+int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
+        uint16_t reconnect_interval);
 
 /** Releases all memory associated with a single handover object.
  *

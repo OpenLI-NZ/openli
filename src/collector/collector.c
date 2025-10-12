@@ -1446,7 +1446,8 @@ static void reload_x2x3_inputs(collector_global_t *glob,
         HASH_DELETE(hh, newstate->x_inputs, newinp);
         HASH_ADD_KEYPTR(hh, glob->x_inputs, newinp->identifier,
                 strlen(newinp->identifier), newinp);
-        if (add_x2x3_to_sync(sync, newinp->identifier) < 0) {
+        if (add_x2x3_to_sync(sync, newinp->identifier, newinp->listenaddr,
+                    newinp->listenport) < 0) {
             logger(LOG_INFO,
                     "OpenLI: failed to register X2-X3 input %s with sync thread",
                     newinp->identifier);
@@ -2277,7 +2278,8 @@ static void *start_ip_sync_thread(void *params) {
     }
 
     HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
-        if (add_x2x3_to_sync(sync, xinp->identifier) < 0) {
+        if (add_x2x3_to_sync(sync, xinp->identifier, xinp->listenaddr,
+                xinp->listenport) < 0) {
             logger(LOG_INFO, "OpenLI: failed to register X2-X3 input %s with sync thread", xinp->identifier);
             /*
              * try to force the thread to die because the sync thread was
