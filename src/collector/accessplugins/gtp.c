@@ -193,7 +193,7 @@ typedef struct gtp_parsed {
     char tunnel_endpoint[256];
     char imsi[16];
     char msisdn[16];
-    char imei[16];
+    char imei[18];
 
     gtp_saved_pkt_t *request;
     gtp_saved_pkt_t *response;
