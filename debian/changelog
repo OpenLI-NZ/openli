@@ -28,8 +28,8 @@ openli (1.1.15-1) unstable; urgency=medium
   * Add experimental support for including Integrity Check PDUs in the
     handover stream, as per Annex J of ETSI TS 102 232-1. By default,
     integrity checks are disabled but may be enabled on a per-agency basis.
-  * Provisioner: fix crash while the REST API when the running intercept
-    configuration file was not writable.
+  * Provisioner: fix crash that occurred if using the REST API when the running
+    intercept configuration file was not writable.
   * REST API: add information about the listening X2/X3 endpoints to the
     response to a 'collectors/' request.
   * REST API: collector identifiers now include the operator ID,
@@ -44,7 +44,7 @@ openli (1.1.15-1) unstable; urgency=medium
     the collectors -- this change was required to support the integrity
     check feature.
 
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 29 Sep 2025 16:30:28 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Sun, 12 Oct 2025 18:31:41 +1300
 
 openli (1.1.14-1) unstable; urgency=medium
 
