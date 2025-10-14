@@ -516,7 +516,6 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          sizeof(common.encrypt) + common.delivcc_len + \
          sizeof(common.time_fmt) + \
          (36 * common.xid_count) + \
-         (common.encryptkey_len ? (common.encryptkey_len + 4) : 0) + \
          ((10 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
