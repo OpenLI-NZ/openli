@@ -34,7 +34,7 @@
 
 uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
         wandder_etsispec_t *etsidecoder, uint8_t *fullrec, uint16_t reclen,
-        char *enckey) {
+        uint8_t *enckey, size_t enckeylen) {
 
 
     uint8_t *dest = NULL;
@@ -49,6 +49,10 @@ uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
         return NULL;
     }
     if (!ctx) {
+        return NULL;
+    }
+
+    if (enckeylen < OPENLI_AES192_KEY_LEN) {
         return NULL;
     }
 
@@ -87,20 +91,21 @@ uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
 
 payload_encryption_method_t check_encryption_requirements(
         mediator_collector_config_t *config, char *liid,
-        char **enckey) {
+        uint8_t *enckey, size_t *enckeylen) {
 
     added_liid_t *found = NULL;
     payload_encryption_method_t method = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
+    memset(enckey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+
     pthread_mutex_lock(&(config->mutex));
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
-    if (found && found->encryptkey) {
-        (*enckey) = strdup(found->encryptkey);
-    } else {
-        *enckey = NULL;
+    if (found && found->encryptkey_len > 0) {
+        memcpy(enckey, found->encryptkey, found->encryptkey_len);
     }
     if (found) {
         method = found->encrypt;
+        *enckeylen = found->encryptkey_len;
     }
     pthread_mutex_unlock(&(config->mutex));
 

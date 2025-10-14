@@ -72,7 +72,8 @@ typedef struct liagency {
     uint32_t digest_sign_hashlimit;
 
     payload_encryption_method_t encrypt;
-    char *encryptkey;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+    size_t encryptkey_len;
 } liagency_t;
 
 #define agency_equal(a, b) \
@@ -86,6 +87,7 @@ typedef struct liagency {
      a->handover_retry == b->handover_retry && \
      a->resend_window_kbs == b->resend_window_kbs && \
      a->digest_required == b->digest_required && \
+     a->encryptkey_len == b->encryptkey_len && \
      a->time_fmt == b->time_fmt && \
          ((!a->digest_required) || ( \
              a->digest_hash_timeout == b->digest_hash_timeout && \
@@ -97,16 +99,14 @@ typedef struct liagency {
      ((a->agencycc == NULL && b->agencycc == NULL) || \
         (a->agencycc != NULL && b->agencycc != NULL && \
          strcmp(a->agencycc, b->agencycc) == 0)) && \
-     ((a->encryptkey == NULL && b->encryptkey == NULL) || \
-        (a->encryptkey != NULL && b->encryptkey != NULL && \
-         strcmp(a->encryptkey, b->encryptkey) == 0)) && \
-     a->encrypt == b->encrypt \
+     ((a->encryptkey_len > 0 && b->encryptkey_len > 0) && \
+         memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len) == 0) \
      )
 
-#endif
 
 openli_integrity_hash_method_t map_digest_hash_method_string(char *str);
 void free_liagency(liagency_t *ag);
 liagency_t *copy_liagency(liagency_t *lea);
+#endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

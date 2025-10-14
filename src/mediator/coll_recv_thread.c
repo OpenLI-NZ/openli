@@ -146,9 +146,6 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
     added_liid_t *iter, *tmp;
     HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
         HASH_DELETE(hh, config->liid_to_agency_map, iter);
-        if (iter->encryptkey) {
-            free(iter->encryptkey);
-        }
         free(iter->liid);
         free(iter->agencyid);
         free(iter);
@@ -168,40 +165,27 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
  *  @param encmethod    The encryption method to apply to IRIs and CCs using
  *                      this LIID.
  *  @param encryptkey   The key to use when encrypting an IRI or CC.
+ *  @param encryptlen   The length of the encryption key, in bytes.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
         char *liid, char *agencyid, payload_encryption_method_t encmethod,
-        char *encryptkey) {
+        uint8_t *encryptkey, size_t encryptlen) {
     added_liid_t *found = NULL;
 
     pthread_mutex_lock(&(config->mutex));
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         free(found->agencyid);
-        found->agencyid = strdup(agencyid);
-        if (found->encryptkey) {
-            free(found->encryptkey);
-        }
-        if (encryptkey) {
-            found->encryptkey = strdup(encryptkey);
-        } else {
-            found->encryptkey = NULL;
-        }
-        found->encrypt = encmethod;
     } else {
         found = calloc(1, sizeof(added_liid_t));
         found->liid = strdup(liid);
-        found->agencyid = strdup(agencyid);
-        if (encryptkey) {
-            found->encryptkey = strdup(encryptkey);
-        } else {
-            found->encryptkey = NULL;
-        }
-        found->encrypt = encmethod;
-
         HASH_ADD_KEYPTR(hh, config->liid_to_agency_map, found->liid,
                 strlen(found->liid), found);
     }
+    found->agencyid = strdup(agencyid);
+    found->encryptkey_len = encryptlen;
+    memcpy(found->encryptkey, encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
+    found->encrypt = encmethod;
 
     pthread_mutex_unlock(&(config->mutex));
 }
@@ -242,9 +226,6 @@ void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         HASH_DELETE(hh, config->liid_to_agency_map, found);
-        if (found->encryptkey) {
-            free(found->encryptkey);
-        }
         free(found->agencyid);
         free(found->liid);
         free(found);
@@ -268,9 +249,6 @@ void remove_liid_mapping_by_agency_collector_config(
     HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
         if (strcasecmp(iter->agencyid, agencyid) == 0) {
             HASH_DELETE(hh, config->liid_to_agency_map, iter);
-            if (iter->encryptkey) {
-                free(iter->encryptkey);
-            }
             free(iter->agencyid);
             free(iter->liid);
             free(iter);
@@ -760,7 +738,8 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
     int r = 0;
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
-    char *enckey = NULL;
+    uint8_t enckey[OPENLI_MAX_ENCRYPTKEY_LEN];
+    size_t enckeylen = 0;
     payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
     /* The queue that this record must be published to is derived from
@@ -812,24 +791,21 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI || msgtype == OPENLI_PROTO_ETSI_CC) {
         encmethod = check_encryption_requirements(col->parentconfig,
-                found->liid, &enckey);
+                found->liid, enckey, &enckeylen);
     }
 
     if (encmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-
-        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
-                col->etsidecoder, msgbody, msglen, enckey) == NULL) {
-
-            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
-            if (enckey) {
-                free(enckey);
-            }
+        if (enckeylen != OPENLI_AES192_KEY_LEN) {
+            logger(LOG_INFO, "OpenLI Mediator: unable to encrypt ETSI record for LIID %s in collector thread %s -- the encryption key provided is not a valid length", found->liid, col->ipaddr);
             return -1;
         }
-    }
 
-    if (enckey) {
-        free(enckey);
+        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
+                col->etsidecoder, msgbody, msglen, enckey, enckeylen) == NULL) {
+
+            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
+            return -1;
+        }
     }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */

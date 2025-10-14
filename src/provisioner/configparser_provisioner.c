@@ -34,9 +34,13 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <math.h>
+#include <string.h>
+#include <ctype.h>
+#include <stdint.h>
 
 #include "configparser_common.h"
 #include "configparser_provisioner.h"
+
 
 uint64_t nextid = 0;
 
@@ -224,6 +228,43 @@ static int parse_defradusers_list(prov_intercept_conf_t *state,
 
     return 0;
 }
+
+
+static int parse_and_set_encryption_key(uint8_t *keyspace, size_t *keylen,
+        const char *yaml_value) {
+    if (!keyspace || !yaml_value) return -1;
+
+    // Case 1: 0x + 48 hex digits
+    if (yaml_value[0] == '0' && (yaml_value[1] == 'x' || yaml_value[1] == 'X')) {
+        if (openli_hex_to_bytes_24(yaml_value, keyspace) != 0) {
+            logger(LOG_ERR, "OpenLI: encryptionkey must be 0x + 48 hex digits for AES-192.");
+            return -1;
+        }
+        *keylen = OPENLI_AES192_KEY_LEN;
+        return 0;
+    }
+
+    // Case 2: ASCII string of exactly 24 bytes
+    size_t n = strlen(yaml_value);
+    if (n == 24) {
+        // Optional: enforce printable ASCII only
+        for (size_t i = 0; i < n; ++i) {
+            unsigned char ch = (unsigned char)yaml_value[i];
+            if (ch < 0x20 || ch > 0x7E) {
+                logger(LOG_ERR, "OpenLI: encryptionkey ASCII must be 24 printable characters.");
+                return -1;
+            }
+        }
+        memcpy(keyspace, yaml_value, 24);
+        *keylen = OPENLI_AES192_KEY_LEN;
+        return 0;
+    }
+
+    logger(LOG_ERR, "OpenLI: encryptionkey must be 0x + 48 hex digits or a 24-byte ASCII string.");
+    return -1;
+}
+
+
 
 static int add_intercept_static_ips(static_ipranges_t **statics,
         yaml_document_t *doc, yaml_node_t *ipseq) {
@@ -434,7 +475,8 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
         newag->digest_required = 0;
         newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
-        newag->encryptkey = NULL;
+        memset(newag->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+        newag->encryptkey_len = 0;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair ++) {
@@ -561,7 +603,9 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
-                SET_CONFIG_STRING_OPTION(newag->encryptkey, value);
+		        const char *k = (const char *)value->data.scalar.value;
+        		parse_and_set_encryption_key(newag->encryptkey,
+                        &(newag->encryptkey_len), k);
             }
         }
 
@@ -584,7 +628,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             continue;
         }
 
-        if (newag->encryptkey == NULL &&
+        if (newag->encryptkey_len == 0 &&
                 newag->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
             logger(LOG_INFO, "OpenLI: Agency configuration for '%s' asks for encryption but has not provided an encryption key -- encryption will be disabled",
                     newag->agencyid);
@@ -697,11 +741,14 @@ static void parse_intercept_common_fields(intercept_common_t *common,
         }
     }
 
-    if (key->type == YAML_SCALAR_NODE &&
-            value->type == YAML_SCALAR_NODE &&
-            strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
-        SET_CONFIG_STRING_OPTION(common->encryptkey, value);
-    }
+	if (key->type == YAML_SCALAR_NODE &&
+			value->type == YAML_SCALAR_NODE &&
+			strcasecmp((char *)key->data.scalar.value, "encryptionkey") == 0) {
+
+		const char *k = (const char *)value->data.scalar.value;
+		parse_and_set_encryption_key(common->encryptkey,
+                &(common->encryptkey_len), k);
+	}
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -729,6 +776,7 @@ static void parse_intercept_common_fields(intercept_common_t *common,
     }
 }
 
+
 static inline void init_intercept_common(intercept_common_t *common,
         void *parent, openli_intercept_types_t intercept_type) {
     prov_intercept_data_t *local;
@@ -741,13 +789,14 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->delivcc_len = 0;
     common->destid = 0;
     common->targetagency = NULL;
-    common->encryptkey = NULL;
     common->tostart_time = 0;
     common->toend_time = 0;
     common->tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
     common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
     common->hi1_seqno = 0;
     common->local = calloc(1, sizeof(prov_intercept_data_t));
+    memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+    common->encryptkey_len = 0;
 
     common->xids = NULL;
     common->xid_count = 0;
@@ -814,16 +863,17 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
         }
 
         tgtcount = HASH_CNT(hh, newcept->targets);
-        if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (newcept->common.liid == NULL) {
+		if (newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        	    newcept->common.encryptkey_len != OPENLI_AES192_KEY_LEN) {
+            if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
-            logger(LOG_INFO, "OpenLI: Email intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+            logger(LOG_INFO, "OpenLI: Email intercept configuration for '%s' asks for encryption but has not provided a valid encryption key -- skipping",
                     newcept->common.liid);
             free_single_emailintercept(newcept);
             continue;
         }
+
         if (newcept->common.liid != NULL && newcept->common.authcc != NULL &&
                 newcept->common.delivcc != NULL &&
                 tgtcount > 0 &&
@@ -886,12 +936,12 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
 
         }
 
-        if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (newcept->common.liid == NULL) {
+		if (newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        	    newcept->common.encryptkey_len != OPENLI_AES192_KEY_LEN) {
+            if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
-            logger(LOG_INFO, "OpenLI: VoIP intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+            logger(LOG_INFO, "OpenLI: VoIP intercept configuration for '%s' asks for encryption but has not provided a valid encryption key -- skipping",
                     newcept->common.liid);
             free_single_voipintercept(newcept);
             continue;
@@ -1020,12 +1070,12 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             }
         }
 
-        if (newcept->common.encryptkey == NULL &&
-                newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-            if (newcept->common.liid == NULL) {
+		if (newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        	    newcept->common.encryptkey_len != OPENLI_AES192_KEY_LEN) {
+            if (!newcept->common.liid) {
                 newcept->common.liid = strdup("unidentified intercept");
             }
-            logger(LOG_INFO, "OpenLI: IP intercept configuration for '%s' asks for encryption but has not provided an encryption key -- skipping",
+            logger(LOG_INFO, "OpenLI: IP intercept configuration for '%s' asks for encryption but has not provided a valid encryption key -- skipping",
                     newcept->common.liid);
             free_single_ipintercept(newcept);
             continue;

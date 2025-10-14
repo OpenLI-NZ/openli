@@ -40,6 +40,7 @@
 #include "logger.h"
 #include "etsili_core.h"
 #include "encoder_worker.h"
+#include "intercept.h"
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
@@ -229,10 +230,6 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
         } while (x > 0);
         zmq_close(enc->zmq_recvjobs[i]);
-    }
-
-    if (enc->encrypt.evp_ctx) {
-        EVP_CIPHER_CTX_free(enc->encrypt.evp_ctx);
     }
 
     if (enc->zmq_control) {

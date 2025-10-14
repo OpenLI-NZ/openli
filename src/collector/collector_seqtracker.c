@@ -33,6 +33,7 @@
 #include "logger.h"
 #include "collector_base.h"
 #include "collector_publish.h"
+#include "intercept.h"
 
 static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->liid) {
@@ -209,6 +210,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
+
         intstate->details.encryptmethod = cept->encryptmethod;
         intstate->details.timefmt = cept->timefmt;
         intstate->version ++;
@@ -223,8 +225,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.liid_len = strlen(cept->liid);
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
-        intstate->details.encryptmethod = cept->encryptmethod;
         intstate->details.timefmt = cept->timefmt;
+        intstate->details.encryptmethod = cept->encryptmethod;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
 
@@ -283,9 +285,8 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.delivcc = strdup(msg->delivcc);
     intstate->details.delivcc_len = strlen(msg->delivcc);
 
-    intstate->details.encryptmethod = msg->encryptmethod;
     intstate->details.timefmt = msg->timefmt;
-
+    intstate->details.encryptmethod = msg->encryptmethod;
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
     intstate->version ++;
@@ -367,7 +368,6 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
     job.timefmt = intstate->details.timefmt;
-
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
             recvd->type == OPENLI_EXPORT_UMTSCC ||

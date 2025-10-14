@@ -288,17 +288,18 @@ int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
     return (int)totallen;
 }
 
-#define LIIDMAP_BODY_LEN(agency, liid, key) \
+#define LIIDMAP_BODY_LEN(agency, liid, enclen) \
     (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
-    ( key ? strlen(key) + 4 : 0) + (3 * 4))
+    ( enclen > 0 ? enclen + 4 : 0) + (3 * 4))
 
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid, char *encryptkey, payload_encryption_method_t method) {
+        char *liid, uint8_t *encryptkey, size_t encryptlen,
+        payload_encryption_method_t method) {
 
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptkey);
+    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptlen);
     populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -321,9 +322,9 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         return -1;
     }
 
-    if (encryptkey) {
+    if (encryptlen > 0) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
-                (uint8_t *)encryptkey, strlen(encryptkey)) == -1) {
+                encryptkey, encryptlen) == -1) {
             return -1;
         }
     }
@@ -587,17 +588,6 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             sizeof(common->encrypt)) == -1) {
         return -1;
     }
-
-    /** Collectors do not need to know the encryption key any more */
-    /*
-    if (common->encryptkey) {
-        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
-                (uint8_t *)(common->encryptkey),
-                strlen(common->encryptkey)) == -1) {
-            return -1;
-        }
-    }
-    */
 
     for (i = 0; i < common->xid_count; i++) {
         char uuid[64];
@@ -1827,7 +1817,8 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->toend_time = 0;
     common->tomediate = 0;
     common->encrypt = 0;
-    common->encryptkey = NULL;
+    memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+    common->encryptkey_len = 0;
     common->seqtrackerid = 0;
     common->xids = NULL;
     common->xid_count = 0;
@@ -1875,7 +1866,15 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
             // shouldn't see this any more, but doesn't hurt to decode anyway
-            DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
+			if (vallen > OPENLI_MAX_ENCRYPTKEY_LEN) {
+				logger(LOG_INFO, "OpenLI: encryption key too long for buffer (%u)", vallen);
+				return -1;
+			}
+			memcpy(common->encryptkey, valptr, vallen);
+			if (vallen < OPENLI_MAX_ENCRYPTKEY_LEN) {
+				memset(common->encryptkey + vallen, 0, OPENLI_MAX_ENCRYPTKEY_LEN - vallen);
+			}
+			common->encryptkey_len = vallen;
             break;
         case OPENLI_PROTO_FIELD_XID:
             DECODE_STRING_FIELD(uuid, valptr, vallen);
@@ -2710,11 +2709,12 @@ int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
 
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid, char **encryptkey, payload_encryption_method_t *method) {
+        char **liid, uint8_t *encryptkey, size_t *encryptlen,
+        payload_encryption_method_t *method) {
 
     uint8_t *msgend = msgbody + len;
 
-    *encryptkey = NULL;
+    *encryptlen = 0;
     *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     while (msgbody < msgend) {
@@ -2731,7 +2731,18 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agency, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
-            DECODE_STRING_FIELD(*encryptkey, valptr, vallen);
+			if (vallen > OPENLI_MAX_ENCRYPTKEY_LEN) {
+				logger(LOG_INFO, "OpenLI: encryption key too long for buffer (%u)", vallen);
+				return -1;
+			}
+            // encryptkey MUST point to a buffer containing at least
+            // OPENLI_MAX_ENCRYPTKEY_LEN bytes!
+			memcpy(encryptkey, valptr, vallen);
+			if (vallen < OPENLI_MAX_ENCRYPTKEY_LEN) {
+				memset(encryptkey + vallen, 0,
+                        OPENLI_MAX_ENCRYPTKEY_LEN - vallen);
+			}
+			*encryptlen = vallen;
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             (*method) = *((payload_encryption_method_t *)valptr);
         } else {

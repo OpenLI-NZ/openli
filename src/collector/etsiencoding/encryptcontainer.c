@@ -209,12 +209,11 @@ static encoded_encrypt_template_t *lookup_encrypted_template(
 
 int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
         uint8_t *dest, uint16_t destlen, uint32_t seqno,
-        char *encryptkey) {
+        const uint8_t *encryptkey) {
 
     uint8_t IV_128[16];
     uint8_t key[24];
     uint32_t swapseqno;
-    size_t keylen = strlen(encryptkey);
     int len, i;
 
     assert(buflen <= destlen);
@@ -226,11 +225,9 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
         memcpy(&(IV_128[i]), &swapseqno, sizeof(uint32_t));
     }
 
-    if (keylen > 24) {
-        keylen = 24;
-    }
-    memset(key, 0, 24);
-    memcpy(key, encryptkey, keylen);
+    /* The key is 24 bytes for AES-192.  */
+    memcpy(key, encryptkey, 24);
+
 
     /* Trust that we have correctly pre-padded the data to encrypt */
     EVP_CIPHER_CTX_set_padding(ctx, 0);
@@ -240,6 +237,17 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
             logger(LOG_INFO, "OpenLI: unable to initialise EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
             return -1;
     }
+
+    /* ETSI-IP.nl uses AES-192-CBC with application-layer padding (if any).
+     * Disable PKCS#7 inside the cipher so ciphertext length == input length. */
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+    /* Sanity: with padding disabled, input MUST be a multiple of 16. */
+    if ((buflen & 0x0F) != 0) {
+        logger(LOG_INFO, "OpenLI: AES-192-CBC called with non-block-aligned input (%u bytes)", buflen);
+        return -1;
+    }
+
 
     if (EVP_EncryptUpdate(ctx, dest, &len, buf, (int)buflen) != 1) {
             logger(LOG_INFO, "OpenLI: unable to perform EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
@@ -251,6 +259,13 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
             return -1;
     }
 
+    /* Cleanse local key copy */
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(key, sizeof(key));
+#else
+    volatile uint8_t *p = key;
+    for (size_t i = 0; i < sizeof(key); ++i) p[i] = 0;
+#endif
     return 0;
 
 }
@@ -387,7 +402,6 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
      * and then the record will be re-encoded with encrypted content by the
      * mediator itself.
      */
-
 
     /* Lookup the template for a message of this length and encryption method */
     tplate = lookup_encrypted_template(&(encrypt->saved_encryption_templates),

@@ -90,6 +90,41 @@ static const char *agency_integrity_hash_method_to_string(
     return "undefined";
 }
 
+static inline int emit_encryption_key(yaml_emitter_t *emitter,
+        uint8_t *key, size_t keylen) {
+
+    /* Emit encryption key as 0x + hex, using the binary key length */
+    yaml_event_t event;
+
+    if (keylen == 0) {
+        return 0;
+    }
+
+    /* field name */
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"encryptionkey", (int)strlen("encryptionkey"),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    yaml_emitter_emit(emitter, &event);
+
+    /* value: 0x + 2 hex chars per byte */
+    char hexbuf[2 + OPENLI_MAX_ENCRYPTKEY_LEN * 2 + 1];
+    size_t n = keylen;
+    char *p = hexbuf;
+    static const char hexd[] = "0123456789abcdef";
+    *p++ = '0'; *p++ = 'x';
+    for (size_t i = 0; i < n; ++i) {
+        *p++ = hexd[key[i] >> 4];
+        *p++ = hexd[key[i] & 0x0F];
+    }
+    *p = '\0';
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)hexbuf, (int)(2 + n * 2),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    yaml_emitter_emit(emitter, &event);
+    return 1;
+}
+
 static int emit_default_radius_usernames(default_radius_user_t *radusers,
         yaml_emitter_t *emitter) {
 
@@ -488,18 +523,9 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
-        if (ag->ag->encryptkey && strlen(ag->ag->encryptkey) > 0) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"encryptionkey", strlen("encryptionkey"),
-                    1, 0, YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)ag->ag->encryptkey,
-                    strlen(ag->ag->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        if (emit_encryption_key(emitter, ag->ag->encryptkey,
+                ag->ag->encryptkey_len) < 0) {
+            return -1;
         }
 
         if (emit_agency_integrity_config(emitter, ag->ag) < 0) {
@@ -720,17 +746,11 @@ static int emit_intercept_common(intercept_common_t *intcom,
         if (!yaml_emitter_emit(emitter, &event)) return -1;
     }
 
-    if (!intcom->encrypt_inherited && intcom->encryptkey &&
-            strlen(intcom->encryptkey) > 0) {
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"encryptionkey", strlen("encryptionkey"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)intcom->encryptkey,
-                strlen(intcom->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    if (!intcom->encrypt_inherited) {
+        if (emit_encryption_key(emitter, intcom->encryptkey,
+                intcom->encryptkey_len) < 0) {
+            return -1;
+        }
     }
 
     if (intcom->xid_count != 0) {

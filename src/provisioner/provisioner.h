@@ -167,7 +167,9 @@ typedef struct liid_hash {
     payload_encryption_method_t encryptmethod;
 
     /** The encryption key to use if/when encrypting intercept payload */
-    char *encryptkey;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+
+    size_t encryptkey_len;
 
     /** Flag to indicate if any of the configuration in this mapping has
      *  changed and therefore needs to be announced to the mediators

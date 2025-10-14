@@ -37,6 +37,14 @@
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
+#ifndef OPENLI_MAX_ENCRYPTKEY_LEN
+#define OPENLI_MAX_ENCRYPTKEY_LEN 32   /* room for AES-256 later */
+#endif
+
+#ifndef OPENLI_AES192_KEY_LEN
+#define OPENLI_AES192_KEY_LEN 24
+#endif
+
 #define INTERCEPT_IS_ACTIVE(cept, now) \
     (cept->common.tostart_time <= now.tv_sec && ( \
         cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
@@ -138,9 +146,10 @@ typedef struct intercept_common {
     time_t toend_time;
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
-    char *encryptkey;
     uint8_t encrypt_inherited;      // only used by provisioner
     openli_timestamp_encoding_fmt_t time_fmt;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+    size_t encryptkey_len;   /* set to 24 when valid */
 
     uuid_t *xids;
     size_t xid_count;
@@ -571,6 +580,41 @@ void intercept_mediation_mode_as_string(intercept_outputs_t mode,
 void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
 void email_decompress_option_as_string(uint8_t opt, char *space, int spacelen);
-#endif
 
+/* Copy src_len bytes from src → dst (capacity dst_cap), zero-fill the tail.
+ * Returns the number of bytes copied (clamped to dst_cap).
+ * If src==NULL or src_len==0: dst is zeroed and 0 is returned. */
+size_t openli_copy_encryptkey(uint8_t *dst, size_t dst_cap,
+                              const uint8_t *src, size_t src_len);
+
+/* Move variant: copy like above, then securely wipe + free *psrc if non-NULL
+ * and free_src_len>0, and set *psrc=NULL. Returns bytes copied. */
+size_t openli_move_encryptkey(uint8_t *dst, size_t dst_cap,
+                              uint8_t **psrc, size_t free_src_len);
+
+/* Clear a destination key buffer and (optionally) reset the caller's length. */
+void openli_clear_encryptkey(uint8_t *dst, size_t dst_cap, size_t *dst_len);
+
+/* Convenience wrappers for AES-192 (24 bytes) using the project-wide capacity */
+static inline size_t openli_copy_encryptkey_aes192(uint8_t *dst,
+                                                   const uint8_t *src) {
+    return openli_copy_encryptkey(dst, OPENLI_MAX_ENCRYPTKEY_LEN, src,
+                                  OPENLI_AES192_KEY_LEN);
+}
+static inline size_t openli_move_encryptkey_aes192(uint8_t *dst,
+                                                   uint8_t **psrc) {
+    return openli_move_encryptkey(dst, OPENLI_MAX_ENCRYPTKEY_LEN, psrc,
+                                  OPENLI_AES192_KEY_LEN);
+}
+/* Allocate a new heap buffer and duplicate src_len bytes; returns NULL on OOM. */
+uint8_t *openli_dup_encryptkey_ptr(const uint8_t *src, size_t src_len);
+
+/* Securely wipe and free a heap-allocated key pointer (if *pp non-NULL). */
+void openli_free_encryptkey_ptr(uint8_t **pp, size_t len);
+
+
+int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
+        size_t *keylen, char *errorstring, size_t errorstringsize);
+
+#endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

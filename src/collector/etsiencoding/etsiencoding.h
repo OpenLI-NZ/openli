@@ -127,7 +127,6 @@ enum {
 typedef struct encrypt_encode_state {
     uint32_t byte_counter;
     uint32_t byte_startts;
-    EVP_CIPHER_CTX *evp_ctx;
     Pvoid_t saved_encryption_templates;
 } encrypt_encode_state_t;
 
@@ -204,7 +203,7 @@ wandder_encoded_result_t *encode_etsi_hi1_notification(
 /* defined in encryptcontainer.c */
 int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
         uint8_t *dest, uint16_t destlen, uint32_t seqno,
-        char *encryptkey);
+        const uint8_t *encryptkey);
 
 #endif
 
