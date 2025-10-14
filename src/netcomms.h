@@ -290,7 +290,8 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
 int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid, char *encryptkey, payload_encryption_method_t method);
+        char *liid, uint8_t *encryptkey, size_t encryptlen,
+        payload_encryption_method_t method);
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
@@ -361,7 +362,8 @@ int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid, char **encryptkey, payload_encryption_method_t *method);
+        char **liid, uint8_t *encryptkey, size_t *encryptlen,
+        payload_encryption_method_t *method);
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, uint64_t *ts);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);

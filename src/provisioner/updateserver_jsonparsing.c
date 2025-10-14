@@ -36,6 +36,7 @@
 #include "logger.h"
 #include "util.h"
 #include "intercept_timers.h"
+#include "configparser_common.h"
 
 struct json_agency {
     struct json_object *hi3addr;
@@ -350,11 +351,16 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
     int parseerr = 0;
     char *encryptmethodstring = NULL;
+    char *encstr = NULL;  /* JSON-sourced encryption key string */
     char *uuidstring = NULL;
     struct timeval tv;
     prov_intercept_data_t *timers = NULL;
 
-    if (is_new) {
+	/* init binary key state */
+	memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+	common->encryptkey_len = 0;
+
+	if (is_new) {
         common->tostart_time = 0;
         common->toend_time = 0;
         common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
@@ -396,14 +402,27 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
             common->toend_time, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", cepttype,
             jsonp->encryption, encryptmethodstring, &parseerr, false);
+    /* extract textual key into temporary string; we will decode to bytes below */
     EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
-            jsonp->encryptkey, common->encryptkey, &parseerr, false);
+            jsonp->encryptkey, encstr, &parseerr, false);
+
     EXTRACT_JSON_STRING_PARAM("xid", cepttype, jsonp->xid, uuidstring,
             &parseerr, false);
 
     if (encryptmethodstring) {
         common->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    /* If client supplied an encryption key string, normalize it to 24 bytes */
+    if (encstr) {
+        if (openli_parse_encryption_key_string(encstr, common->encryptkey,
+                &(common->encryptkey_len), cinfo->answerstring, 4096) < 0) {
+            free(encstr);
+            return -1;
+        }
+        free(encstr);
+        encstr = NULL;
     }
 
     if (uuidstring) {
@@ -437,15 +456,15 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->liid_len = strlen(common->liid);
     }
 
-    if (is_new) {
-        if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+	if (is_new) {
+		if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
                 common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-            if (common->encryptkey == NULL || strlen(common->encryptkey) == 0) {
-                snprintf(cinfo->answerstring, 4096,
-                        "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
-                return -1;
-            }
-        }
+			if (common->encryptkey_len != OPENLI_AES192_KEY_LEN) {
+				snprintf(cinfo->answerstring, 4096,
+						"'encryptionkey' parameter (0x + 48 hex or 24 ASCII) is required for AES-192");
+				return -1;
+			}
+		}
 
         /* If we are new, we can just go ahead and add any timers that
          * we need for this intercept.
@@ -503,11 +522,12 @@ static int update_intercept_common(intercept_common_t *parsed,
         enc = parsed->encrypt;
     }
 
-    if (enc != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
-            enc != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-        if (parsed->encryptkey == NULL || strlen(parsed->encryptkey) == 0) {
+    if (enc > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        /* For modify: accept either an existing valid key, or a new valid key */
+        if (parsed->encryptkey_len != OPENLI_AES192_KEY_LEN &&
+                existing->encryptkey_len != OPENLI_AES192_KEY_LEN) {
             snprintf(cinfo->answerstring, 4096,
-                    "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
+                    "'encryptionkey' (0x + 48 hex or 24 ASCII) is required for AES-192");
             return -1;
         }
     }
@@ -548,8 +568,15 @@ static int update_intercept_common(intercept_common_t *parsed,
             existing->encrypt = parsed->encrypt;
             encryptchanged = 1;
             existing->encrypt_inherited = 0;
-            MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey,
-                    &encryptchanged);
+            existing->encryptkey_len = parsed->encryptkey_len;
+            if (parsed->encryptkey_len > 0) {
+                memcpy(existing->encryptkey, parsed->encryptkey,
+                        parsed->encryptkey_len);
+                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
+                }
+            }
         } else if (*agencychanged) {
             apply_intercept_encryption_settings(&(state->interceptconf),
                     existing);
@@ -561,8 +588,21 @@ static int update_intercept_common(intercept_common_t *parsed,
             existing->encrypt = parsed->encrypt;
         }
 
-        MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey,
-                &encryptchanged);
+        /* If a new key was provided (len==24) and it differs, copy it in */
+        if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+            if (existing->encryptkey_len != parsed->encryptkey_len ||
+                    memcmp(existing->encryptkey, parsed->encryptkey,
+                            parsed->encryptkey_len) != 0) {
+                memcpy(existing->encryptkey, parsed->encryptkey,
+                        parsed->encryptkey_len);
+                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
+                }
+                existing->encryptkey_len = parsed->encryptkey_len;
+                encryptchanged = 1;
+            }
+        }
     }
 
     if (*agencychanged || encryptchanged) {
@@ -2315,6 +2355,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     const char *idstr;
     const char *verb;
     char *encryptmethodstring = NULL;
+    char *encstr = NULL;
     char *timefmtstring = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
@@ -2337,7 +2378,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
     nag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
     nag->digest_required = 0;
-    nag->encryptkey = NULL;
+    nag->encryptkey_len = 0;
+    memset(nag->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     nag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -2364,7 +2406,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
-            agjson.encryptkey, nag->encryptkey, &parseerr, false);
+            agjson.encryptkey, encstr, &parseerr, false);
 
     if (parseerr) {
         goto agencyerr;
@@ -2373,6 +2415,17 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (encryptmethodstring) {
         nag->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    /* If client supplied an encryption key string, normalize it to 24 bytes */
+    if (encstr) {
+        if (openli_parse_encryption_key_string(encstr, nag->encryptkey,
+                &(nag->encryptkey_len), cinfo->answerstring, 4096) < 0) {
+            free(encstr);
+            return -1;
+        }
+        free(encstr);
+        encstr = NULL;
     }
 
     if (timefmtstring) {
@@ -2440,6 +2493,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int changed = 0;
     int medchanged = 0;
     int encryptchanged = 0;
+    char *encstr = NULL;
 
     memset(&modified, 0, sizeof(modified));
     INIT_JSON_AGENCY_PARSING
@@ -2465,6 +2519,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.digest_sign_timeout = 0xffffffff;
     modified.digest_sign_hashlimit = 0xffffffff;
     modified.encrypt = 0xff;
+    modified.encryptkey_len = 0xffffffff;
     modified.time_fmt = 0xff;
 
     extract_agency_json_objects(&agjson, parsed);
@@ -2492,7 +2547,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
-            agjson.encryptkey, modified.encryptkey, &parseerr, false);
+            agjson.encryptkey, encstr, &parseerr, false);
 
     if (parseerr) {
         goto agencyerr;
@@ -2503,9 +2558,18 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         free(encryptmethodstring);
     }
 
+    if (encstr) {
+        if (openli_parse_encryption_key_string(encstr, modified.encryptkey,
+                &(modified.encryptkey_len), cinfo->answerstring, 4096) < 0) {
+            free(encstr);
+            return -1;
+        }
+        free(encstr);
+        encstr = NULL;
+    }
+
     if (timefmtstring) {
         modified.time_fmt = map_timestamp_format_string(timefmtstring);
-        printf("%s\n", timefmtstring);
         free(timefmtstring);
     }
 
@@ -2516,7 +2580,29 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    MODIFY_STRING_MEMBER(modified.encryptkey, found->ag->encryptkey, &changed);
+    if (modified.encryptkey_len != 0xffffffff &&
+            modified.encryptkey_len != found->ag->encryptkey_len) {
+        changed = 1;
+        encryptchanged = 1;
+        if (modified.encryptkey_len > 0) {
+            memcpy(found->ag->encryptkey, modified.encryptkey,
+                    modified.encryptkey_len);
+        }
+        if (modified.encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+            memset(found->ag->encryptkey + modified.encryptkey_len, 0,
+                   OPENLI_MAX_ENCRYPTKEY_LEN - modified.encryptkey_len);
+        }
+        found->ag->encryptkey_len = modified.encryptkey_len;
+    } else if (found->ag->encryptkey_len > 0 && modified.encryptkey_len > 0 &&
+            memcmp(found->ag->encryptkey, modified.encryptkey,
+                    modified.encryptkey_len)) {
+        // new key, same length as before but different bytes
+        changed = 1;
+        encryptchanged = 1;
+        memcpy(found->ag->encryptkey, modified.encryptkey,
+                modified.encryptkey_len);
+    }
+
     // check for change in encryption key first, so we can set the
     // encryptchanged flag based on the fact that "changed" has been set
     if (changed) {

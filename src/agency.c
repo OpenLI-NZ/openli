@@ -77,8 +77,9 @@ liagency_t *copy_liagency(liagency_t *lea) {
     if (lea->hi3_ipstr) {
         copy->hi3_ipstr = strdup(lea->hi3_ipstr);
     }
-    if (lea->encryptkey) {
-        copy->encryptkey = strdup(lea->encryptkey);
+    if (lea->encryptkey_len > 0) {
+        // should be covered by the original memcpy, but just to be safe
+        memcpy(copy->encryptkey, lea->encryptkey, lea->encryptkey_len);
     }
     return copy;
 }
@@ -101,9 +102,6 @@ void free_liagency(liagency_t *lea) {
 	}
     if (lea->agencycc) {
         free(lea->agencycc);
-    }
-    if (lea->encryptkey) {
-        free(lea->encryptkey);
     }
 	free(lea);
 }

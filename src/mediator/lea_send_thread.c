@@ -663,9 +663,6 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd) {
         logger(LOG_INFO,
                 "OpenLI Mediator: WARNING failed to add %s -> %s to LIID map",
                 toadd->liid, state->agencyid);
-        if (toadd->encryptkey) {
-            free(toadd->encryptkey);
-        }
         return -1;
     }
 

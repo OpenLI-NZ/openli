@@ -24,12 +24,118 @@
  *
  */
 
+#include <string.h>
+#include <stdlib.h>
+#include <assert.h>
 #include "util.h"
 #include "logger.h"
 #include "intercept.h"
+#include "configparser_common.h"
 
 const char *cepttype_strings[] =
         {"Unknown", "IP", "VoIP", "Email"};
+
+/* portable secure bzero */
+static void openli_secure_bzero(void *p, size_t n) {
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(p, n);
+#else
+    volatile unsigned char *v = (volatile unsigned char *)p;
+    while (n--) *v++ = 0;
+#endif
+}
+
+size_t openli_copy_encryptkey(uint8_t *dst, size_t dst_cap,
+                              const uint8_t *src, size_t src_len)
+{
+    if (!dst || dst_cap == 0) return 0;
+
+    /* Clamp to buffer capacity; zero the whole destination first */
+    size_t n = (src && src_len) ? src_len : 0;
+    if (n > dst_cap) n = dst_cap;
+
+    /* Zero destination fully to avoid stale bytes */
+    memset(dst, 0, dst_cap);
+
+    if (n > 0) {
+        memcpy(dst, src, n);
+    }
+    return n;
+}
+
+size_t openli_move_encryptkey(uint8_t *dst, size_t dst_cap,
+                              uint8_t **psrc, size_t free_src_len)
+{
+    const uint8_t *src = (psrc && *psrc) ? *psrc : NULL;
+    size_t copied = openli_copy_encryptkey(dst, dst_cap, src, free_src_len);
+
+    if (psrc && *psrc) {
+        /* Wipe and free the source buffer; only use if the source was heap-allocated */
+        if (free_src_len > 0) openli_secure_bzero(*psrc, free_src_len);
+        free(*psrc);
+        *psrc = NULL;
+    }
+    return copied;
+}
+
+void openli_clear_encryptkey(uint8_t *dst, size_t dst_cap, size_t *dst_len)
+{
+    if (dst && dst_cap) openli_secure_bzero(dst, dst_cap);
+    if (dst_len) *dst_len = 0;
+}
+
+uint8_t *openli_dup_encryptkey_ptr(const uint8_t *src, size_t src_len) {
+    if (!src || src_len == 0) return NULL;
+    uint8_t *p = (uint8_t *)malloc(src_len);
+    if (!p) return NULL;
+    memcpy(p, src, src_len);
+    return p;
+}
+
+void openli_free_encryptkey_ptr(uint8_t **pp, size_t len) {
+    if (!pp || !*pp) return;
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    if (len) explicit_bzero(*pp, len);
+#else
+    if (len) { volatile uint8_t *v = (volatile uint8_t *)*pp; while (len--) *v++ = 0; }
+#endif
+    free(*pp);
+    *pp = NULL;
+}
+
+int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
+        size_t *keylen, char *errorstring, size_t errorstringsize) {
+
+    memset(keybuf, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+    if (enckeystr[0] == '0' && (enckeystr[1] == 'x' || enckeystr[1] == 'X')) {
+        if (openli_hex_to_bytes_24(enckeystr, keybuf) != 0) {
+            snprintf(errorstring, errorstringsize,
+                    "'encryptionkey' must be 0x + 48 hex digits for AES-192");
+            return -1;
+        }
+        *keylen = OPENLI_AES192_KEY_LEN;
+    } else {
+        size_t n = strlen(enckeystr);
+        if (n != OPENLI_AES192_KEY_LEN) {
+            snprintf(errorstring, errorstringsize,
+                    "'encryptionkey' must be exactly 24 ASCII bytes or 0x + 48 hex digits for AES-192");
+            return -1;
+        }
+        /* optional: enforce printable ASCII */
+        for (size_t i = 0; i < n; ++i) {
+            unsigned char ch = (unsigned char)enckeystr[i];
+            if (ch < 0x20 || ch > 0x7E) {
+                snprintf(errorstring, errorstringsize,
+                        "'encryptionkey' ASCII must be 24 printable characters");
+                return -1;
+            }
+        }
+        memcpy(keybuf, enckeystr, OPENLI_AES192_KEY_LEN);
+        *keylen = OPENLI_AES192_KEY_LEN;
+    }
+    return 0;
+
+}
 
 static inline void copy_intercept_common(intercept_common_t *src,
         intercept_common_t *dest) {
@@ -55,11 +161,13 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->encrypt = src->encrypt;
     dest->encrypt_inherited = src->encrypt_inherited;
 
-    if (src->encryptkey) {
-        dest->encryptkey = strdup(src->encryptkey);
-    } else {
-        dest->encryptkey = NULL;
+    dest->encryptkey_len = src->encryptkey_len;   /* typically 24 */
+    memcpy(dest->encryptkey, src->encryptkey, dest->encryptkey_len);
+    if (dest->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+        memset(dest->encryptkey + dest->encryptkey_len, 0,
+               OPENLI_MAX_ENCRYPTKEY_LEN - dest->encryptkey_len);
     }
+
 
     dest->xids = calloc(src->xid_count, sizeof(uuid_t));
     dest->xid_count = src->xid_count;
@@ -74,16 +182,15 @@ int compare_intercept_encrypt_configuration(intercept_common_t *a,
         return 1;
     }
 
-    if (a->encryptkey == NULL && b->encryptkey == NULL) {
+    if (a->encryptkey_len != b->encryptkey_len) {
+        return 1;
+    }
+
+    if (a->encryptkey_len == 0) {
         return 0;
     }
-    if (a->encryptkey == NULL && b->encryptkey != NULL) {
-        return 1;
-    }
-    if (a->encryptkey != NULL && b->encryptkey == NULL) {
-        return 1;
-    }
-    return strcmp(a->encryptkey, b->encryptkey);
+
+    return memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len);
 
 }
 
@@ -122,7 +229,7 @@ int update_modified_intercept_common(intercept_common_t *current,
         int *updatereq) {
 
     char *tmp;
-    int encodingchanged = 0, keychanged = 0;
+    int encodingchanged = 0;
 
     *updatereq = 0;
 
@@ -179,15 +286,6 @@ int update_modified_intercept_common(intercept_common_t *current,
         encodingchanged = 1;
     }
 
-    if (current->encryptkey && update->encryptkey) {
-        if (strcmp(current->encryptkey, update->encryptkey) != 0) {
-            keychanged = 1;
-        }
-    } else if (current->encryptkey == NULL && update->encryptkey) {
-        keychanged = 1;
-    } else if (current->encryptkey && update->encryptkey == NULL) {
-        keychanged = 1;
-    }
 
     if (strcmp(update->targetagency, current->targetagency) != 0) {
         tmp = update->targetagency;
@@ -196,13 +294,24 @@ int update_modified_intercept_common(intercept_common_t *current,
         *updatereq = 1;
     }
 
-    if (keychanged) {
+    /* Update encryption key in-place when changed */
+    assert(update->encryptkey_len <= OPENLI_MAX_ENCRYPTKEY_LEN);
+    if (current->encryptkey_len != update->encryptkey_len ||
+        memcmp(current->encryptkey,
+               update->encryptkey,
+               update->encryptkey_len) != 0) {
+
+        size_t n = update->encryptkey_len;          // 24 for AES-192 today
+        memcpy(current->encryptkey, update->encryptkey, n);
+        if (n < OPENLI_MAX_ENCRYPTKEY_LEN) {
+            memset(current->encryptkey + n, 0, OPENLI_MAX_ENCRYPTKEY_LEN - n);
+        }
+        current->encryptkey_len = n;
+
         encodingchanged = 1;
-        tmp = current->encryptkey;
-        current->encryptkey = update->encryptkey;
-        update->encryptkey = tmp;
         *updatereq = 1;
     }
+
 
     if (strcmp(update->delivcc, current->delivcc) != 0 ||
             strcmp(update->authcc, current->authcc) != 0) {
@@ -409,9 +518,14 @@ static inline void free_intercept_common(intercept_common_t *cept) {
         free(cept->targetagency);
     }
 
-    if (cept->encryptkey) {
-        free(cept->encryptkey);
-    }
+    // zero the encryption key
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(cept->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
+#else
+	volatile uint8_t *p = cept->encryptkey;
+	for (size_t i = 0; i < OPENLI_MAX_ENCRYPTKEY_LEN; ++i) p[i] = 0;
+#endif
+	cept->encryptkey_len = 0;
 
     if (cept->xids) {
         free(cept->xids);

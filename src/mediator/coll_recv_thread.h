@@ -525,10 +525,11 @@ void update_med_collector_config(mediator_collector_config_t *config,
  *  @param encmethod    The encryption method to apply to IRIs and CCs using
  *                      this LIID.
  *  @param encryptkey   The key to use when encrypting an IRI or CC.
+ *  @param encryptlen   The length of the encryption key, in bytes.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
         char *liid, char *agencyid, payload_encryption_method_t encmethod,
-        char *encryptkey);
+        uint8_t *encryptkey, size_t encryptlen);
 
 /** Looks up the corresponding agency ID for a given LIID in the map that
  *  is stored in the shared configuration.
@@ -633,10 +634,11 @@ void clear_digest_key_map(col_known_liid_t *known);
 /* defined in mediator_encryption.c */
 payload_encryption_method_t check_encryption_requirements(
         mediator_collector_config_t *config, char *liid,
-        char **enckey);
+        uint8_t *enckey, size_t *enckeylen);
 uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
         wandder_etsispec_t *etsidecoder,
-        uint8_t *fullrec, uint16_t reclen, char *enckey);
+        uint8_t *fullrec, uint16_t reclen, uint8_t *enckey,
+        size_t enckeylen);
 
 void handle_lea_withdrawal_within_integrity_check_state(
         integrity_check_state_t **state, char *agencyid);

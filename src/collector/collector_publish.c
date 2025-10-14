@@ -36,6 +36,7 @@
 #include "collector_publish.h"
 #include "emailiri.h"
 #include "export_buffer.h"
+#include "intercept.h"
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
@@ -82,11 +83,20 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     }
     expmsg->data.cept.xid_count = common->xid_count;
 
-    if (common->encryptkey) {
-        expmsg->data.cept.encryptkey = strdup(common->encryptkey);
-    } else {
+    if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        common->encryptkey_len > 0) {
+		expmsg->data.cept.encryptkey_len = common->encryptkey_len;
+		expmsg->data.cept.encryptkey =
+			openli_dup_encryptkey_ptr(common->encryptkey, common->encryptkey_len);
+		if (!expmsg->data.cept.encryptkey) {
+			/* treat as no key or bail out; pick one policy */
+			expmsg->data.cept.encryptkey_len = 0;
+		}
+	} else {
         expmsg->data.cept.encryptkey = NULL;
+        expmsg->data.cept.encryptkey_len = 0;
     }
+
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
 
     // set the optional fields to suitable "null" values
@@ -112,7 +122,9 @@ void free_published_message(openli_export_recv_t *msg) {
             free(msg->data.cept.delivcc);
         }
         if (msg->data.cept.encryptkey) {
-            free(msg->data.cept.encryptkey);
+            openli_free_encryptkey_ptr(&msg->data.cept.encryptkey,
+                                       msg->data.cept.encryptkey_len);
+            msg->data.cept.encryptkey_len = 0;
         }
         if (msg->data.cept.username) {
             free(msg->data.cept.username);
