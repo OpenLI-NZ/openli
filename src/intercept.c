@@ -103,11 +103,30 @@ void openli_free_encryptkey_ptr(uint8_t **pp, size_t len) {
     *pp = NULL;
 }
 
+int openli_parse_liid_string(char *liidstr, char **storage,
+        openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize) {
+
+    if (liidstr == NULL || strlen(liidstr) == 0) {
+        snprintf(errorstring, errorstringsize,
+                "'liid' must be not be null or have zero length");
+        return -1;
+    }
+
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        *storage = strdup(liidstr + 2);
+        *fmt = OPENLI_LIID_FORMAT_BINARY_OCTETS;
+    } else {
+        *storage = strdup(liidstr);
+        *fmt = OPENLI_LIID_FORMAT_ASCII;
+    }
+    return 1;
+}
+
 int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
         size_t *keylen, char *errorstring, size_t errorstringsize) {
 
     memset(keybuf, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
-    if (enckeystr[0] == '0' && (enckeystr[1] == 'x' || enckeystr[1] == 'X')) {
+    if (STRING_EXPRESSED_IN_HEX(enckeystr)) {
         if (openli_hex_to_bytes_24(enckeystr, keybuf) != 0) {
             snprintf(errorstring, errorstringsize,
                     "'encryptionkey' must be 0x + 48 hex digits for AES-192");
@@ -141,6 +160,7 @@ static inline void copy_intercept_common(intercept_common_t *src,
         intercept_common_t *dest) {
 
     dest->liid = strdup(src->liid);
+    dest->liid_format = src->liid_format;
     dest->authcc = strdup(src->authcc);
     dest->delivcc = strdup(src->delivcc);
 

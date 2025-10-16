@@ -646,9 +646,16 @@ static int emit_intercept_common(intercept_common_t *intcom,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-            (yaml_char_t *)intcom->liid, strlen(intcom->liid), 1, 0,
-            YAML_PLAIN_SCALAR_STYLE);
+    if (intcom->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        snprintf(buffer, 64, "0x%s", intcom->liid);
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)intcom->liid, strlen(intcom->liid), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    }
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,

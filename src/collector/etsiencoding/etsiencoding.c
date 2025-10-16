@@ -30,24 +30,26 @@
 #include "logger.h"
 #include "intercept.h"
 #include "etsiencoding.h"
+#include "util.h"
 
 static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
-        uint32_t contentsize, char *liid, uint16_t liidlen) {
+        uint32_t contentsize, char *liid) {
 
     uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
     int i;
-    uint16_t l;
+    uint16_t l, l_swap;
+    l = (uint16_t)strlen(liid);
 
-    if (liidlen > space_len - 8) {
+    if (l > space_len - 8) {
         logger(LOG_INFO,
-                "OpenLI: invalid LIID for PSPDU: %s (%u %u)", liid, liidlen, space_len);
+                "OpenLI: invalid LIID for PSPDU: %s (%u %u)", liid, l, space_len);
         return 0;
     }
 
-    l = htons(liidlen);
-    memcpy(space, &l, sizeof(uint16_t));
-    memcpy(space + 2, liid, liidlen);
-    space += (2 + liidlen);
+    l_swap = htons(l);
+    memcpy(space, &l_swap, sizeof(uint16_t));
+    memcpy(space + 2, liid, l);
+    space += (2 + l);
 
     *space = (uint8_t)((WANDDER_CLASS_UNIVERSAL_CONSTRUCT << 5) |
             WANDDER_TAG_SEQUENCE);
@@ -55,7 +57,7 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
 
     if (len_space_req == 1) {
         *space = (uint8_t)contentsize;
-        return 2 + (2 + liidlen);
+        return 2 + (2 + l);
     }
 
     *space = len_space_req | 0x80;
@@ -66,7 +68,7 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
         contentsize = contentsize >> 8;
     }
 
-    return len_space_req + 2 + (2 + liidlen);
+    return len_space_req + 2 + (2 + l);
 }
 
 void encode_etsili_pshdr(wandder_encoder_t *encoder,
@@ -89,9 +91,30 @@ void encode_etsili_pshdr(wandder_encoder_t *encoder,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 0,
             (uint8_t *)WANDDER_ETSILI_PSDOMAINID,
             sizeof(WANDDER_ETSILI_PSDOMAINID));
-    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->liid,
-            hdrdata->liid_len);
+
+    // if the LIID is binary octets, we need to first convert the
+    // hex string that we have into pure binary
+
+    if (hdrdata->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        uint8_t liidbuf[OPENLI_LIID_MAXSIZE];
+        size_t liidsize = 0;
+        liidsize = openli_convert_hexstring_to_binary(hdrdata->liid, liidbuf,
+                OPENLI_LIID_MAXSIZE);
+        if (liidsize > 0) {
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, liidbuf,
+                    liidsize);
+        } else {
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, "liidmissing",
+                    strlen("liidmissing"));
+        }
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, hdrdata->liid,
+                hdrdata->liid_len);
+    }
+
     wandder_encode_next(encoder, WANDDER_TAG_PRINTABLE,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, hdrdata->authcc,
             hdrdata->authcc_len);
@@ -256,8 +279,7 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
      * a preceding pS-PDU sequence with the appropriate length...
      */
     pspdu_len = encode_pspdu_sequence(pspdu, sizeof(pspdu),
-            hdr_tplate->header_len + bodylen, job->liid,
-            job->preencoded[OPENLI_PREENCODE_LIID].vallen);
+            hdr_tplate->header_len + bodylen, job->liid);
 
     if (pspdu_len == 0) {
         return -1;

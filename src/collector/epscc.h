@@ -42,7 +42,7 @@ openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
 wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, const char *liid, uint32_t cin,
         uint16_t gtpseqno, uint8_t dir, struct timeval tv, uint8_t icetype,
-        uint32_t ipclen);
+        uint32_t ipclen, openli_liid_format_t liid_format);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -239,6 +239,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_WINDOW_SIZE,
     OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
     OPENLI_PROTO_FIELD_THREADID,
+    OPENLI_PROTO_FIELD_LIID_FORMAT,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
@@ -291,7 +292,7 @@ int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,
-        payload_encryption_method_t method);
+        payload_encryption_method_t method, openli_liid_format_t liidformat);
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
         int liid_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
@@ -363,7 +364,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, uint8_t *encryptkey, size_t *encryptlen,
-        payload_encryption_method_t *method);
+        payload_encryption_method_t *method,
+        openli_liid_format_t *liidformat);
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, uint64_t *ts);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);

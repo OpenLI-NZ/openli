@@ -133,6 +133,7 @@ int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
         m->unconfirmed = 0;
         m->ccqueue_deleted = 0;
         m->iriqueue_deleted = 0;
+        m->liid_format = toadd->liid_format;
         return ret;
     }
 
@@ -149,6 +150,7 @@ int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
     m->iriqueue_deleted = 0;
     m->encrypt = toadd->encrypt;
     m->encryptkey_len = toadd->encryptkey_len;
+    m->liid_format = toadd->liid_format;
     memcpy(m->encryptkey, toadd->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
 
     /* Create a new entry in the mapping array */

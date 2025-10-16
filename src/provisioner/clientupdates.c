@@ -443,6 +443,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
     ndata.ts_sec = tv.tv_sec;
     ndata.ts_usec = tv.tv_usec;
     ndata.target_info = target_id;
+    ndata.liid_format = intcomm->liid_format;
 
     SEND_ALL_MEDIATORS_BEGIN
         if (push_hi1_notification_onto_net_buffer(sock->outgoing, &ndata) == -1)
@@ -509,7 +510,7 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
     SEND_ALL_MEDIATORS_BEGIN
         if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
                 liidmap->liid, liidmap->encryptkey, liidmap->encryptkey_len,
-                liidmap->encryptmethod)
+                liidmap->encryptmethod, liidmap->liid_format)
                 == -1) {
             logger(LOG_INFO,
                     "OpenLI provisioner: unable to send mapping for LIID %s to mediator %u.",
@@ -733,6 +734,7 @@ liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         h->liid = common->liid;
         HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
     }
+    h->liid_format = common->liid_format;
     h->agency = common->targetagency;
     memcpy(h->encryptkey, common->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
     h->encryptkey_len = common->encryptkey_len;

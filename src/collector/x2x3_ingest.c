@@ -249,6 +249,8 @@ static inline void update_intercept_common(published_intercept_msg_t *src,
     dst->destid = destid;
     dst->seqtrackerid = src->seqtrackerid;
     dst->encrypt = src->encryptmethod;
+    dst->time_fmt = src->timefmt;
+    dst->liid_format = src->liid_format;
 
     free(dst->xids);
     dst->xids = src->xids;
@@ -269,6 +271,8 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     dst->encrypt = src->encryptmethod;
     dst->xid_count = src->xid_count;
     dst->xids = src->xids;
+    dst->time_fmt = src->timefmt;
+    dst->liid_format = src->liid_format;
 
     if (dst->liid) {
         dst->liid_len = strlen(dst->liid);

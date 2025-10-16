@@ -166,10 +166,11 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
  *                      this LIID.
  *  @param encryptkey   The key to use when encrypting an IRI or CC.
  *  @param encryptlen   The length of the encryption key, in bytes.
+ *  @param liidfmt      The format of the LIID, for encryption purposes.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
         char *liid, char *agencyid, payload_encryption_method_t encmethod,
-        uint8_t *encryptkey, size_t encryptlen) {
+        uint8_t *encryptkey, size_t encryptlen, openli_liid_format_t liidfmt) {
     added_liid_t *found = NULL;
 
     pthread_mutex_lock(&(config->mutex));
@@ -184,6 +185,7 @@ void add_liid_mapping_collector_config(mediator_collector_config_t *config,
     }
     found->agencyid = strdup(agencyid);
     found->encryptkey_len = encryptlen;
+    found->liid_format = liidfmt;
     memcpy(found->encryptkey, encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
     found->encrypt = encmethod;
 
@@ -195,10 +197,13 @@ void add_liid_mapping_collector_config(mediator_collector_config_t *config,
  *
  *  @param config       The global config for the collector threads
  *  @param liid         The LIID to search for
+ *  @param[out] liidfmt Updated to contain the required encoding format for
+ *                      this LIID
  *  @return             The agency that this LIID is destined for.
  */
 static char *lookup_agencyid_for_liid_collector_config(
-        mediator_collector_config_t *config, char *liid) {
+        mediator_collector_config_t *config, char *liid,
+        openli_liid_format_t *liidfmt) {
 
     added_liid_t *found = NULL;
     char *agencyid = NULL;
@@ -206,6 +211,7 @@ static char *lookup_agencyid_for_liid_collector_config(
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         agencyid = strdup(found->agencyid);
+        *liidfmt = found->liid_format;
     }
     pthread_mutex_unlock(&(config->mutex));
     return agencyid;
@@ -606,12 +612,13 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 }
 
 static void preencode_etsi_for_known_liid(coll_recv_t *col,
-        col_known_liid_t *found) {
+        col_known_liid_t *found, openli_liid_format_t liid_format) {
 
     etsili_intercept_details_t intdetails;
     char netelemid[128];
 
     intdetails.liid = found->liid;
+    intdetails.liid_format = liid_format;
     if (found->digest_config->config->agencycc) {
         intdetails.authcc = found->digest_config->config->agencycc;
         intdetails.delivcc = found->digest_config->config->agencycc;
@@ -684,6 +691,7 @@ static void check_agency_digest_config(coll_recv_t *col,
     char *agencyid = NULL;
     agency_digest_config_t *agdigest = NULL;
     uint8_t reencode_needed = 0;
+    openli_liid_format_t liid_format;
 
     if (found->lastseen-found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
         return;
@@ -692,7 +700,7 @@ static void check_agency_digest_config(coll_recv_t *col,
     /* Look up the integrity check configuration for the recipient of
      * this intercept */
     agencyid = lookup_agencyid_for_liid_collector_config(col->parentconfig,
-            found->liid);
+            found->liid, &liid_format);
     found->last_agency_check = found->lastseen;
 
     if (agencyid == NULL) {
@@ -722,7 +730,7 @@ static void check_agency_digest_config(coll_recv_t *col,
     }
 
     if (reencode_needed) {
-        preencode_etsi_for_known_liid(col, found);
+        preencode_etsi_for_known_liid(col, found, liid_format);
     }
     if (agencyid) {
         free(agencyid);

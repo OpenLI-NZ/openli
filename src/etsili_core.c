@@ -1002,7 +1002,30 @@ void etsili_preencode_static_fields(
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 1;
     p->encodeas = WANDDER_TAG_OCTETSTRING;
-    wandder_encode_preencoded_value(p, details->liid, strlen(details->liid));
+
+    // convert hex strings that describe binary octets into the correct
+    // format for encoding
+    if (details->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        uint8_t liidbuf[OPENLI_LIID_MAXSIZE];
+        size_t liidsize = 0;
+        liidsize = openli_convert_hexstring_to_binary(details->liid, liidbuf,
+                OPENLI_LIID_MAXSIZE);
+        if (liidsize > 0) {
+            wandder_encode_preencoded_value(p, liidbuf, liidsize);
+        } else {
+            // not much we can really do here? The LIID must be NULL or an
+            // empty string, but it would take some effort to get here in
+            // that case...
+            wandder_encode_preencoded_value(p, "liidmissing",
+                    strlen("liidmissing"));
+        }
+    } else if (details->liid && strlen(details->liid) > 0) {
+        wandder_encode_preencoded_value(p, details->liid,
+                strlen(details->liid));
+    } else {
+        wandder_encode_preencoded_value(p, "liidmissing",
+                strlen("liidmissing"));
+    }
 
     p = &(pendarray[OPENLI_PREENCODE_AUTHCC]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;

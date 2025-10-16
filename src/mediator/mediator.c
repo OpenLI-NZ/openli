@@ -1013,13 +1013,14 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     payload_encryption_method_t encmethod;
     uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
     size_t encryptlen = 0;
+    openli_liid_format_t liidfmt;
 
     agencyid = NULL;
     liid = NULL;
 
     /* See netcomms.c for this method */
     if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid, encryptkey,
-            &encryptlen, &encmethod) == -1) {
+            &encryptlen, &encmethod, &liidfmt) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
         ret = -1;
         goto tidyup;
@@ -1052,6 +1053,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
         added = calloc(1, sizeof(added_liid_t));
         added->liid = strdup(liid);
+        added->liid_format = liidfmt;
         added->agencyid = strdup(agencyid);
         memset(added->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
         added->encryptkey_len = 0;       // not required in LEA threads
@@ -1072,7 +1074,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     }
 
     add_liid_mapping_collector_config(&(state->collector_threads.config),
-            liid, agencyid, encmethod, encryptkey, encryptlen);
+            liid, agencyid, encmethod, encryptkey, encryptlen, liidfmt);
 
 tidyup:
     if (liid) {

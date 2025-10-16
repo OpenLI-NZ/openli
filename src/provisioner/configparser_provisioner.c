@@ -60,6 +60,25 @@ static void add_single_xid(char *srcvalue, intercept_common_t *common) {
 
 }
 
+static void parse_and_set_liid(intercept_common_t *common,
+        const char *liidval) {
+
+    if (!liidval) return;
+
+    // Case 1: begins with 0x, so treat as binary octets
+    if (strlen(liidval) > 2 && liidval[0] == '0' &&
+            (liidval[1] == 'x' || liidval[1] == 'X')) {
+
+        common->liid = strdup(liidval + 2);
+        common->liid_len = strlen(common->liid);
+        common->liid_format = OPENLI_LIID_FORMAT_BINARY_OCTETS;
+    } else {
+        common->liid = strdup(liidval);
+        common->liid_len = strlen(common->liid);
+        common->liid_format = OPENLI_LIID_FORMAT_ASCII;
+    }
+}
+
 static void parse_xid_list(intercept_common_t *common, yaml_document_t *doc,
         yaml_node_t *xidlist) {
 
@@ -683,8 +702,7 @@ static void parse_intercept_common_fields(intercept_common_t *common,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "liid") == 0) {
-        SET_CONFIG_STRING_OPTION(common->liid, value);
-        common->liid_len = strlen(common->liid);
+        parse_and_set_liid(common, (const char *)(value->data.scalar.value));
     }
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
@@ -782,6 +800,7 @@ static inline void init_intercept_common(intercept_common_t *common,
     prov_intercept_data_t *local;
 
     common->liid = NULL;
+    common->liid_format = OPENLI_LIID_FORMAT_ASCII;
     common->liid_len = 0;
     common->authcc = NULL;
     common->authcc_len = 0;
