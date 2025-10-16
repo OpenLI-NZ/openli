@@ -160,6 +160,8 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->tomediate = src->tomediate;
     dest->encrypt = src->encrypt;
     dest->encrypt_inherited = src->encrypt_inherited;
+    dest->seqtrackerid = src->seqtrackerid;
+    dest->time_fmt = src->time_fmt;
 
     dest->encryptkey_len = src->encryptkey_len;   /* typically 24 */
     memcpy(dest->encryptkey, src->encryptkey, dest->encryptkey_len);
@@ -1441,14 +1443,12 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
     HASH_FIND(hh, *ulist, taggeduser, strlen(taggeduser), found);
 
     if (!found) {
-        printf("!found: %s\n", taggeduser);
         return 0;
     }
 
     HASH_FIND(hh_user, found->intlist, ipint->common.liid,
             ipint->common.liid_len, existing);
     if (!existing) {
-        printf("!existing: %s\n", ipint->common.liid);
         return 0;
     }
 
