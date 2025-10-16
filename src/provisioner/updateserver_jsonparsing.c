@@ -352,6 +352,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
     int parseerr = 0;
     char *encryptmethodstring = NULL;
     char *encstr = NULL;  /* JSON-sourced encryption key string */
+    char *liidstr = NULL;
     char *uuidstring = NULL;
     struct timeval tv;
     prov_intercept_data_t *timers = NULL;
@@ -383,7 +384,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
     if (common->liid == NULL) {
         EXTRACT_JSON_STRING_PARAM("liid", cepttype, jsonp->liid,
-                common->liid, &parseerr, true);
+                liidstr, &parseerr, true);
     }
 
     EXTRACT_JSON_STRING_PARAM("authcc", cepttype, jsonp->authcc,
@@ -419,10 +420,23 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         if (openli_parse_encryption_key_string(encstr, common->encryptkey,
                 &(common->encryptkey_len), cinfo->answerstring, 4096) < 0) {
             free(encstr);
+            if (liidstr) {
+                free(liidstr);
+            }
             return -1;
         }
         free(encstr);
         encstr = NULL;
+    }
+
+    if (liidstr) {
+        if (openli_parse_liid_string(liidstr, &(common->liid),
+                &(common->liid_format), cinfo->answerstring, 4096) < 0) {
+            free(liidstr);
+            return -1;
+        }
+        free(liidstr);
+        liidstr = NULL;
     }
 
     if (uuidstring) {
@@ -1837,7 +1851,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
 
-    char *liidstr = NULL;
+    char *liidstr = NULL, *parsedliid = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -1846,12 +1860,18 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("liid", "Email intercept", emailjson.liid,
             liidstr, &parseerr, true);
 
-    if (parseerr) {
+    if (!liidstr || parseerr) {
         goto cepterr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, liidstr,
-            strlen(liidstr), found);
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        parsedliid = liidstr + 2;
+    } else {
+        parsedliid = liidstr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, parsedliid,
+            strlen(parsedliid), found);
 
     if (!found) {
         json_object_put(parsed);
@@ -1864,9 +1884,10 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     mailint = calloc(1, sizeof(emailintercept_t));
     mailint->awaitingconfirm = 1;
-    mailint->common.liid = liidstr;
+    mailint->common.liid = strdup(parsedliid);
     mailint->targets = NULL;
 
+    free(liidstr);
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
@@ -1992,7 +2013,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int changedtargets = 0;
     libtrace_list_t *tmp;
 
-    char *liidstr = NULL, *target_info;
+    char *liidstr = NULL, *target_info, *parsedliid = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
 
@@ -2002,12 +2023,18 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,
             liidstr, &parseerr, true);
 
-    if (parseerr) {
+    if (parseerr || liidstr == NULL) {
         goto cepterr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, liidstr,
-            strlen(liidstr), found);
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        parsedliid = liidstr + 2;
+    } else {
+        parsedliid = liidstr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, parsedliid,
+            strlen(parsedliid), found);
 
     if (!found) {
         json_object_put(parsed);
@@ -2020,8 +2047,10 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     vint = calloc(1, sizeof(voipintercept_t));
     vint->awaitingconfirm = 1;
-    vint->common.liid = liidstr;
+    vint->common.liid = strdup(parsedliid);
 	vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
+
+    free(liidstr);
 
     if (parse_intercept_common_json(&voipjson, &(vint->common),
             "VOIP intercept", cinfo, false, state->epoll_fd) < 0) {
@@ -2128,7 +2157,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipintercept_t *found = NULL;
     ipintercept_t *ipint = NULL;
 
-    char *liidstr = NULL;
+    char *liidstr = NULL, *parsedliid = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     char *mobileidentstring = NULL;
@@ -2141,12 +2170,18 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("liid", "IP intercept", ipjson.liid,
             liidstr, &parseerr, true);
 
-    if (parseerr) {
+    if (parseerr || liidstr == NULL) {
         goto cepterr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, liidstr,
-            strlen(liidstr), found);
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        parsedliid = liidstr + 2;
+    } else {
+        parsedliid = liidstr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, parsedliid,
+            strlen(parsedliid), found);
 
     if (!found) {
         json_object_put(parsed);
@@ -2161,7 +2196,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
-    ipint->common.liid = liidstr;
+    ipint->common.liid = strdup(parsedliid);
+    free(liidstr);
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
             "IP intercept", cinfo, false, state->epoll_fd) < 0) {

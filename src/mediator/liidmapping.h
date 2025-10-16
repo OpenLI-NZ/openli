@@ -38,6 +38,9 @@ typedef struct liidmapping liid_map_entry_t;
 typedef struct added_liid {
     /** The LIID */
     char *liid;
+    /** Whether the LIID should be encoded as ASCII or binary octets */
+    openli_liid_format_t liid_format;
+
     /** The ID of the agency that the LIID is associated with */
     char *agencyid;
 
@@ -86,6 +89,8 @@ struct liidmapping {
 
     /** The encryption algorithm to use, if any */
     payload_encryption_method_t encrypt;
+
+    openli_liid_format_t liid_format;
 };
 
 /** The map used to track which LIIDs should be sent to which agencies */

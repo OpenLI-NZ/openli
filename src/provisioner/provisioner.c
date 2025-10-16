@@ -1156,7 +1156,8 @@ static int respond_mediator_auth(provision_state_t *state,
     h = state->interceptconf.liid_map;
     while (h != NULL) {
         if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid,
-                h->encryptkey, h->encryptkey_len, h->encryptmethod) == -1) {
+                h->encryptkey, h->encryptkey_len, h->encryptmethod,
+                h->liid_format) == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LIID mappings to send to mediator.");
             pthread_mutex_unlock(&(state->interceptconf.safelock));

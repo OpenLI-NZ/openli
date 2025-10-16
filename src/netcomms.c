@@ -290,11 +290,12 @@ int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
 
 #define LIIDMAP_BODY_LEN(agency, liid, enclen) \
     (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
-    ( enclen > 0 ? enclen + 4 : 0) + (3 * 4))
+    sizeof(openli_liid_format_t) + \
+    ( enclen > 0 ? enclen + 4 : 0) + (4 * 4))
 
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,
-        payload_encryption_method_t method) {
+        payload_encryption_method_t method, openli_liid_format_t liidformat) {
 
     ii_header_t hdr;
     uint16_t totallen;
@@ -314,6 +315,11 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)(liid),
                 strlen(liid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID_FORMAT,
+            (uint8_t *)(&liidformat), sizeof(liidformat)) == -1) {
         return -1;
     }
 
@@ -514,9 +520,9 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          sizeof(common.toend_time) + sizeof(common.tomediate) + \
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
-         sizeof(common.time_fmt) + \
+         sizeof(common.time_fmt) + sizeof(common.liid_format) + \
          (36 * common.xid_count) + \
-         ((10 + common.xid_count) * 4))
+         ((11 + common.xid_count) * 4))
 
 #define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
@@ -535,6 +541,12 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
                 strlen(common->liid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID_FORMAT,
+            (uint8_t *)&(common->liid_format),
+            sizeof(common->liid_format)) == -1) {
         return -1;
     }
 
@@ -1404,7 +1416,7 @@ int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
     (sizeof(ndata->notify_type) + sizeof(ndata->seqno) + sizeof(ndata->ts_sec) \
     + sizeof(ndata->ts_usec) + strlen(ndata->liid) + strlen(ndata->authcc) + \
     strlen(ndata->delivcc) + strlen(ndata->agencyid) + \
-    target_info_len + (field_count * 4))
+    sizeof(ndata->liid_format) + target_info_len + (field_count * 4))
 
 int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
         hi1_notify_data_t *ndata) {
@@ -1416,10 +1428,10 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
     int target_info_len;
 
     if (ndata->target_info == NULL) {
-        field_count = 8;
+        field_count = 9;
         target_info_len = 0;
     } else {
-        field_count = 9;
+        field_count = 10;
         target_info_len = strlen(ndata->target_info);
     }
 
@@ -1465,6 +1477,12 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_TS_USEC,
             (uint8_t *)&(ndata->ts_usec), sizeof(ndata->ts_usec))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID_FORMAT,
+            (uint8_t *)&(ndata->liid_format),
+            sizeof(ndata->liid_format))) == -1) {
         return -1;
     }
 
@@ -1810,6 +1828,7 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->delivcc = NULL;
     common->destid = 0;
     common->targetagency = NULL;
+    common->liid_format = OPENLI_LIID_FORMAT_ASCII;
     common->liid_len = 0;
     common->authcc_len = 0;
     common->delivcc_len = 0;
@@ -1848,6 +1867,9 @@ static int assign_intercept_common_fields(intercept_common_t *common,
         case OPENLI_PROTO_FIELD_DELIVCC:
             DECODE_STRING_FIELD(common->delivcc, valptr, vallen);
             common->delivcc_len = vallen;
+            break;
+        case OPENLI_PROTO_FIELD_LIID_FORMAT:
+            common->liid_format = *((openli_liid_format_t *)valptr);
             break;
         case OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT:
             common->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
@@ -2553,6 +2575,8 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
             ndata->ts_sec = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TS_USEC) {
             ndata->ts_usec = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_LIID_FORMAT) {
+            ndata->liid_format = *((openli_liid_format_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -2710,12 +2734,13 @@ int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, uint8_t *encryptkey, size_t *encryptlen,
-        payload_encryption_method_t *method) {
+        payload_encryption_method_t *method, openli_liid_format_t *liidformat) {
 
     uint8_t *msgend = msgbody + len;
 
     *encryptlen = 0;
     *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
+    *liidformat = OPENLI_LIID_FORMAT_ASCII;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2745,6 +2770,8 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
 			*encryptlen = vallen;
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             (*method) = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_LIID_FORMAT) {
+            (*liidformat) = *((openli_liid_format_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

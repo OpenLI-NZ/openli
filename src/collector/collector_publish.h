@@ -211,6 +211,7 @@ typedef struct published_intercept_msg {
     int seqtrackerid;
     payload_encryption_method_t encryptmethod;
     openli_timestamp_encoding_fmt_t timefmt;
+    openli_liid_format_t liid_format;
     uint8_t *encryptkey;
     size_t encryptkey_len;
     uuid_t *xids;

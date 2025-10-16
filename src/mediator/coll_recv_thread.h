@@ -526,10 +526,11 @@ void update_med_collector_config(mediator_collector_config_t *config,
  *                      this LIID.
  *  @param encryptkey   The key to use when encrypting an IRI or CC.
  *  @param encryptlen   The length of the encryption key, in bytes.
+ *  @param liidfmt      The format of the LIID, for encoding purposes.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
         char *liid, char *agencyid, payload_encryption_method_t encmethod,
-        uint8_t *encryptkey, size_t encryptlen);
+        uint8_t *encryptkey, size_t encryptlen, openli_liid_format_t liidfmt);
 
 /** Looks up the corresponding agency ID for a given LIID in the map that
  *  is stored in the shared configuration.

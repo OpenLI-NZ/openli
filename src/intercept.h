@@ -37,6 +37,8 @@
 
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
+#define OPENLI_LIID_MAXSIZE 26      // +1 for null byte
+
 #ifndef OPENLI_MAX_ENCRYPTKEY_LEN
 #define OPENLI_MAX_ENCRYPTKEY_LEN 32   /* room for AES-256 later */
 #endif
@@ -48,6 +50,10 @@
 #define INTERCEPT_IS_ACTIVE(cept, now) \
     (cept->common.tostart_time <= now.tv_sec && ( \
         cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
+
+#define STRING_EXPRESSED_IN_HEX(liidstr) \
+    (strlen(liidstr) > 2 && liidstr[0] == '0' && \
+        (liidstr[1] == 'x' || liidstr[1] == 'X'))
 
 typedef enum {
     OPENLI_INTERCEPT_TYPE_UNKNOWN = 0,
@@ -117,6 +123,11 @@ enum {
 };
 
 typedef enum {
+    OPENLI_LIID_FORMAT_ASCII = 1,
+    OPENLI_LIID_FORMAT_BINARY_OCTETS = 2,
+} openli_liid_format_t;
+
+typedef enum {
     HI1_LI_ACTIVATED = 1,
     HI1_LI_DEACTIVATED = 2,
     HI1_LI_MODIFIED = 3,
@@ -133,6 +144,7 @@ typedef struct static_ipranges {
 
 typedef struct intercept_common {
     char *liid;
+    openli_liid_format_t liid_format;
     char *authcc;
     char *delivcc;
     int liid_len;
@@ -172,6 +184,7 @@ typedef struct hi1_notify_data {
     uint64_t ts_sec;
     uint32_t ts_usec;
     char *target_info;
+    openli_liid_format_t liid_format;
 } hi1_notify_data_t;
 
 typedef struct ipintercept {
@@ -615,6 +628,8 @@ void openli_free_encryptkey_ptr(uint8_t **pp, size_t len);
 
 int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
         size_t *keylen, char *errorstring, size_t errorstringsize);
+int openli_parse_liid_string(char *liidstr, char **storage,
+        openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

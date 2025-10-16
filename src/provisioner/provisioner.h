@@ -163,6 +163,9 @@ typedef struct liid_hash {
     /** The LIID for the intercept */
     char *liid;
 
+    /** Whether the LIID is ascii-text or binary octets */
+    openli_liid_format_t liid_format;
+
     /** The encryption method to use if/when encrypting intercept payload */
     payload_encryption_method_t encryptmethod;
 

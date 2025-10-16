@@ -76,6 +76,10 @@ static inline int common_intercept_equal(intercept_common_t *a,
         return 0;
     }
 
+    if (a->liid_format != b->liid_format) {
+        return 0;
+    }
+
     if (a->tostart_time != b->tostart_time) {
         return 0;
     }

@@ -155,7 +155,8 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
                         rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET,
                         OPENLI_IPMMCC_MMCC_PROTOCOL_RTP);
             }
-            publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
+            publish_openli_msg(loc->zmq_pubsocks[rtp->common.seqtrackerid],
+                    msg);
             matched ++;
             continue;
         }
@@ -174,7 +175,8 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
                         rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
                 msg->type = OPENLI_EXPORT_IPMMCC;
             }
-            publish_openli_msg(loc->zmq_pubsocks[0], msg); // FIXME
+            publish_openli_msg(loc->zmq_pubsocks[rtp->common.seqtrackerid],
+                    msg);
             matched ++;
             continue;
         }

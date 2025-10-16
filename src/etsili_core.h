@@ -73,6 +73,7 @@ typedef struct etsili_intercept_details {
     char *intpointid;
     char *operatorid;
     char *networkelemid;
+    openli_liid_format_t liid_format;
 } etsili_intercept_details_t;
 
 typedef struct etsili_ipaddress {
@@ -224,6 +225,7 @@ typedef struct wandder_etsipshdr_data {
     char *intpointid;
     int intpointid_len;
 
+    openli_liid_format_t liid_format;
 } wandder_etsipshdr_data_t;
 
 typedef struct encoded_header_template {

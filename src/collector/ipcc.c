@@ -155,7 +155,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         dir);
                 }
 
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                publish_openli_msg(
+                        loc->zmq_pubsocks[matchsess->common.seqtrackerid], msg);
             }
         }
         pnode = pnode->parent;
@@ -223,7 +224,9 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                                 sess->common.destid, pkt, 0);
                     }
                     if (msg != NULL) {
-                        publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                        publish_openli_msg(
+                                loc->zmq_pubsocks[sess->common.seqtrackerid],
+                                msg);
                     }
                 }
             }
@@ -312,7 +315,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                         sess->common.destid, pkt, 0);
             }
             if (msg != NULL) {
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                publish_openli_msg(
+                    loc->zmq_pubsocks[sess->common.seqtrackerid], msg);
             }
         }
     }
@@ -348,7 +352,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                         sess->common.destid, pkt, 1);
             }
             if (msg != NULL) {
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                publish_openli_msg( 
+                    loc->zmq_pubsocks[sess->common.seqtrackerid], msg);
             }
         }
     }

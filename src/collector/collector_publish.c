@@ -73,6 +73,7 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     expmsg->data.cept.cepttype = cepttype;
     expmsg->data.cept.targetagency = strdup(common->targetagency);
     expmsg->data.cept.timefmt = common->time_fmt;
+    expmsg->data.cept.liid_format = common->liid_format;
 
     if (common->xid_count > 0) {
         expmsg->data.cept.xids = calloc(common->xid_count, sizeof(uuid_t));

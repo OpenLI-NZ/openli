@@ -29,6 +29,7 @@
 #include "etsili_core.h"
 #include "etsiencoding.h"
 #include "logger.h"
+#include "util.h"
 
 uint8_t etsi_hi1operationoid[8] = {0x00, 0x04, 0x00, 0x02, 0x02, 0x00, 0x01,
         0x06};
@@ -53,9 +54,26 @@ static inline void encode_hi1_notification_body(wandder_encoder_t *encoder,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 0,
                 etsi_hi1operationoid, sizeof(etsi_hi1operationoid));
 
-        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-                WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, not_data->liid,
-                strlen(not_data->liid));
+        // encoding will differ based on whether LIID is binary or ASCII
+        if (not_data->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+            uint8_t liidbuf[OPENLI_LIID_MAXSIZE];
+            size_t liidsize = 0;
+            liidsize = openli_convert_hexstring_to_binary(not_data->liid,
+                    liidbuf, OPENLI_LIID_MAXSIZE);
+            if (liidsize > 0) {
+                wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, liidbuf, liidsize);
+
+            } else {
+                wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                        WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, "unknown",
+                        strlen("unknown"));
+            }
+        } else {
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, not_data->liid,
+                    strlen(not_data->liid));
+        }
 
         ENC_CSEQUENCE(encoder, 2);      // CommunicationIdentifier (HI2)
 
@@ -114,6 +132,7 @@ wandder_encoded_result_t *encode_etsi_hi1_notification(
     hdrdata.networkelemid_len = 0;
     hdrdata.intpointid = NULL;
     hdrdata.intpointid_len = 0;
+    hdrdata.liid_format = not_data->liid_format;
 
     gettimeofday(&tv, NULL);
     encode_etsili_pshdr(encoder, &hdrdata, 0, (int64_t)not_data->seqno, &tv,

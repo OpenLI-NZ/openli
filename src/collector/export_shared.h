@@ -44,6 +44,7 @@ typedef struct exporter_intercept_msg {
 
     payload_encryption_method_t encryptmethod;
     openli_timestamp_encoding_fmt_t timefmt;
+    openli_liid_format_t liid_format;
 } exporter_intercept_msg_t;
 
 typedef struct cin_seqno {
