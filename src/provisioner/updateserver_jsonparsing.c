@@ -1728,6 +1728,24 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (ipint->udp_sink) {
+        udp_sink_intercept_t *found;
+        HASH_FIND(hh, state->interceptconf.udp_sink_intercepts, ipint->udp_sink,
+                strlen(ipint->udp_sink), found);
+        if (found) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>UDP Sink '%s' is already being used by another IP intercept (%s). Either choose another UDP Sink, or move the existing intercept to another available Sink. %s",
+                    update_failure_page_start, ipint->udp_sink,
+                    found->liid, update_failure_page_end);
+            goto cepterr;
+        }
+        found = calloc(1, sizeof(udp_sink_intercept_t));
+        found->liid = strdup(ipint->common.liid);
+        found->udpsink = strdup(ipint->udp_sink);
+        HASH_ADD_KEYPTR(hh, state->interceptconf.udp_sink_intercepts,
+                found->udpsink, strlen(found->udpsink), found);
+    }
+
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
             ipint->common.liid, ipint->common.liid_len, ipint);
 
@@ -2225,6 +2243,43 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    EXTRACT_JSON_STRING_PARAM("udpsink", "IP intercept", ipjson.udpsink,
+            ipint->udp_sink, &parseerr, false);
+
+    if (ipint->udp_sink) {
+        udp_sink_intercept_t *sink;
+        HASH_FIND(hh, state->interceptconf.udp_sink_intercepts, ipint->udp_sink,
+                strlen(ipint->udp_sink), sink);
+        if (sink && strcmp(sink->liid, ipint->common.liid) != 0) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>UDP Sink '%s' is already being used by another IP intercept (%s). Either choose another UDP Sink, or move the existing intercept to another available Sink. %s",
+                    update_failure_page_start, ipint->udp_sink,
+                    sink->liid, update_failure_page_end);
+            goto cepterr;
+        }
+        sink = calloc(1, sizeof(udp_sink_intercept_t));
+        sink->liid = strdup(ipint->common.liid);
+        sink->udpsink = strdup(ipint->udp_sink);
+        HASH_ADD_KEYPTR(hh, state->interceptconf.udp_sink_intercepts,
+                sink->udpsink, strlen(sink->udpsink), sink);
+    }
+
+    if (found->udp_sink) {
+        udp_sink_intercept_t *sink;
+        HASH_FIND(hh, state->interceptconf.udp_sink_intercepts, found->udp_sink,
+                strlen(found->udp_sink), sink);
+        if (sink) {
+            HASH_DELETE(hh, state->interceptconf.udp_sink_intercepts, sink);
+            if (sink->liid) {
+                free(sink->liid);
+            }
+            if (sink->udpsink) {
+                free(sink->udpsink);
+            }
+            free(sink);
+        }
+    }
+
     if (update_intercept_common(&(ipint->common), &(found->common),
             &changed, &agencychanged, &timeschanged, state, cinfo) < 0) {
         goto cepterr;
@@ -2238,8 +2293,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             radiusidentstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("mobileident", "IP intercept", ipjson.mobileident,
             mobileidentstring, &parseerr, false);
-    EXTRACT_JSON_STRING_PARAM("udpsink", "IP intercept", ipjson.udpsink,
-            ipint->udp_sink, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFE, false);
 
@@ -2334,6 +2387,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     MODIFY_STRING_MEMBER(ipint->udp_sink, found->udp_sink, &changed);
+
 
     if (agencychanged) {
         announce_hi1_notification_to_mediators(state, &(found->common),

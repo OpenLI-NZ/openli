@@ -174,6 +174,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->liid_map = NULL;
     state->leas = NULL;
     state->defradusers = NULL;
+    state->udp_sink_intercepts = NULL;
     state->destroy_pending = 0;
     state->was_encrypted = 0;
     state->default_email_deliver_compress =
@@ -657,6 +658,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     default_radius_user_t *h3, *tmp3;
+    udp_sink_intercept_t *h4, *tmp4;
 
     pthread_mutex_lock(&(conf->safelock));
     conf->destroy_pending = 1;
@@ -679,6 +681,17 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
         HASH_DEL(conf->leas, h2);
         free_liagency(h2->ag);
         free(h2);
+    }
+
+    HASH_ITER(hh, conf->udp_sink_intercepts, h4, tmp4) {
+        HASH_DEL(conf->udp_sink_intercepts, h4);
+        if (h4->udpsink) {
+            free(h4->udpsink);
+        }
+        if (h4->liid) {
+            free(h4->liid);
+        }
+        free(h4);
     }
 
     free_all_ipintercepts(&(conf->ipintercepts));

@@ -1154,6 +1154,31 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
     return 0;
 }
 
+static int validate_udp_sink_intercepts(prov_intercept_conf_t *state) {
+    ipintercept_t *ipint, *tmp;
+    udp_sink_intercept_t *udp;
+
+    HASH_ITER(hh_liid, state->ipintercepts, ipint, tmp) {
+        if (!ipint->udp_sink) {
+            continue;
+        }
+        HASH_FIND(hh, state->udp_sink_intercepts, ipint->udp_sink,
+                strlen(ipint->udp_sink), udp);
+        if (udp) {
+            logger(LOG_INFO, "OpenLI: UDP Sink %s is configured for multiple IP intercepts! This is invalid, please ensure that (at most) only 1 IP intercept is associated with a UDP sink. Affected LIIDs: %s, %s",
+                    ipint->udp_sink, ipint->common.liid, udp->liid);
+            return -1;
+        }
+
+        udp = calloc(1, sizeof(udp_sink_intercept_t));
+        udp->udpsink = strdup(ipint->udp_sink);
+        udp->liid = strdup(ipint->common.liid);
+        HASH_ADD_KEYPTR(hh, state->udp_sink_intercepts, udp->udpsink,
+                strlen(udp->udpsink), udp);
+    }
+    return 1;
+}
+
 static int intercept_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
@@ -1163,6 +1188,9 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "ipintercepts") == 0) {
         if (parse_ipintercept_list(&state->ipintercepts, doc, value) == -1) {
+            return -1;
+        }
+        if (validate_udp_sink_intercepts(state) == -1) {
             return -1;
         }
     }

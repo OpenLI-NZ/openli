@@ -258,6 +258,13 @@ typedef struct prov_mediator {
     UT_hash_handle hh;
 } prov_mediator_t;
 
+typedef struct udp_sink_intercept {
+    char *udpsink;
+    char *liid;
+
+    UT_hash_handle hh;
+} udp_sink_intercept_t;
+
 typedef struct prov_intercept_conf {
     /** The set of known RADIUS servers that will be provided to collectors */
     coreserver_t *radiusservers;
@@ -283,6 +290,11 @@ typedef struct prov_intercept_conf {
     liid_hash_t *liid_map;
     /** A set of default RADIUS user names */
     default_radius_user_t *defradusers;
+
+    /** A map that ensures each UDP sink only is responsible for a single
+     *  intercept.
+     */
+    udp_sink_intercept_t *udp_sink_intercepts;
 
     /** The default approach for delivering compressed email CCs to the
      *  agencies (i.e. in their original compressed form, or decompressed).
