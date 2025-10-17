@@ -145,6 +145,16 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
+    if (a->udp_sink && !b->udp_sink) {
+        return 0;
+    }
+    if (b->udp_sink && !a->udp_sink) {
+        return 0;
+    }
+    if (a->udp_sink && b->udp_sink && strcmp(a->udp_sink, b->udp_sink) != 0) {
+        return 0;
+    }
+
     if (a->accesstype != b->accesstype) {
         return 0;
     }

@@ -643,6 +643,9 @@ void free_single_ipintercept(ipintercept_t *cept) {
     if (cept->username) {
         free(cept->username);
     }
+    if (cept->udp_sink) {
+        free(cept->udp_sink);
+    }
 
     free_all_staticipranges(&(cept->statics));
     free(cept);

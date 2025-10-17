@@ -964,6 +964,21 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
+        if (ipint->udp_sink) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"udpsink", strlen("udpsink"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)ipint->udp_sink, strlen(ipint->udp_sink),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+
         if (ipint->statics != NULL) {
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,

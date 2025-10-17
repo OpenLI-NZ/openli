@@ -240,6 +240,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
     OPENLI_PROTO_FIELD_THREADID,
     OPENLI_PROTO_FIELD_LIID_FORMAT,
+    OPENLI_PROTO_FIELD_UDP_SINK,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct

@@ -1005,6 +1005,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->awaitingconfirm = 1;
         newcept->username_len = 0;
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+        newcept->udp_sink = NULL;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
         newcept->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
         newcept->statics = NULL;
@@ -1054,6 +1055,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                    "udpsink") == 0) {
+                SET_CONFIG_STRING_OPTION(newcept->udp_sink, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value, "accesstype") == 0) {
                 newcept->accesstype = map_access_type_string(
                         (char *)value->data.scalar.value);
@@ -1086,6 +1094,26 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     == 0) {
                 newcept->mobileident = map_mobile_ident_string(
                         (char *)value->data.scalar.value);
+            }
+        }
+
+        if (newcept->udp_sink) {
+            if (!newcept->common.liid) {
+                newcept->common.liid = strdup("unidentified intercept");
+            }
+            if (newcept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+                logger(LOG_INFO, "OpenLI: invalid IP intercept configuration for '%s' -- either udpsink or vendmirrorid may be set, but not both",
+                        newcept->common.liid);
+                free_single_ipintercept(newcept);
+                continue;
+            }
+
+            if (newcept->common.xid_count > 0) {
+                logger(LOG_INFO, "OpenLI: invalid IP intercept configuration for '%s' -- intercepts using XIDs cannot be captured using a UDP sink",
+                        newcept->common.liid);
+                logger(LOG_INFO, "OpenLI: disabling UDP sink configuration for this intercept");
+                free(newcept->udp_sink);
+                newcept->udp_sink = NULL;
             }
         }
 

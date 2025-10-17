@@ -199,6 +199,11 @@ typedef struct ipintercept {
      * ETSI records */
     uint32_t vendmirrorid;
 
+    /* Used in cases where the traffic for this intercept are going to be
+     * sent to a collector directly over UDP
+     */
+    char *udp_sink;
+
     static_ipranges_t *statics;
 
     openli_mobile_identifier_t mobileident;

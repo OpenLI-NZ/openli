@@ -76,6 +76,7 @@ struct json_intercept {
     struct json_object *delivercompressed;
     struct json_object *xids;
     struct json_object *xid;
+    struct json_object *udpsink;
 };
 
 struct json_prov_options {
@@ -239,6 +240,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
     json_object_object_get_ex(parsed, "xids", &(ipjson->xids));
     json_object_object_get_ex(parsed, "xid", &(ipjson->xid));
+    json_object_object_get_ex(parsed, "udpsink", &(ipjson->udpsink));
 }
 
 static inline int compare_intercept_times(intercept_common_t *latest,
@@ -1632,6 +1634,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sink = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
     ipint->options = 0;
@@ -1663,6 +1666,8 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
             ipint->username, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("udpsink", "IP intercept", ipjson.udpsink,
+            ipint->udp_sink, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
             accessstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("radiusident", "IP intercept", ipjson.radiusident,
@@ -2195,6 +2200,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sink = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->common.liid = strdup(parsedliid);
     free(liidstr);
@@ -2232,6 +2238,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             radiusidentstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("mobileident", "IP intercept", ipjson.mobileident,
             mobileidentstring, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("udpsink", "IP intercept", ipjson.udpsink,
+            ipint->udp_sink, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFE, false);
 
@@ -2324,6 +2332,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         changed = 1;
         found->vendmirrorid = ipint->vendmirrorid;
     }
+
+    MODIFY_STRING_MEMBER(ipint->udp_sink, found->udp_sink, &changed);
 
     if (agencychanged) {
         announce_hi1_notification_to_mediators(state, &(found->common),
