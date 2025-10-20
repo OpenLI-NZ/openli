@@ -42,6 +42,15 @@
 #include "timed_intercept.h"
 #include "x2x3_ingest.h"
 
+typedef struct udp_sink_worker_args {
+    void *zmq_ctxt;
+    char *key;
+    char *listenaddr;
+    char *listenport;
+    char *liid;
+    int trackerid;
+} udp_sink_worker_args_t;
+
 typedef struct colsync_data {
 
     sync_thread_global_t *glob;

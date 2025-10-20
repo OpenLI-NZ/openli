@@ -133,6 +133,21 @@ typedef struct collector_stats {
 
 } collector_stats_t;
 
+typedef struct colsync_udp_sink {
+
+    char *key;
+    char *listenaddr;
+    char *listenport;
+    char *identifier;
+
+    char *attached_liid;
+    pthread_t tid;
+
+    void *zmq_control;
+
+    UT_hash_handle hh;
+} colsync_udp_sink_t;
+
 typedef struct sync_thread_global {
 
     pthread_t threadid;
@@ -141,6 +156,8 @@ typedef struct sync_thread_global {
     void *epollevs;
     int epoll_fd;
     int total_col_threads;
+
+    colsync_udp_sink_t *udpsinks;
 
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
@@ -295,6 +312,9 @@ void *start_seqtracker_thread(void *data);
 void clean_seqtracker(seqtracker_thread_data_t *seqdata);
 
 void *start_forwarding_thread(void *data);
+
+void *start_udp_sink_worker(void *arg);
+void destroy_colsync_udp_sink(colsync_udp_sink_t *sink);
 
 #endif
 

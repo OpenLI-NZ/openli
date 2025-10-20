@@ -1602,6 +1602,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
 
 static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	pthread_mutex_destroy(&(sup->mutex));
+
 	if (sup->epoll_fd != -1) {
 		close(sup->epoll_fd);
 	}
@@ -1933,6 +1934,11 @@ static void init_collector_global(collector_global_t *glob) {
 
     glob->emailsockfd = -1;
     glob->email_ingestor = NULL;
+
+    /* The rest of syncip gets initialized later, but this is going to
+     * populated when we parse the config file.
+     */
+    glob->syncip.udpsinks = NULL;
 
     /* TODO add config options to change these values
      *      also make sure changes are actions post config-reload */

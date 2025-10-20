@@ -140,6 +140,26 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     } \
     pthread_mutex_unlock(&(haltinfo.mutex));
 
+void destroy_colsync_udp_sink(colsync_udp_sink_t *sink) {
+    if (sink->zmq_control) {
+        zmq_close(sink->zmq_control);
+    }
+    if (sink->identifier) {
+        free(sink->identifier);
+    }
+    if (sink->listenaddr) {
+        free(sink->listenaddr);
+    }
+    if (sink->listenport) {
+        free(sink->listenport);
+    }
+    if (sink->attached_liid) {
+        free(sink->attached_liid);
+    }
+    if (sink->key) {
+        free(sink->key);
+    }
+}
 
 void clean_sync_data(collector_sync_t *sync) {
 
@@ -149,6 +169,7 @@ void clean_sync_data(collector_sync_t *sync) {
     default_radius_user_t *raditer, *radtmp;
     halt_info_t haltinfo;
     x_input_sync_t *xpush, *xtmp;
+    colsync_udp_sink_t *sink, *tmpsink;
 
     if (sync->instruct_fd != -1) {
 	    close(sync->instruct_fd);
@@ -236,6 +257,22 @@ void clean_sync_data(collector_sync_t *sync) {
             zmq_close(sync->zmq_colsock);
             sync->zmq_colsock = NULL;
         }
+
+        HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+            if (sink->tid != 0) {
+                // send a HALT message to the thread and wait for exit
+                openli_export_recv_t *msg;
+                msg = calloc(1, sizeof(openli_export_recv_t));
+                msg->type = OPENLI_EXPORT_HALT;
+                msg->data.haltinfo = NULL;
+                publish_openli_msg(sink->zmq_control, msg);
+
+                pthread_join(sink->tid, NULL);
+            }
+            HASH_DELETE(hh, sync->glob->udpsinks, sink);
+            destroy_colsync_udp_sink(sink);
+        }
+
 
         HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
             if (xpush->zmq_socket) {
@@ -1189,9 +1226,82 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 
 }
 
+static int initiate_udp_sink_thread(collector_sync_t *sync,
+        ipintercept_t *cept) {
+
+    colsync_udp_sink_t *sink;
+    char sockname[1024];
+    int hwm = 1000, timeout = 1000;
+    openli_export_recv_t *msg;
+    udp_sink_worker_args_t *args;
+
+    if (cept->udp_sink == NULL) {
+        return -1;
+    }
+
+    HASH_FIND(hh, sync->glob->udpsinks, cept->udp_sink, strlen(cept->udp_sink),
+            sink);
+    if (!sink) {
+        // we aren't the intended sink point for this intercept
+        return 0;
+    }
+
+
+    snprintf(sockname, 1024, "inproc://openliudpsink_sync-%s", sink->key);
+    sink->zmq_control = zmq_socket(sync->glob->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_setsockopt(sink->zmq_control, ZMQ_SNDHWM, &hwm, sizeof(hwm)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for UDP sink %s: %s",
+                sink->key, strerror(errno));
+        return -1;
+    }
+    if (zmq_setsockopt(sink->zmq_control, ZMQ_SNDTIMEO, &timeout,
+                sizeof(timeout)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for UDP sink %s: %s",
+                sink->key, strerror(errno));
+        return -1;
+    }
+
+    if (zmq_bind(sink->zmq_control, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error when connecting to control ZMQ for UDP sink %s: %s",
+                sink->key, strerror(errno));
+        return -1;
+    }
+
+    sink->attached_liid = strdup(cept->common.liid);
+
+    args = calloc(1, sizeof(udp_sink_worker_args_t));
+
+    args->key = strdup(sink->key);
+    args->listenport = strdup(sink->listenport);
+    args->listenaddr = strdup(sink->listenaddr);
+    args->liid = strdup(sink->attached_liid);
+    args->zmq_ctxt = sync->glob->zmq_ctxt;
+    args->trackerid = cept->common.seqtrackerid;
+
+    pthread_create(&(sink->tid), NULL, start_udp_sink_worker,
+            (void *)args);
+
+    // send a copy of cept to the newly started worker thread
+    msg = create_intercept_details_msg(&(cept->common),
+            OPENLI_INTERCEPT_TYPE_IP);
+    msg->data.cept.username = strdup(cept->username);
+    msg->data.cept.accesstype = cept->accesstype;
+    publish_openli_msg(sink->zmq_control, msg);
+    return 1;
+}
+
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
+
+    if (sync->pubsockcount <= 1) {
+        cept->common.seqtrackerid = 0;
+    } else {
+        cept->common.seqtrackerid = hash_liid(cept->common.liid) % sync->pubsockcount;
+    }
 
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 
@@ -1208,17 +1318,20 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     }
     if (cept->common.xid_count > 0) {
         announce_xid(sync, cept);
+    } else if (cept->udp_sink) {
+        if (initiate_udp_sink_thread(sync, cept) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: rejected IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu) due to bad UDP sink configuration",
+                    cept->common.liid, cept->common.authcc,
+                    cept->common.tostart_time, cept->common.toend_time);
+            return 1;
+        }
+
     } else if (cept->username != NULL) {
         logger(LOG_INFO,
                 "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
                 cept->common.liid, cept->common.authcc,
                 cept->common.tostart_time, cept->common.toend_time);
-    }
-
-    if (sync->pubsockcount <= 1) {
-        cept->common.seqtrackerid = 0;
-    } else {
-        cept->common.seqtrackerid = hash_liid(cept->common.liid) % sync->pubsockcount;
     }
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
@@ -1236,7 +1349,7 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
             OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
-    if (cept->username) {
+    if (cept->username && !cept->udp_sink) {
         push_existing_user_sessions(sync, cept);
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
     }

@@ -39,6 +39,85 @@
 #include "configparser_common.h"
 #include "collector/x2x3_ingest.h"
 
+static int parse_udp_sink_config(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *sinks) {
+
+    yaml_node_item_t *item;
+    for (item = sinks->data.sequence.items.start;
+            item != sinks->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        colsync_udp_sink_t *found, *snk;
+        yaml_node_pair_t *pair;
+        char fullkey[512];
+
+        snk = calloc(1, sizeof(colsync_udp_sink_t));
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "listenaddr") == 0) {
+                SET_CONFIG_STRING_OPTION(snk->listenaddr, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "listenport") == 0) {
+                SET_CONFIG_STRING_OPTION(snk->listenport, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "identifier") == 0) {
+                SET_CONFIG_STRING_OPTION(snk->identifier, value);
+            }
+        }
+
+        if (snk->listenaddr == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: UDP sink must include a 'listenaddr' parameter");
+            destroy_colsync_udp_sink(snk);
+            continue;
+        }
+
+        if (snk->listenport == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: UDP sink must include a 'listenport' parameter");
+            destroy_colsync_udp_sink(snk);
+            continue;
+        }
+
+        if (snk->identifier == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: UDP sink must include a 'identifier' parameter");
+            destroy_colsync_udp_sink(snk);
+            continue;
+        }
+
+        snprintf(fullkey, 512, "%s,%s,%s", snk->identifier, snk->listenaddr,
+                snk->listenport);
+        snk->key = strdup(fullkey);
+
+        HASH_FIND(hh, glob->syncip.udpsinks, snk->key, strlen(snk->key), found);
+        if (found) {
+            logger(LOG_INFO,
+                    "OpenLI: WARNING: UDP sink '%s' has been configured multiple times, ignoring subsequent instances...", snk->key);
+            destroy_colsync_udp_sink(snk);
+        } else {
+            HASH_ADD_KEYPTR(hh, glob->syncip.udpsinks, snk->key,
+                    strlen(snk->key), snk);
+        }
+    }
+    return 0;
+}
+
 static int parse_x2x3_ingestion_config(collector_global_t *glob,
         yaml_document_t *doc, yaml_node_t *ingests) {
 
@@ -372,6 +451,14 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "x2x3inputs") == 0) {
         if (parse_x2x3_ingestion_config(glob, doc, value) == -1) {
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "udpsinks") == 0) {
+        if (parse_udp_sink_config(glob, doc, value) == -1) {
             return -1;
         }
     }
