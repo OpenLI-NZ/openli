@@ -637,14 +637,87 @@ void free_all_staticipranges(static_ipranges_t **ipranges) {
     *ipranges = NULL;
 }
 
+void clean_intercept_udp_sink(intercept_udp_sink_t *sink) {
+
+    if (sink->collectorid) {
+        free(sink->collectorid);
+    }
+    if (sink->listenaddr) {
+        free(sink->listenaddr);
+    }
+    if (sink->listenport) {
+        free(sink->listenport);
+    }
+    if (sink->key) {
+        free(sink->key);
+    }
+    sink->enabled = 0;
+}
+
+intercept_udp_sink_t *add_intercept_udp_sink(ipintercept_t *cept,
+        char *collectorid, char *listenaddr, char *listenport,
+        uint8_t direction, uint8_t encapfmt) {
+
+    intercept_udp_sink_t *sink;
+    char buf[1024];
+
+    if (collectorid == NULL || listenaddr == NULL || listenport == NULL) {
+        return NULL;
+    }
+    if (cept == NULL) {
+        return NULL;
+    }
+
+    sink = calloc(1, sizeof(intercept_udp_sink_t));
+    sink->collectorid = strdup(collectorid);
+    sink->listenaddr = strdup(listenaddr);
+    sink->listenport = strdup(listenport);
+
+    snprintf(buf, 1024, "%s,%s,%s", collectorid, listenaddr, listenport);
+    sink->key = strdup(buf);
+
+    sink->enabled = 1;
+    sink->direction = direction;
+    sink->encapfmt = encapfmt;
+    sink->awaitingconfirm = 0;
+
+    HASH_ADD_KEYPTR(hh, cept->udp_sinks, sink->key, strlen(sink->key), sink);
+    return sink;
+}
+
+void remove_unconfirmed_intercept_udp_sinks(ipintercept_t *cept) {
+    intercept_udp_sink_t *sink, *tmp;
+
+    HASH_ITER(hh, cept->udp_sinks, sink, tmp) {
+        if (sink->awaitingconfirm) {
+            HASH_DELETE(hh, cept->udp_sinks, sink);
+            clean_intercept_udp_sink(sink);
+            free(sink);
+        }
+    }
+}
+
+void remove_all_intercept_udp_sinks(ipintercept_t *cept) {
+    intercept_udp_sink_t *sink, *tmp;
+
+    HASH_ITER(hh, cept->udp_sinks, sink, tmp) {
+        HASH_DELETE(hh, cept->udp_sinks, sink);
+        clean_intercept_udp_sink(sink);
+        free(sink);
+    }
+}
+
 void free_single_ipintercept(ipintercept_t *cept) {
+    intercept_udp_sink_t *sink, *tmp;
 
     free_intercept_common(&(cept->common));
     if (cept->username) {
         free(cept->username);
     }
-    if (cept->udp_sink) {
-        free(cept->udp_sink);
+    HASH_ITER(hh, cept->udp_sinks, sink, tmp) {
+        HASH_DELETE(hh, cept->udp_sinks, sink);
+        clean_intercept_udp_sink(sink);
+        free(sink);
     }
 
     free_all_staticipranges(&(cept->statics));

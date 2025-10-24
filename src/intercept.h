@@ -187,6 +187,27 @@ typedef struct hi1_notify_data {
     openli_liid_format_t liid_format;
 } hi1_notify_data_t;
 
+enum {
+    INTERCEPT_UDP_ENCAP_FORMAT_RAW,
+    INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR,
+    INTERCEPT_UDP_ENCAP_FORMAT_NOKIA,
+    INTERCEPT_UDP_ENCAP_FORMAT_CISCO
+};
+
+typedef struct intercept_udp_sink {
+    uint8_t enabled;
+    uint8_t awaitingconfirm;
+    char *collectorid;
+    char *listenport;
+    char *listenaddr;
+    uint8_t direction;
+    uint8_t encapfmt;
+    char *key;
+
+    UT_hash_handle hh;
+
+} intercept_udp_sink_t;
+
 typedef struct ipintercept {
     intercept_common_t common;
 
@@ -200,9 +221,13 @@ typedef struct ipintercept {
     uint32_t vendmirrorid;
 
     /* Used in cases where the traffic for this intercept are going to be
-     * sent to a collector directly over UDP
+     * sent to a collector directly using some form of UDP encapsulation
+     * (e.g. FlowtapLite)
      */
-    char *udp_sink;
+    intercept_udp_sink_t *udp_sinks;
+
+    /** Default CIN to use if no session ID is otherwise available */
+    uint32_t sessionid;
 
     static_ipranges_t *statics;
 
@@ -582,6 +607,11 @@ int add_intercept_to_email_user_intercept_list(
 
 int generate_ipint_userkey(ipintercept_t *ipint, char *space,
         size_t spacelen);
+
+void clean_intercept_udp_sink(intercept_udp_sink_t *sink);
+void remove_unconfirmed_intercept_udp_sinks(ipintercept_t *cept);
+void remove_all_intercept_udp_sinks(ipintercept_t *cept);
+
 
 const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
