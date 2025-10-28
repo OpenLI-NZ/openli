@@ -375,6 +375,10 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
             logger(LOG_INFO, "OpenLI provisioner: UDP sink configuration must include a 'collectorid' field -- ignoring UDP sink");
             goto parsefail;
         }
+        if (strchr(sink->collectorid, ',') != NULL) {
+            logger(LOG_INFO, "OpenLI provisioner: the 'collectorid' field for a UDP sink configuration must not include a comma character -- ignoring UDP sink");
+            goto parsefail;
+        }
 
         if (sink->listenaddr == NULL) {
             logger(LOG_INFO, "OpenLI provisioner: UDP sink configuration must include a 'listenaddr' field -- ignoring UDP sink");
@@ -397,7 +401,7 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
         }
 
         sink->enabled = 1;
-        sink->awaitingconfirm = 0;
+        sink->awaitingconfirm = 1;
         HASH_ADD_KEYPTR(hh, cept->udp_sinks, sink->key, strlen(sink->key),
                 sink);
         continue;
@@ -1281,7 +1285,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
 
 static int validate_udp_sink_intercepts(prov_intercept_conf_t *state) {
     ipintercept_t *ipint, *tmp;
-    udp_sink_intercept_t *udp;
+    udp_sink_intercept_mapping_t *udp;
 
     HASH_ITER(hh_liid, state->ipintercepts, ipint, tmp) {
         if (!ipint->udp_sinks) {
@@ -1290,7 +1294,7 @@ static int validate_udp_sink_intercepts(prov_intercept_conf_t *state) {
         intercept_udp_sink_t *sink, *tmpsink;
 
         HASH_ITER(hh, ipint->udp_sinks, sink, tmpsink) {
-            HASH_FIND(hh, state->udp_sink_intercepts, sink->key,
+            HASH_FIND(hh, state->udp_sink_intercept_mappings, sink->key,
                     strlen(sink->key), udp);
             if (udp) {
                 logger(LOG_INFO, "OpenLI: UDP Sink %s is configured for multiple IP intercepts! This is invalid, please ensure that (at most) only 1 IP intercept is associated with a UDP sink. Affected LIIDs: %s, %s",
@@ -1298,11 +1302,11 @@ static int validate_udp_sink_intercepts(prov_intercept_conf_t *state) {
                 return -1;
             }
 
-            udp = calloc(1, sizeof(udp_sink_intercept_t));
+            udp = calloc(1, sizeof(udp_sink_intercept_mapping_t));
             udp->udpsink = strdup(sink->key);
             udp->liid = strdup(ipint->common.liid);
-            HASH_ADD_KEYPTR(hh, state->udp_sink_intercepts, udp->udpsink,
-                    strlen(udp->udpsink), udp);
+            HASH_ADD_KEYPTR(hh, state->udp_sink_intercept_mappings,
+                    udp->udpsink, strlen(udp->udpsink), udp);
         }
     }
     return 1;

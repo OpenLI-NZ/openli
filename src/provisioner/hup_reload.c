@@ -40,6 +40,89 @@ typedef struct xid_hash {
     UT_hash_handle hh;
 } xid_hash_t;
 
+int add_udp_sink_mapping(provision_state_t *state, char *liid, char *sinkkey) {
+
+    udp_sink_intercept_mapping_t *sink;
+
+    if (liid == NULL || sinkkey == NULL) {
+        return 0;
+    }
+
+    HASH_FIND(hh, state->interceptconf.udp_sink_intercept_mappings,
+            sinkkey, strlen(sinkkey), sink);
+    if (sink && strcmp(sink->liid, liid) != 0) {
+        return -1;
+    }
+    sink = calloc(1, sizeof(udp_sink_intercept_mapping_t));
+    sink->liid = strdup(liid);
+    sink->udpsink = strdup(sinkkey);
+    HASH_ADD_KEYPTR(hh, state->interceptconf.udp_sink_intercept_mappings,
+            sink->udpsink, strlen(sink->udpsink), sink);
+    return 0;
+}
+
+void remove_udp_sink_mapping(provision_state_t *state, char *liid, char *sinkid){
+    udp_sink_intercept_mapping_t *sink;
+
+    HASH_FIND(hh, state->interceptconf.udp_sink_intercept_mappings,
+            sinkid, strlen(sinkid), sink);
+    if (sink) {
+        if (sink->liid && strcmp(sink->liid, liid) != 0) {
+            return;
+        }
+        HASH_DELETE(hh, state->interceptconf.udp_sink_intercept_mappings, sink);
+        if (sink->liid) {
+            free(sink->liid);
+        }
+        if (sink->udpsink) {
+            free(sink->udpsink);
+        }
+        free(sink);
+    }
+}
+
+static inline int reload_ipintercept_udpsinks(provision_state_t *currstate,
+        ipintercept_t *ipint, ipintercept_t *newequiv) {
+
+    intercept_udp_sink_t *sink, *tmp, *found;
+    int changed = 0;
+
+    HASH_ITER(hh, ipint->udp_sinks, sink, tmp) {
+        HASH_FIND(hh, newequiv->udp_sinks, sink->key, strlen(sink->key),
+                found);
+        if (!found) {
+            remove_intercept_udp_sink(currstate, &(ipint->common), sink);
+            remove_udp_sink_mapping(currstate, ipint->common.liid, sink->key);
+            changed = 1;
+        } else {
+            int thischanged = 0;
+            if (sink->encapfmt != found->encapfmt) {
+                sink->encapfmt = found->encapfmt;
+                thischanged = 1;
+            }
+            if (sink->direction != found->direction) {
+                sink->direction = found->direction;
+                thischanged = 1;
+            }
+            if (thischanged) {
+                modify_intercept_udp_sink(currstate, &(ipint->common), sink);
+                changed = 1;
+            }
+
+            found->awaitingconfirm = 0;
+        }
+    }
+
+    HASH_ITER(hh, newequiv->udp_sinks, sink, tmp) {
+        if (sink->awaitingconfirm == 0) {
+            continue;
+        }
+        add_new_intercept_udp_sink(currstate, &(ipint->common), sink);
+        add_udp_sink_mapping(currstate, ipint->common.liid, sink->key);
+        changed = 1;
+    }
+    return changed;
+}
 
 static inline int reload_staticips(provision_state_t *currstate,
         ipintercept_t *ipint, ipintercept_t *newequiv) {
@@ -145,13 +228,7 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
         return 0;
     }
 
-    if (a->udp_sink && !b->udp_sink) {
-        return 0;
-    }
-    if (b->udp_sink && !a->udp_sink) {
-        return 0;
-    }
-    if (a->udp_sink && b->udp_sink && strcmp(a->udp_sink, b->udp_sink) != 0) {
+    if (a->sessionid != b->sessionid) {
         return 0;
     }
 
@@ -738,6 +815,8 @@ static int reload_ipintercepts(provision_state_t *currstate,
             continue;
         } else {
             int staticchanged = reload_staticips(currstate, ipint, newequiv);
+            int udpsinkchanged = reload_ipintercept_udpsinks(currstate, ipint,
+                    newequiv);
             int intsame = ip_intercept_equal(ipint, newequiv);
             int agencychanged = strcmp(ipint->common.targetagency,
                     newequiv->common.targetagency);
@@ -747,7 +826,8 @@ static int reload_ipintercepts(provision_state_t *currstate,
             newequiv->awaitingconfirm = 0;
 
             if (update_reconfigured_intercept(currstate, &(ipint->common),
-                    &(newequiv->common), intconf, (!intsame || staticchanged),
+                    &(newequiv->common), intconf,
+                    (!intsame || staticchanged || udpsinkchanged),
                     agencychanged, encryptchanged, droppedmeds, ipint->username,
                     newequiv->username) < 0) {
                 return -1;

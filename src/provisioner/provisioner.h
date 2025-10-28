@@ -258,12 +258,12 @@ typedef struct prov_mediator {
     UT_hash_handle hh;
 } prov_mediator_t;
 
-typedef struct udp_sink_intercept {
+typedef struct udp_sink_intercept_mapping {
     char *udpsink;
     char *liid;
 
     UT_hash_handle hh;
-} udp_sink_intercept_t;
+} udp_sink_intercept_mapping_t;
 
 typedef struct prov_intercept_conf {
     /** The set of known RADIUS servers that will be provided to collectors */
@@ -294,7 +294,7 @@ typedef struct prov_intercept_conf {
     /** A map that ensures each UDP sink only is responsible for a single
      *  intercept.
      */
-    udp_sink_intercept_t *udp_sink_intercepts;
+    udp_sink_intercept_mapping_t *udp_sink_intercept_mappings;
 
     /** The default approach for delivering compressed email CCs to the
      *  agencies (i.e. in their original compressed form, or decompressed).
@@ -489,6 +489,12 @@ void modify_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 void remove_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
+void add_new_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
+void modify_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
+void remove_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
 int halt_existing_intercept(provision_state_t *state,
         void *cept, openli_proto_msgtype_t wdtype);
 int modify_existing_intercept_options(provision_state_t *state,
@@ -531,6 +537,9 @@ void update_intercept_timeformats(provision_state_t *state,
 int reload_provisioner_config(provision_state_t *state);
 int check_for_duplicate_xids(prov_intercept_conf_t *intconf,
         size_t xid_count, uuid_t *xids, char *xid_liid);
+void remove_udp_sink_mapping(provision_state_t *state,
+        char *liid, char *sinkid);
+int add_udp_sink_mapping(provision_state_t *state, char *liid, char *sinkkey);
 
 /* Implemented in clientdb.c */
 int init_clientdb(provision_state_t *state);

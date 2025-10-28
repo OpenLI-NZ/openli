@@ -43,6 +43,17 @@ typedef struct halt_info {
     pthread_cond_t cond;
 } halt_info_t;
 
+typedef struct udp_sink_worker_args {
+    void *zmq_ctxt;
+    char *key;
+    char *listenaddr;
+    char *listenport;
+    char *liid;
+    int trackerid;
+    uint8_t direction;
+    uint8_t encapfmt;
+} udp_sink_worker_args_t;
+
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
     OPENLI_EXPORT_PACKET_FIN = 2,
@@ -70,6 +81,7 @@ enum {
     OPENLI_EXPORT_RAW_IRI = 24,
     OPENLI_EXPORT_EPSCC = 25,
     OPENLI_EXPORT_EPSIRI = 26,
+    OPENLI_EXPORT_UDP_SINK_ARGS = 27,
 };
 
 typedef struct openli_ipcc_job {
@@ -251,7 +263,8 @@ struct openli_export_recv {
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
-	halt_info_t *haltinfo;
+        udp_sink_worker_args_t udpargs;
+    	halt_info_t *haltinfo;
     } data;
 };
 

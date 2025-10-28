@@ -35,6 +35,10 @@
 #include <Judy.h>
 #include <uuid/uuid.h>
 
+#define ETSI_DIR_FROM_TARGET 0
+#define ETSI_DIR_TO_TARGET 1
+#define ETSI_DIR_INDETERMINATE 2
+
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
 #define OPENLI_LIID_MAXSIZE 26      // +1 for null byte
@@ -203,7 +207,7 @@ typedef struct intercept_udp_sink {
     uint8_t direction;
     uint8_t encapfmt;
     char *key;
-
+    char *liid;
     UT_hash_handle hh;
 
 } intercept_udp_sink_t;
@@ -616,12 +620,16 @@ void remove_all_intercept_udp_sinks(ipintercept_t *cept);
 const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
+const char *get_udp_encap_format_string(uint8_t encapfmt);
+const char *get_etsi_direction_string(uint8_t etsidir);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
 openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr);
 uint8_t map_email_decompress_option_string(char *decstr);
 openli_mobile_identifier_t map_mobile_ident_string(char *idstr);
+uint8_t map_etsi_direction_string(char *dirstr);
+uint8_t map_udp_encap_format_string(char *fmtstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);

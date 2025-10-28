@@ -42,10 +42,6 @@
 #define END_ENCODED_SEQUENCE(enc, x) \
         wandder_encode_endseq_repeat(enc, x);
 
-#define ETSI_DIR_FROM_TARGET 0
-#define ETSI_DIR_TO_TARGET 1
-#define ETSI_DIR_INDETERMINATE 2
-
 typedef struct etsili_generic etsili_generic_t;
 typedef struct etsili_generic_freelist etsili_generic_freelist_t;
 

@@ -542,6 +542,91 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
     return 0;
 }
 
+static int emit_intercept_udpsinks(intercept_udp_sink_t *sinks,
+        yaml_emitter_t *emitter) {
+    intercept_udp_sink_t *sink, *tmp;
+    yaml_event_t event;
+    const char *dirstring;
+    const char *encapstring;
+
+    HASH_ITER(hh, sinks, sink, tmp) {
+
+        yaml_mapping_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"collectorid", strlen("collectorid"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)sink->collectorid, strlen(sink->collectorid),
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"listenaddr", strlen("listenaddr"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)sink->listenaddr, strlen(sink->listenaddr),
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"listenport", strlen("listenport"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)sink->listenport, strlen(sink->listenport),
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"direction", strlen("direction"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        dirstring = get_etsi_direction_string(sink->direction);
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)dirstring, strlen(dirstring),
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"encapsulation", strlen("encapsulation"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+        encapstring = get_udp_encap_format_string(sink->encapfmt);
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)encapstring, strlen(encapstring),
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_mapping_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+    return 0;
+}
+
 static int emit_static_ipranges(static_ipranges_t *ranges,
         yaml_emitter_t *emitter) {
 
@@ -964,17 +1049,22 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
-        if (ipint->udp_sink) {
+        if (ipint->udp_sinks) {
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"udpsink", strlen("udpsink"), 1, 0,
+                    (yaml_char_t *)"udpsinks", strlen("udpsinks"), 1, 0,
                     YAML_PLAIN_SCALAR_STYLE);
             if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)ipint->udp_sink, strlen(ipint->udp_sink),
-                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            yaml_sequence_start_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            if (emit_intercept_udpsinks(ipint->udp_sinks, emitter) < 0) {
+                return -1;
+            }
+
+            yaml_sequence_end_event_initialize(&event);
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 

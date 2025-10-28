@@ -1637,6 +1637,22 @@ const char *get_radius_ident_string(uint32_t radoptions) {
     return "any";
 }
 
+const char *get_udp_encap_format_string(uint8_t encapfmt) {
+    switch(encapfmt) {
+        case INTERCEPT_UDP_ENCAP_FORMAT_RAW:
+            return "raw";
+        case INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR:
+            return "jmirror";
+        case INTERCEPT_UDP_ENCAP_FORMAT_NOKIA:
+            return "nokia";
+        case INTERCEPT_UDP_ENCAP_FORMAT_CISCO:
+            return "cisco";
+        default:
+            break;
+    }
+    return "raw";
+}
+
 const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype) {
     switch(idtype) {
         case OPENLI_MOBILE_IDENTIFIER_MSISDN:
@@ -1651,6 +1667,20 @@ const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype) {
             break;
     }
     return "Unknown";
+}
+
+const char *get_etsi_direction_string(uint8_t etsidir) {
+    switch(etsidir) {
+        case ETSI_DIR_FROM_TARGET:
+            return "from";
+        case ETSI_DIR_TO_TARGET:
+            return "to";
+        case ETSI_DIR_INDETERMINATE:
+            return "both";
+        default:
+            break;
+    }
+    return "both";
 }
 
 const char *get_access_type_string(internet_access_method_t method) {
@@ -1681,6 +1711,35 @@ const char *get_access_type_string(internet_access_method_t method) {
     }
 
     return "undefined";
+}
+
+uint8_t map_udp_encap_format_string(char *fmtstr) {
+    if (strcasecmp(fmtstr, "jmirror") == 0) {
+        return INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR;
+    }
+    if (strcasecmp(fmtstr, "raw") == 0) {
+        return INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+    }
+    if (strcasecmp(fmtstr, "nokia") == 0) {
+        return INTERCEPT_UDP_ENCAP_FORMAT_NOKIA;
+    }
+    if (strcasecmp(fmtstr, "cisco") == 0) {
+        return INTERCEPT_UDP_ENCAP_FORMAT_CISCO;
+    }
+    return INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+}
+
+uint8_t map_etsi_direction_string(char *dirstr) {
+    if (strcasecmp(dirstr, "from") == 0) {
+        return ETSI_DIR_FROM_TARGET;
+    }
+    if (strcasecmp(dirstr, "to") == 0) {
+        return ETSI_DIR_TO_TARGET;
+    }
+    if (strcasecmp(dirstr, "both") == 0) {
+        return ETSI_DIR_INDETERMINATE;
+    }
+    return ETSI_DIR_INDETERMINATE;
 }
 
 openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr) {

@@ -166,6 +166,66 @@ static void cleanup_local_udp_sink(udp_sink_local_t *local) {
 
 }
 
+static int bind_udp_sink_listener(udp_sink_local_t *local, char *key) {
+
+    int sockfd, rv, lasterr;
+    struct addrinfo hints, *res, *rp;
+    int zero=0;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    local->sockfd = -1;
+    lasterr = 0;
+
+    rv = getaddrinfo(local->listenaddr, local->listenport, &hints, &res);
+    if (rv != 0) {
+        logger(LOG_INFO, "OpenLI: error trying to call getaddrinfo in UDP sink worker: %s:%s -- %s", local->listenaddr, local->listenport, gai_strerror(rv));
+        return -1;
+    }
+
+    for (rp = res; rp != NULL; rp = rp->ai_next) {
+        sockfd = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (sockfd < 0) {
+            continue;
+        }
+        if (rp->ai_family == AF_INET6) {
+            setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero));
+        }
+        if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
+            local->sockfd = sockfd;
+            break;
+        }
+        lasterr = errno;
+        close(sockfd);
+    }
+
+    freeaddrinfo(res);
+    if (lasterr != 0 && local->sockfd < 0) {
+        logger(LOG_INFO, "OpenLI: UDP sink worker '%s' was unable to bind to its local address: %s\n", key, strerror(lasterr));
+    }
+    return local->sockfd;
+
+}
+
+static int process_udp_datagram(udp_sink_local_t *local, char *key) {
+
+    uint8_t recvbuf[65536];
+    ssize_t got = 0;
+
+    got = recv(local->sockfd, recvbuf, 65536, 0);
+    if (got < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while receiving UDP datagram in sink thread '%s': %s", key, strerror(errno));
+        return -1;
+    }
+
+    fprintf(stderr, "Received UDP datagram... (%zd)\n", got);
+    return 0;
+}
+
 static int process_control_message(udp_sink_local_t *local, char *key) {
     openli_export_recv_t *msg;
     int x;
@@ -193,8 +253,19 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
                         key, local->expectedliid, msg->data.cept.liid);
                 return -1;
             }
+            if (local->cept != NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: UDP sink worker '%s' has received multiple intercept announcements -- this is not supported behaviour!");
+                logger(LOG_INFO,
+                        "OpenLI: the offending LIID is %s", msg->data.cept.liid);
+                free_published_message(msg);
+                continue;
+            }
             local->dest_mediator = msg->destid;
             local->cept = msg;
+            logger(LOG_INFO,
+                    "OpenLI: UDP sink worker '%s' is now intercepting traffic for LIID %s", key, msg->data.cept.liid);
+
         } else {
             // not a message we care about
             free_published_message(msg);
@@ -206,13 +277,30 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
 
 static int udp_sink_main_loop(udp_sink_local_t *local, char *key) {
 
-    int x;
+    int x, topoll_len;
     zmq_pollitem_t topoll[2];
+
+    if (local->sockfd < 0) {
+        if (bind_udp_sink_listener(local, key) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: error while binding listening socket in UDP sink worker '%s'", key);
+            return -1;
+        }
+    }
 
     topoll[0].socket = local->zmq_control;
     topoll[0].events = ZMQ_POLLIN;
 
-    x = zmq_poll(topoll, 1, 100);
+    if (local->sockfd >= 0) {
+        topoll[1].socket = NULL;
+        topoll[1].fd = local->sockfd;
+        topoll[1].events = ZMQ_POLLIN;
+        topoll_len = 2;
+    } else {
+        topoll_len = 1;
+    }
+
+    x = zmq_poll(topoll, topoll_len, 100);
     if (x < 0) {
         logger(LOG_INFO,
                 "OpenLI: error in zmq_poll in UDP sink worker '%s': %s",
@@ -224,6 +312,15 @@ static int udp_sink_main_loop(udp_sink_local_t *local, char *key) {
         x = process_control_message(local, key);
         if (x < 0) {
             return -1;
+        }
+    }
+
+    if (topoll_len > 1 && topoll[1].revents & ZMQ_POLLIN) {
+        x = process_udp_datagram(local, key);
+        if (x < 0) {
+            close(local->sockfd);
+            local->sockfd = -1;
+            return 0;
         }
     }
 

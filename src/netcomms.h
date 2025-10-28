@@ -166,6 +166,9 @@ typedef enum {
     OPENLI_PROTO_X2X3_LISTENER,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
+    OPENLI_PROTO_ADD_UDPSINK,
+    OPENLI_PROTO_MODIFY_UDPSINK,
+    OPENLI_PROTO_REMOVE_UDPSINK,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -240,7 +243,9 @@ typedef enum {
     OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
     OPENLI_PROTO_FIELD_THREADID,
     OPENLI_PROTO_FIELD_LIID_FORMAT,
-    OPENLI_PROTO_FIELD_UDP_SINK,
+    OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
+    OPENLI_PROTO_FIELD_DIRECTION,
+    OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
 
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
@@ -320,6 +325,12 @@ int push_email_target_onto_net_buffer(net_buffer_t *nb,
         email_target_t *tgt, emailintercept_t *mailint);
 int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
         email_target_t *tgt, emailintercept_t *mailint);
+int push_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
+int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
+int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
 
 int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
         uint8_t using_rmq);
@@ -388,6 +399,13 @@ int decode_staticip_removal(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_staticip_modify(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
+int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
+        intercept_udp_sink_t *sink);
+int decode_intercept_udpsink_modify(uint8_t *msgbody, uint16_t len,
+        intercept_udp_sink_t *sink);
+int decode_intercept_udpsink_removal(uint8_t *msgbody, uint16_t len,
+        intercept_udp_sink_t *sink);
+
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
 int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);

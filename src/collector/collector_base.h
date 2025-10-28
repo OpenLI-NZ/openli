@@ -145,6 +145,9 @@ typedef struct colsync_udp_sink {
 
     void *zmq_control;
 
+    uint8_t direction;
+    uint8_t encapfmt;
+
     UT_hash_handle hh;
 } colsync_udp_sink_t;
 
