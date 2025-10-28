@@ -416,7 +416,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
     }
 
     /* If client supplied an encryption key string, normalize it to 24 bytes */
-    if (encstr) {
+    if (encstr && common->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (openli_parse_encryption_key_string(encstr, common->encryptkey,
                 &(common->encryptkey_len), cinfo->answerstring, 4096) < 0) {
             free(encstr);
