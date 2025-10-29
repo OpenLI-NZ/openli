@@ -548,6 +548,7 @@ static int emit_intercept_udpsinks(intercept_udp_sink_t *sinks,
     yaml_event_t event;
     const char *dirstring;
     const char *encapstring;
+    char buffer[256];
 
     HASH_ITER(hh, sinks, sink, tmp) {
 
@@ -593,6 +594,20 @@ static int emit_intercept_udpsinks(intercept_udp_sink_t *sinks,
                         1, 0, YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
+        if (sink->cin != 0xFFFFFFFF) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"sessionid", strlen("sessionid"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            snprintf(buffer, 64, "%u", sink->cin);
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
 
         yaml_scalar_event_initialize(&event, NULL,
                 (yaml_char_t *)YAML_STR_TAG,
@@ -1042,21 +1057,6 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
 
             snprintf(buffer, 64, "0x%08x", ipint->vendmirrorid);
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)buffer, strlen(buffer), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-        }
-
-        if (ipint->sessionid != 0xFFFFFFFF) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"sessionid", strlen("sessionid"), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-            snprintf(buffer, 64, "%u", ipint->sessionid);
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,
                     (yaml_char_t *)buffer, strlen(buffer), 1, 0,

@@ -297,6 +297,7 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
         sink = calloc(1, sizeof(intercept_udp_sink_t));
         sink->direction = ETSI_DIR_INDETERMINATE;
         sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+        sink->cin = 1;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair++) {
@@ -324,6 +325,13 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
                     strcasecmp((char *)key->data.scalar.value,
                             "listenaddr") == 0) {
                 SET_CONFIG_STRING_OPTION(sink->listenaddr, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "sessionid") == 0) {
+                sink->cin = strtoul((char *)value->data.scalar.value, NULL, 10);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -1138,7 +1146,6 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
         newcept->statics = NULL;
         newcept->options = 0;
-        newcept->sessionid = 1;
 
         /* Mappings describe the parameters for each intercept */
         for (pair = node->data.mapping.pairs.start;

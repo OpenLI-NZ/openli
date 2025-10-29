@@ -104,6 +104,10 @@ static inline int reload_ipintercept_udpsinks(provision_state_t *currstate,
                 sink->direction = found->direction;
                 thischanged = 1;
             }
+            if (sink->cin != found->cin) {
+                sink->cin = found->cin;
+                thischanged = 1;
+            }
             if (thischanged) {
                 modify_intercept_udp_sink(currstate, &(ipint->common), sink);
                 changed = 1;
@@ -225,10 +229,6 @@ static inline int ip_intercept_equal(ipintercept_t *a, ipintercept_t *b) {
     }
 
     if (a->vendmirrorid != b->vendmirrorid) {
-        return 0;
-    }
-
-    if (a->sessionid != b->sessionid) {
         return 0;
     }
 

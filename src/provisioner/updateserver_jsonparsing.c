@@ -65,7 +65,6 @@ struct json_intercept {
     struct json_object *radiusident;
     struct json_object *mobileident;
     struct json_object *vendmirrorid;
-    struct json_object *sessionid;
     struct json_object *starttime;
     struct json_object *endtime;
     struct json_object *staticips;
@@ -235,7 +234,6 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "payloadencryption", &(ipjson->encryption));
     json_object_object_get_ex(parsed, "encryptionkey", &(ipjson->encryptkey));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
-    json_object_object_get_ex(parsed, "sessionid", &(ipjson->sessionid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "udpsinks", &(ipjson->udpsinks));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
@@ -1266,7 +1264,7 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
 
     intercept_udp_sink_t *newsink = NULL, *existing = NULL;
     struct json_object *sinkobj;
-    struct json_object *colid, *addr, *port, *encap, *dir;
+    struct json_object *colid, *addr, *port, *encap, *dir, *cin;
     int parseerr = 0;
     size_t i;
     char *dirstring = NULL;
@@ -1288,12 +1286,14 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
         json_object_object_get_ex(sinkobj, "listenport", &(port));
         json_object_object_get_ex(sinkobj, "encapsulation", &(encap));
         json_object_object_get_ex(sinkobj, "direction", &(dir));
+        json_object_object_get_ex(sinkobj, "sessionid", &(cin));
 
         newsink = calloc(1, sizeof(intercept_udp_sink_t));
         newsink->awaitingconfirm = 1;
         newsink->enabled = 1;
         newsink->direction = 0xff;
         newsink->encapfmt = 0xff;
+        newsink->cin = 0xFFFFFFFF;
 
         EXTRACT_JSON_STRING_PARAM("collectorid", "Collector ID", colid,
                 newsink->collectorid, &parseerr, true);
@@ -1305,6 +1305,8 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
                 dirstring, &parseerr, false);
         EXTRACT_JSON_STRING_PARAM("encapsulation", "Encapsulation", encap,
                 encapstring, &parseerr, false);
+        EXTRACT_JSON_INT_PARAM("sessionid", "CIN", cin, newsink->cin,
+                &parseerr, 0, 0xFFFFFFFE, false);
 
         if (strchr(newsink->collectorid, ',') != NULL) {
             snprintf(cinfo->answerstring, 4096, "%s <p>The 'collectorid' member of an IP intercept UDP sink must not contain a comma character %s",
@@ -1755,7 +1757,6 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
     ipint->options = 0;
-    ipint->sessionid = 0xFFFFFFFF;
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
             "IP intercept", cinfo, true, state->epoll_fd) < 0) {
@@ -1782,8 +1783,6 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFF, false);
-    EXTRACT_JSON_INT_PARAM("sessionid", "IP intercept", ipjson.sessionid,
-            ipint->sessionid, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_STRING_PARAM("user", "IP intercept", ipjson.user,
             ipint->username, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("accesstype", "IP intercept", ipjson.accesstype,
@@ -2324,7 +2323,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
-    ipint->sessionid = 0xFFFFFFFF;
     ipint->udp_sinks = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->common.liid = strdup(parsedliid);
@@ -2365,8 +2363,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mobileidentstring, &parseerr, false);
     EXTRACT_JSON_INT_PARAM("vendmirrorid", "IP intercept", ipjson.vendmirrorid,
             ipint->vendmirrorid, &parseerr, 0, 0xFFFFFFFE, false);
-    EXTRACT_JSON_INT_PARAM("sessionid", "IP intercept", ipjson.sessionid,
-            ipint->sessionid, &parseerr, 0, 0xFFFFFFFE, false);
 
     if (parseerr) {
         goto cepterr;
@@ -2399,6 +2395,12 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                 } else if (inmod->direction == 0xff) {
                     inmod->direction = sink->direction;
                 }
+                if (inmod->cin != 0xFFFFFFFF &&
+                        inmod->cin != sink->cin) {
+                    sink->cin = inmod->cin;
+                    modrequired = 1;
+                }
+
                 if (modrequired) {
                     modify_intercept_udp_sink(state, &(ipint->common), sink);
                 }
@@ -2516,12 +2518,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->vendmirrorid != found->vendmirrorid) {
         changed = 1;
         found->vendmirrorid = ipint->vendmirrorid;
-    }
-
-    if (ipint->sessionid != 0xFFFFFFFF &&
-            ipint->sessionid != found->sessionid) {
-        changed = 1;
-        found->sessionid = ipint->sessionid;
     }
 
     if (agencychanged) {

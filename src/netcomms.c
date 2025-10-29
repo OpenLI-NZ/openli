@@ -528,7 +528,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         (INTERCEPT_COMMON_LEN(ipint->common) + \
          ipint->username_len + sizeof(ipint->options) + \
          sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + \
-         sizeof(ipint->sessionid) + (5 * 4))
+         (4 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (IPINTERCEPT_BODY_LEN(ipint) + sizeof(ipint->vendmirrorid) + 4)
@@ -674,11 +674,6 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
                 sizeof(ipint->vendmirrorid))) == -1) {
             goto pushmodfail;
         }
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_CIN, (uint8_t *)&(ipint->sessionid),
-                sizeof(ipint->sessionid)) == -1) {
-        goto pushmodfail;
     }
 
     return (int)totallen;
@@ -1082,7 +1077,7 @@ int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
 
 #define UDPSINK_BODY_LEN(liid, sink) \
     (strlen(sink->key) + sizeof(sink->direction) + sizeof(sink->encapfmt) + \
-     strlen(liid) + (4 * 4))
+     strlen(liid) + sizeof(sink->cin) + (5 * 4))
 
 static int push_intercept_udpsink_generic(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink,
@@ -1123,6 +1118,12 @@ static int push_intercept_udpsink_generic(net_buffer_t *nb,
             (uint8_t *)&(sink->direction), sizeof(sink->direction))) == -1) {
         goto pushudpsinkfail;
     }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CIN, (uint8_t *)&(sink->cin),
+                sizeof(sink->cin)) == -1) {
+        goto pushudpsinkfail;
+    }
+
     return 0;
 
 pushudpsinkfail:
@@ -1274,11 +1275,6 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)(&ipint->options),
             sizeof(ipint->options))) == -1) {
-        goto pushipintfail;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_CIN, (uint8_t *)&(ipint->sessionid),
-                sizeof(ipint->sessionid)) == -1) {
         goto pushipintfail;
     }
 
@@ -2127,7 +2123,6 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->awaitingconfirm = 0;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
     ipint->udp_sinks = NULL;
-    ipint->sessionid = 1;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
     ipint->options = 0;
@@ -2172,8 +2167,6 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
                 ipint->username = NULL;
             }
             ipint->username_len = vallen;
-        } else if (f == OPENLI_PROTO_FIELD_CIN) {
-            ipint->sessionid = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -2585,6 +2578,7 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
     sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
     sink->direction = ETSI_DIR_INDETERMINATE;
     sink->liid = NULL;
+    sink->cin = 1;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2602,6 +2596,8 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(sink->key, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(sink->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CIN) {
+            sink->cin = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

@@ -52,6 +52,7 @@ typedef struct udp_sink_worker_args {
     int trackerid;
     uint8_t direction;
     uint8_t encapfmt;
+    uint32_t cin;
 } udp_sink_worker_args_t;
 
 enum {
@@ -234,7 +235,6 @@ typedef struct published_intercept_msg {
     // optional fields
     char *username;
     internet_access_method_t accesstype;
-    uint32_t default_cin;
 } published_intercept_msg_t;
 
 typedef struct provisioner_msg {

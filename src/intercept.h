@@ -206,6 +206,11 @@ typedef struct intercept_udp_sink {
     char *listenaddr;
     uint8_t direction;
     uint8_t encapfmt;
+
+    // CIN to use in circumstances where the encapsulation format does not
+    // provide a session ID (or anything else that can act as a CIN).
+    uint32_t cin;
+
     char *key;
     char *liid;
     UT_hash_handle hh;
@@ -229,9 +234,6 @@ typedef struct ipintercept {
      * (e.g. FlowtapLite)
      */
     intercept_udp_sink_t *udp_sinks;
-
-    /** Default CIN to use if no session ID is otherwise available */
-    uint32_t sessionid;
 
     static_ipranges_t *statics;
 

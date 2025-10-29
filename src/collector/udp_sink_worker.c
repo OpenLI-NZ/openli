@@ -48,7 +48,7 @@ typedef struct udp_sink_local {
 
     uint8_t direction;
     uint8_t encapfmt;
-
+    uint32_t cin;
 } udp_sink_local_t;
 
 static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
@@ -142,6 +142,7 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
 
     local->encapfmt = args->encapfmt;
     local->direction = args->direction;
+    local->cin = args->cin;
     return local;
 }
 
@@ -228,8 +229,7 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
     }
 
     fprintf(stderr, "Received UDP datagram... (%zd) %u %u %u\n", got,
-            local->cept->data.cept.default_cin, local->direction,
-            local->encapfmt);
+            local->cin, local->direction, local->encapfmt);
     return 0;
 }
 
@@ -259,6 +259,7 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' was expecting to be responsible for intercept '%s', but it was provided details for '%s'?",
                         key, local->expectedliid, msg->data.cept.liid);
+                free_published_message(msg);
                 return -1;
             }
             if (local->cept != NULL &&
@@ -279,12 +280,14 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' is now intercepting traffic for LIID %s", key, msg->data.cept.liid);
+                // TODO generate an IRI_BEGIN (while session active)
             }
 
         } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
             // configuration change from the provisioner
             local->direction = msg->data.udpargs.direction;
             local->encapfmt = msg->data.udpargs.encapfmt;
+            local->cin = msg->data.udpargs.cin;
             free_published_message(msg);
         } else if (msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
 
@@ -293,6 +296,19 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             }
             local->cept = msg;
             local->dest_mediator = msg->destid;
+        } else if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
+            if (strcmp(local->expectedliid, msg->data.cept.liid) != 0) {
+                logger(LOG_INFO,
+                        "OpenLI: UDP sink worker '%s' is responsible for intercept '%s', but it was told to cease interception for '%s'?",
+                        key, local->expectedliid, msg->data.cept.liid);
+                free_published_message(msg);
+                continue;
+            }
+            // TODO generate an IRI_END (while session active)
+
+            free_published_message(msg);
+            return -1;
+
         } else {
             // not a message we care about
             free_published_message(msg);

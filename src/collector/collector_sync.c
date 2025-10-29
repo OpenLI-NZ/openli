@@ -736,6 +736,7 @@ static int sync_modify_intercept_udpsink(collector_sync_t *sync,
     /* Only these parameters are affected by a modification */
     msg->data.udpargs.direction = config.direction;
     msg->data.udpargs.encapfmt = config.encapfmt;
+    msg->data.udpargs.cin = config.cin;
 
     publish_openli_msg(sink->zmq_control, msg);
     clean_intercept_udp_sink(&config);
@@ -828,6 +829,7 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     args->trackerid = ipint->common.seqtrackerid;
     args->direction = config.direction;
     args->encapfmt = config.encapfmt;
+    args->cin = config.cin;
 
     pthread_create(&(sink->tid), NULL, start_udp_sink_worker,
             (void *)args);
@@ -838,7 +840,6 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
             OPENLI_INTERCEPT_TYPE_IP);
     msg->data.cept.username = strdup(ipint->username);
     msg->data.cept.accesstype = ipint->accesstype;
-    msg->data.cept.default_cin = ipint->sessionid;
     publish_openli_msg(sink->zmq_control, msg);
     clean_intercept_udp_sink(&config);
     return 1;
@@ -1310,7 +1311,6 @@ static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint) {
                 OPENLI_INTERCEPT_TYPE_IP);
         msg->data.cept.username = strdup(ipint->username);
         msg->data.cept.accesstype = ipint->accesstype;
-        msg->data.cept.default_cin = ipint->sessionid;
         publish_openli_msg(xsync->zmq_socket, msg);
     }
 
@@ -1621,11 +1621,6 @@ static int update_modified_intercept(collector_sync_t *sync,
         changed = 1;
     }
 
-    if (ipint->sessionid != modified->sessionid) {
-        ipint->sessionid = modified->sessionid;
-        changed = 1;
-    }
-
     if (encodingchanged) {
         expmsg = create_intercept_details_msg(&(modified->common),
                 OPENLI_INTERCEPT_TYPE_IP);
@@ -1651,7 +1646,6 @@ static int update_modified_intercept(collector_sync_t *sync,
                         OPENLI_INTERCEPT_TYPE_IP);
                 expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
                 expmsg->data.cept.username = strdup(ipint->username);
-                expmsg->data.cept.default_cin = ipint->sessionid;
                 expmsg->data.cept.accesstype = ipint->accesstype;
 
                 publish_openli_msg(sink->zmq_control, expmsg);
@@ -1870,9 +1864,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             x->accesstype = cept->accesstype;
         }
 
-        if (cept->sessionid != x->sessionid) {
-            x->sessionid = cept->sessionid;
-        }
         x->awaitingconfirm = 0;
         return update_modified_intercept(sync, x, cept);
     }
