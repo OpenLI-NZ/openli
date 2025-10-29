@@ -503,6 +503,7 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
     internet_user_t *user;
+    colsync_udp_sink_t *sink, *sinktmp;
 
     if (ipint->common.toend_time <= tstamp && ipint->common.toend_time != 0) {
         irirequired = OPENLI_IPIRI_ENDWHILEACTIVE;
@@ -526,6 +527,27 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     /* Update all IP sessions for the target */
     HASH_ITER(hh, user->sessions, sess, tmp2) {
         create_iri_from_session(sync, sess, ipint, irirequired);
+    }
+
+    if (irirequired == OPENLI_IPIRI_ENDWHILEACTIVE) {
+        /* make sure we tell any UDP sinks to halt */
+        HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+            if (sink->attached_liid && strcmp(sink->attached_liid,
+                    ipint->common.liid) == 0) {
+                openli_export_recv_t *msg;
+                msg = calloc(1, sizeof(openli_export_recv_t));
+                msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+                msg->data.cept.liid = strdup(ipint->common.liid);
+                msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
+                publish_openli_msg(sink->zmq_control, msg);
+
+                free(sink->attached_liid);
+                sink->attached_liid = NULL;
+                zmq_close(sink->zmq_control);
+                sink->zmq_control = NULL;
+                sink->tid = 0;
+            }
+        }
     }
 }
 
@@ -835,12 +857,16 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
             (void *)args);
     pthread_detach(sink->tid);
 
-    // send a copy of cept to the newly started worker thread
-    msg = create_intercept_details_msg(&(ipint->common),
-            OPENLI_INTERCEPT_TYPE_IP);
-    msg->data.cept.username = strdup(ipint->username);
-    msg->data.cept.accesstype = ipint->accesstype;
-    publish_openli_msg(sink->zmq_control, msg);
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec >= ipint->common.tostart_time &&
+            tv.tv_sec < ipint->common.toend_time) {
+        // send a copy of cept to the newly started worker thread
+        msg = create_intercept_details_msg(&(ipint->common),
+                OPENLI_INTERCEPT_TYPE_IP);
+        msg->data.cept.username = strdup(ipint->username);
+        msg->data.cept.accesstype = ipint->accesstype;
+        publish_openli_msg(sink->zmq_control, msg);
+    }
     clean_intercept_udp_sink(&config);
     return 1;
 }
