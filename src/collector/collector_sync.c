@@ -838,6 +838,7 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
             OPENLI_INTERCEPT_TYPE_IP);
     msg->data.cept.username = strdup(ipint->username);
     msg->data.cept.accesstype = ipint->accesstype;
+    msg->data.cept.default_cin = ipint->sessionid;
     publish_openli_msg(sink->zmq_control, msg);
     clean_intercept_udp_sink(&config);
     return 1;
@@ -1309,6 +1310,7 @@ static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint) {
                 OPENLI_INTERCEPT_TYPE_IP);
         msg->data.cept.username = strdup(ipint->username);
         msg->data.cept.accesstype = ipint->accesstype;
+        msg->data.cept.default_cin = ipint->sessionid;
         publish_openli_msg(xsync->zmq_socket, msg);
     }
 
@@ -1619,6 +1621,11 @@ static int update_modified_intercept(collector_sync_t *sync,
         changed = 1;
     }
 
+    if (ipint->sessionid != modified->sessionid) {
+        ipint->sessionid = modified->sessionid;
+        changed = 1;
+    }
+
     if (encodingchanged) {
         expmsg = create_intercept_details_msg(&(modified->common),
                 OPENLI_INTERCEPT_TYPE_IP);
@@ -1635,7 +1642,21 @@ static int update_modified_intercept(collector_sync_t *sync,
     }
 
     if (changed) {
+        colsync_udp_sink_t *sink, *tmpsink;
         push_ipintercept_update_to_threads(sync, ipint, modified);
+        HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+            if (sink->attached_liid &&
+                    strcmp(ipint->common.liid, sink->attached_liid) == 0) {
+                expmsg = create_intercept_details_msg(&(modified->common),
+                        OPENLI_INTERCEPT_TYPE_IP);
+                expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+                expmsg->data.cept.username = strdup(ipint->username);
+                expmsg->data.cept.default_cin = ipint->sessionid;
+                expmsg->data.cept.accesstype = ipint->accesstype;
+
+                publish_openli_msg(sink->zmq_control, expmsg);
+            }
+        }
     }
 
     free_single_ipintercept(modified);
@@ -1847,6 +1868,10 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                 "OpenLI: duplicate IP ID %s seen, but access type has changed to %s.", x->common.liid, accesstype_to_string(cept->accesstype));
         /* Only affects IRIs so don't need to modify collector threads */
             x->accesstype = cept->accesstype;
+        }
+
+        if (cept->sessionid != x->sessionid) {
+            x->sessionid = cept->sessionid;
         }
         x->awaitingconfirm = 0;
         return update_modified_intercept(sync, x, cept);

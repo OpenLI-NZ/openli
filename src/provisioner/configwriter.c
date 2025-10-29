@@ -1049,6 +1049,22 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
+        if (ipint->sessionid != 0xFFFFFFFF) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"sessionid", strlen("sessionid"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            snprintf(buffer, 64, "%u", ipint->sessionid);
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
+
         if (ipint->udp_sinks) {
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,

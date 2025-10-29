@@ -103,6 +103,7 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     // set the optional fields to suitable "null" values
     expmsg->data.cept.username = NULL;
     expmsg->data.cept.accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
+    expmsg->data.cept.default_cin = 0;
 
     return expmsg;
 }

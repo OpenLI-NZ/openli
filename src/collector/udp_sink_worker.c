@@ -46,6 +46,8 @@ typedef struct udp_sink_local {
     openli_export_recv_t *cept;
     uint32_t dest_mediator;
 
+    uint8_t direction;
+    uint8_t encapfmt;
 
 } udp_sink_local_t;
 
@@ -137,6 +139,9 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
 
     local->expectedliid = args->liid;
     args->liid = NULL;
+
+    local->encapfmt = args->encapfmt;
+    local->direction = args->direction;
     return local;
 }
 
@@ -222,7 +227,9 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         return -1;
     }
 
-    fprintf(stderr, "Received UDP datagram... (%zd)\n", got);
+    fprintf(stderr, "Received UDP datagram... (%zd) %u %u %u\n", got,
+            local->cept->data.cept.default_cin, local->direction,
+            local->encapfmt);
     return 0;
 }
 
@@ -246,14 +253,16 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             return -1;
         }
 
-        if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+        if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS ||
+                msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
             if (strcmp(local->expectedliid, msg->data.cept.liid) != 0) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' was expecting to be responsible for intercept '%s', but it was provided details for '%s'?",
                         key, local->expectedliid, msg->data.cept.liid);
                 return -1;
             }
-            if (local->cept != NULL) {
+            if (local->cept != NULL &&
+                    msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' has received multiple intercept announcements -- this is not supported behaviour!");
                 logger(LOG_INFO,
@@ -261,11 +270,29 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
                 free_published_message(msg);
                 continue;
             }
+            if (local->cept) {
+                free_published_message(local->cept);
+            }
             local->dest_mediator = msg->destid;
             local->cept = msg;
-            logger(LOG_INFO,
-                    "OpenLI: UDP sink worker '%s' is now intercepting traffic for LIID %s", key, msg->data.cept.liid);
 
+            if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
+                logger(LOG_INFO,
+                        "OpenLI: UDP sink worker '%s' is now intercepting traffic for LIID %s", key, msg->data.cept.liid);
+            }
+
+        } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
+            // configuration change from the provisioner
+            local->direction = msg->data.udpargs.direction;
+            local->encapfmt = msg->data.udpargs.encapfmt;
+            free_published_message(msg);
+        } else if (msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
+
+            if (local->cept) {
+                free_published_message(local->cept);
+            }
+            local->cept = msg;
+            local->dest_mediator = msg->destid;
         } else {
             // not a message we care about
             free_published_message(msg);
