@@ -1325,22 +1325,30 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
         if (parseerr) {
             if (dirstring) {
                 free(dirstring);
+                dirstring = NULL;
             }
             if (encapstring) {
                 free(encapstring);
+                encapstring = NULL;
             }
             goto sinkerr;
         }
 
-        newsink->direction = map_etsi_direction_string(dirstring);
-        newsink->encapfmt = map_udp_encap_format_string(encapstring);
+        if (dirstring) {
+            newsink->direction = map_etsi_direction_string(dirstring);
+            free(dirstring);
+            dirstring = NULL;
+        }
+        if (encapstring) {
+            newsink->encapfmt = map_udp_encap_format_string(encapstring);
+            free(encapstring);
+            encapstring = NULL;
+        }
 
         snprintf(keybuf, 1024, "%s,%s,%s", newsink->collectorid,
                 newsink->listenaddr, newsink->listenport);
         newsink->key = strdup(keybuf);
 
-        free(dirstring);
-        free(encapstring);
 
         HASH_FIND(hh, ipint->udp_sinks, newsink->key, strlen(newsink->key),
                 existing);
@@ -2369,13 +2377,19 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     inmod);
             if (inmod) {
                 uint8_t modrequired = 0;
-                if (inmod->encapfmt != sink->encapfmt) {
+                if (inmod->encapfmt != 0xff &&
+                        inmod->encapfmt != sink->encapfmt) {
                     sink->encapfmt = inmod->encapfmt;
                     modrequired = 1;
+                } else if (inmod->encapfmt == 0xff) {
+                    inmod->encapfmt = sink->encapfmt;
                 }
-                if (inmod->direction != sink->direction) {
+                if (inmod->direction != 0xff &&
+                        inmod->direction != sink->direction) {
                     sink->direction = inmod->direction;
                     modrequired = 1;
+                } else if (inmod->direction == 0xff) {
+                    inmod->direction = sink->direction;
                 }
                 if (modrequired) {
                     modify_intercept_udp_sink(state, &(ipint->common), sink);

@@ -1183,7 +1183,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             }
 
             if (key->type == YAML_SCALAR_NODE &&
-                    value->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
                     strcasecmp((char *)key->data.scalar.value,
                     "udpsinks") == 0) {
                 parse_intercept_udp_sink_config(newcept, doc, value);

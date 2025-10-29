@@ -524,17 +524,15 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          (36 * common.xid_count) + \
          ((11 + common.xid_count) * 4))
 
-#define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
+#define IPINTERCEPT_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + sizeof(ipint->vendmirrorid) + \
-         sizeof(ipint->mobileident) + (5 * 4))
-
-#define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
-         (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + sizeof(ipint->mobileident) + \
+         ipint->username_len + sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + \
          sizeof(ipint->sessionid) + (5 * 4))
+
+#define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
+        (IPINTERCEPT_BODY_LEN(ipint) + sizeof(ipint->vendmirrorid) + 4)
+
 
 static int _push_intercept_common_fields(net_buffer_t *nb,
         intercept_common_t *common) {
@@ -630,9 +628,9 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
     /* Pre-compute our body length so we can write it in the header */
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
-        totallen = VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+        totallen = VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint);
     } else {
-        totallen = IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+        totallen = IPINTERCEPT_BODY_LEN(ipint);
     }
 
     /* Push on header */
@@ -1220,18 +1218,6 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_ADD_STATICIPS);
 }
 
-#define IPINTERCEPT_BODY_LEN(ipint) \
-        (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->options) + \
-         sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + \
-         sizeof(ipint->sessionid) + (5 * 4))
-
-#define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
-        (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->vendmirrorid) + \
-         sizeof(ipint->options) + sizeof(ipint->accesstype) + \
-         sizeof(ipint->mobileident) + (5 * 4))
-
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     /* Pre-compute our body length so we can write it in the header */
@@ -1288,6 +1274,11 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)(&ipint->options),
             sizeof(ipint->options))) == -1) {
+        goto pushipintfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CIN, (uint8_t *)&(ipint->sessionid),
+                sizeof(ipint->sessionid)) == -1) {
         goto pushipintfail;
     }
 
@@ -1890,11 +1881,10 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
     }
 
     if (start + *l > end) {
-        logger(LOG_INFO, "OpenLI: truncated TLV -- value is %u bytes, length field says %u\n",
-                end - start, *l);
+        logger(LOG_INFO, "OpenLI: truncated TLV %u -- value is %u bytes, length field says %u\n",
+                *t, end - start, *l);
         return -1;
     }
-
     *v = start;
     return 0;
 }
