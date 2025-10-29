@@ -219,7 +219,13 @@ static int bind_udp_sink_listener(udp_sink_local_t *local, char *key) {
 static int process_udp_datagram(udp_sink_local_t *local, char *key) {
 
     uint8_t recvbuf[65536];
+    uint8_t *skipptr = NULL;
     ssize_t got = 0;
+    uint16_t iplen;
+    uint32_t cin;
+    uint8_t dir;
+
+    openli_export_recv_t *job;
 
     got = recv(local->sockfd, recvbuf, 65536, 0);
     if (got < 0) {
@@ -228,8 +234,39 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         return -1;
     }
 
-    fprintf(stderr, "Received UDP datagram... (%zd) %u %u %u\n", got,
-            local->cin, local->direction, local->encapfmt);
+    if (got > 65535) {
+        logger(LOG_INFO,
+                "OpenLI: UDP sink thread '%s' received excessively large datagram, skipping because it is probably invalid", key);
+        return 0;
+    }
+
+    if (!local->zmq_publish) {
+        return 0;
+    }
+
+    if (local->dest_mediator == 0 || local->cept == NULL) {
+        /* Haven't received details about the intercept yet */
+        return 0;
+    }
+
+    if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_RAW) {
+        // no encapsulation header
+        skipptr = recvbuf;
+        iplen = (uint16_t)got;
+        cin = local->cin;
+        dir = local->direction;
+    } else {
+        // TODO implement other encap methods
+        return 0;
+    }
+
+    job = create_ipcc_job_from_ipcontent(skipptr, iplen,
+            local->expectedliid, cin, dir, local->dest_mediator);
+    if (!job) {
+        return -1;
+    }
+
+    publish_openli_msg(local->zmq_publish, job);
     return 0;
 }
 

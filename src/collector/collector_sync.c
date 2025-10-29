@@ -776,6 +776,7 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     int hwm = 1000, timeout = 1000;
     openli_export_recv_t *msg;
     udp_sink_worker_args_t *args;
+    struct timeval tv;
 
     if (decode_intercept_udpsink_announcement(intmsg, msglen, &config) == -1) {
         if (sync->instruct_log) {
@@ -859,7 +860,8 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
 
     gettimeofday(&tv, NULL);
     if (tv.tv_sec >= ipint->common.tostart_time &&
-            tv.tv_sec < ipint->common.toend_time) {
+            (ipint->common.toend_time == 0 ||
+                tv.tv_sec < ipint->common.toend_time)) {
         // send a copy of cept to the newly started worker thread
         msg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);

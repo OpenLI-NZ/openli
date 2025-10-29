@@ -501,24 +501,8 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
     msg->type = OPENLI_EXPORT_IPCC;
     msg->destid = destid;
     msg->ts = trace_get_timeval(pkt);
-
-    if (liidlen + 1 > msg->data.ipcc.liidalloc) {
-        if (liidlen + 1 < 32) {
-            x = 32;
-        } else {
-            x = liidlen + 1;
-        }
-        msg->data.ipcc.liid = realloc(msg->data.ipcc.liid, x);
-        msg->data.ipcc.liidalloc = x;
-    }
-    if (msg->data.ipcc.liid == NULL) {
-        msg->data.ipcc.liidalloc = 0;
-        free(msg);
-        return NULL;
-    }
-
-    memcpy(msg->data.ipcc.liid, liid, liidlen);
-    msg->data.ipcc.liid[liidlen] = '\0';
+    msg->data.ipcc.liid = strdup(liid);
+    msg->data.ipcc.liidalloc = liidlen + 1;
 
     if (rem > msg->data.ipcc.ipcalloc) {
         if (rem < 512) {

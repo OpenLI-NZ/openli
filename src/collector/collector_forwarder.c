@@ -718,7 +718,6 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         if (x <= 0) {
             break;
         }
-
         if (x % sizeof(openli_encoded_result_t) != 0) {
             logger(LOG_INFO, "OpenLI: forwarding thread %d received odd sized message (%d bytes)?",
                     fwd->forwardid, x);
@@ -727,11 +726,11 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         msgcnt = x / sizeof(openli_encoded_result_t);
 
         for (i = 0; i < msgcnt; i++) {
-	    if (res[i].liid == NULL || res[i].destid == 0) {
-		fwd->encoders_over ++;
-            	free_encoded_result(&(res[i]));
-		break;
-	    }
+            if (res[i].liid == NULL || res[i].destid == 0) {
+                fwd->encoders_over ++;
+                free_encoded_result(&(res[i]));
+                break;
+            }
             if (handle_encoded_result(fwd, &(res[i])) < 0) {
                 return -1;
             }

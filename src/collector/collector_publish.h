@@ -347,6 +347,10 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
         intercept_common_t *common, struct timeval tv,
         uint32_t cin, uint8_t dir, void *l3, uint32_t rem);
 
+openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
+        uint16_t iplen, char *liid, uint32_t cin, uint8_t dir,
+        uint32_t destid);
+
 void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
         openli_location_t *loc, int loc_count);
 #endif
