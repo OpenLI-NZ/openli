@@ -496,6 +496,30 @@ static int create_iri_from_session(collector_sync_t *sync,
 
 }
 
+static void halt_udp_sink_thread(colsync_udp_sink_t *sink) {
+
+    openli_export_recv_t *msg;
+
+    if (!sink) {
+        return;
+    }
+    if (sink->attached_liid == NULL) {
+        return;
+    }
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+    msg->data.cept.liid = strdup(sink->attached_liid);
+    msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
+    publish_openli_msg(sink->zmq_control, msg);
+
+    free(sink->attached_liid);
+    sink->attached_liid = NULL;
+
+    zmq_close(sink->zmq_control);
+    sink->zmq_control = NULL;
+    sink->tid = 0;
+}
+
 static void generate_startend_ipiris(collector_sync_t *sync,
 		ipintercept_t *ipint, time_t tstamp) {
 
@@ -504,6 +528,7 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     static_ipranges_t *ipr, *tmpr;
     internet_user_t *user;
     colsync_udp_sink_t *sink, *sinktmp;
+    openli_export_recv_t *msg;
 
     if (ipint->common.toend_time <= tstamp && ipint->common.toend_time != 0) {
         irirequired = OPENLI_IPIRI_ENDWHILEACTIVE;
@@ -529,23 +554,34 @@ static void generate_startend_ipiris(collector_sync_t *sync,
         create_iri_from_session(sync, sess, ipint, irirequired);
     }
 
-    if (irirequired == OPENLI_IPIRI_ENDWHILEACTIVE) {
+    /* If we're relying on UDP sinks, send an IRI BEGIN WHILE ACTIVE and
+     * tell the sink about the intercept now
+     */
+    if (irirequired == OPENLI_IPIRI_STARTWHILEACTIVE && sync->glob->udpsinks) {
+        // send one IRI per sink, but we are trusting that the seqtracker
+        // will de-duplicate any that are using the same session ID
+        // (e.g. one sink is "from", the other is "to" the target)
+        HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+            create_ipiri_job_from_vendor(sync, ipint, sink->cin, irirequired);
+
+            msg = create_intercept_details_msg(&(ipint->common),
+                    OPENLI_INTERCEPT_TYPE_IP);
+            msg->data.cept.username = strdup(ipint->username);
+            msg->data.cept.accesstype = ipint->accesstype;
+            publish_openli_msg(sink->zmq_control, msg);
+        }
+    }
+
+    if (irirequired == OPENLI_IPIRI_ENDWHILEACTIVE && sync->glob->udpsinks) {
+
         /* make sure we tell any UDP sinks to halt */
         HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+            /* Put an END WHILE ACTIVE IRI on the queue */
+            create_ipiri_job_from_vendor(sync, ipint, sink->cin, irirequired);
+
             if (sink->attached_liid && strcmp(sink->attached_liid,
                     ipint->common.liid) == 0) {
-                openli_export_recv_t *msg;
-                msg = calloc(1, sizeof(openli_export_recv_t));
-                msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
-                msg->data.cept.liid = strdup(ipint->common.liid);
-                msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
-                publish_openli_msg(sink->zmq_control, msg);
-
-                free(sink->attached_liid);
-                sink->attached_liid = NULL;
-                zmq_close(sink->zmq_control);
-                sink->zmq_control = NULL;
-                sink->tid = 0;
+                halt_udp_sink_thread(sink);
             }
         }
     }
@@ -752,6 +788,9 @@ static int sync_modify_intercept_udpsink(collector_sync_t *sync,
         clean_intercept_udp_sink(&config);
         return -1;
     }
+    sink->cin = config.cin;
+    sink->encapfmt = config.encapfmt;
+    sink->direction = config.direction;
 
     msg = calloc(1, sizeof(openli_export_recv_t));
     msg->type = OPENLI_EXPORT_UDP_SINK_ARGS;
@@ -841,6 +880,9 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     }
 
     sink->attached_liid = strdup(config.liid);
+    sink->cin = config.cin;
+    sink->encapfmt = config.encapfmt;
+    sink->direction = config.direction;
 
     args = calloc(1, sizeof(udp_sink_worker_args_t));
 
@@ -862,6 +904,7 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     if (tv.tv_sec >= ipint->common.tostart_time &&
             (ipint->common.toend_time == 0 ||
                 tv.tv_sec < ipint->common.toend_time)) {
+        // TODO IRI begin, but only for the first sink somehow
         // send a copy of cept to the newly started worker thread
         msg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);
@@ -869,6 +912,7 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
         msg->data.cept.accesstype = ipint->accesstype;
         publish_openli_msg(sink->zmq_control, msg);
     }
+
     clean_intercept_udp_sink(&config);
     return 1;
 }
@@ -1445,29 +1489,6 @@ static void push_existing_user_sessions(collector_sync_t *sync,
 
 }
 
-static void halt_udp_sink_thread(colsync_udp_sink_t *sink) {
-
-    openli_export_recv_t *msg;
-
-    if (!sink) {
-        return;
-    }
-    if (sink->attached_liid == NULL) {
-        return;
-    }
-    msg = calloc(1, sizeof(openli_export_recv_t));
-    msg->type = OPENLI_EXPORT_HALT;
-    msg->data.haltinfo = NULL;
-    publish_openli_msg(sink->zmq_control, msg);
-
-    free(sink->attached_liid);
-    sink->attached_liid = NULL;
-
-    zmq_close(sink->zmq_control);
-    sink->zmq_control = NULL;
-    sink->tid = 0;
-}
-
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
@@ -1580,7 +1601,13 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     }
 
     HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+        if (sink->attached_liid == NULL) {
+            continue;
+        }
         if (strcmp(sink->attached_liid, ipint->common.liid) == 0) {
+            // send an IRI END
+            create_ipiri_job_from_vendor(sync, ipint, sink->cin,
+                   OPENLI_IPIRI_ENDWHILEACTIVE); 
             halt_udp_sink_thread(sink);
         }
     }

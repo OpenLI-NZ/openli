@@ -147,6 +147,7 @@ typedef struct colsync_udp_sink {
 
     uint8_t direction;
     uint8_t encapfmt;
+    uint32_t cin;
 
     UT_hash_handle hh;
 } colsync_udp_sink_t;

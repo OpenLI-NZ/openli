@@ -29,6 +29,7 @@
 #include "collector.h"
 #include "intercept.h"
 #include "collector_sync.h"
+#include "ipiri.h"
 
 #include <zmq.h>
 #include <unistd.h>
@@ -317,7 +318,6 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' is now intercepting traffic for LIID %s", key, msg->data.cept.liid);
-                // TODO generate an IRI_BEGIN (while session active)
             }
 
         } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
@@ -341,7 +341,6 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
                 free_published_message(msg);
                 continue;
             }
-            // TODO generate an IRI_END (while session active)
 
             free_published_message(msg);
             return -1;
