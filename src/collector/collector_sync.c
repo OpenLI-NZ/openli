@@ -543,17 +543,6 @@ static void generate_startend_ipiris(collector_sync_t *sync,
         create_ipiri_job_from_iprange(sync, ipr, ipint, irirequired);
     }
 
-    user = lookup_user_by_intercept(sync->allusers, ipint);
-
-    if (user == NULL) {
-        return;
-    }
-
-    /* Update all IP sessions for the target */
-    HASH_ITER(hh, user->sessions, sess, tmp2) {
-        create_iri_from_session(sync, sess, ipint, irirequired);
-    }
-
     /* If we're relying on UDP sinks, send an IRI BEGIN WHILE ACTIVE and
      * tell the sink about the intercept now
      */
@@ -562,6 +551,10 @@ static void generate_startend_ipiris(collector_sync_t *sync,
         // will de-duplicate any that are using the same session ID
         // (e.g. one sink is "from", the other is "to" the target)
         HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+            if (sink->attached_liid == NULL || strcmp(sink->attached_liid,
+                    ipint->common.liid) != 0) {
+                continue;
+            }
             create_ipiri_job_from_vendor(sync, ipint, sink->cin, irirequired);
 
             msg = create_intercept_details_msg(&(ipint->common),
@@ -577,6 +570,10 @@ static void generate_startend_ipiris(collector_sync_t *sync,
         /* make sure we tell any UDP sinks to halt */
         HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
             /* Put an END WHILE ACTIVE IRI on the queue */
+            if (sink->attached_liid == NULL || strcmp(sink->attached_liid,
+                    ipint->common.liid) != 0) {
+                continue;
+            }
             create_ipiri_job_from_vendor(sync, ipint, sink->cin, irirequired);
 
             if (sink->attached_liid && strcmp(sink->attached_liid,
@@ -585,6 +582,18 @@ static void generate_startend_ipiris(collector_sync_t *sync,
             }
         }
     }
+
+    user = lookup_user_by_intercept(sync->allusers, ipint);
+
+    if (user == NULL) {
+        return;
+    }
+
+    /* Update all IP sessions for the target */
+    HASH_ITER(hh, user->sessions, sess, tmp2) {
+        create_iri_from_session(sync, sess, ipint, irirequired);
+    }
+
 }
 
 
@@ -904,7 +913,9 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     if (tv.tv_sec >= ipint->common.tostart_time &&
             (ipint->common.toend_time == 0 ||
                 tv.tv_sec < ipint->common.toend_time)) {
-        // TODO IRI begin, but only for the first sink somehow
+        // IRI begin
+        create_ipiri_job_from_vendor(sync, ipint, sink->cin,
+                OPENLI_IPIRI_STARTWHILEACTIVE);
         // send a copy of cept to the newly started worker thread
         msg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);
@@ -1607,7 +1618,7 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
         if (strcmp(sink->attached_liid, ipint->common.liid) == 0) {
             // send an IRI END
             create_ipiri_job_from_vendor(sync, ipint, sink->cin,
-                   OPENLI_IPIRI_ENDWHILEACTIVE); 
+                   OPENLI_IPIRI_ENDWHILEACTIVE);
             halt_udp_sink_thread(sink);
         }
     }
