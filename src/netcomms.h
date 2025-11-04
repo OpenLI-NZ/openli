@@ -246,7 +246,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
     OPENLI_PROTO_FIELD_DIRECTION,
     OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
-
+    OPENLI_PROTO_FIELD_ACL_IPADDR,
+    OPENLI_PROTO_FIELD_ACL_PORT,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for

@@ -33,6 +33,7 @@
 
 #include <zmq.h>
 #include <unistd.h>
+#include <arpa/inet.h>
 
 typedef struct udp_sink_local {
 
@@ -42,14 +43,23 @@ typedef struct udp_sink_local {
     char *listenaddr;
     char *listenport;
     int sockfd;
+    int listen_family;
 
     char *expectedliid;
     openli_export_recv_t *cept;
     uint32_t dest_mediator;
 
+    char *sourcehost;
+    uint16_t sourceport;
+
     uint8_t direction;
     uint8_t encapfmt;
     uint32_t cin;
+
+    uint8_t sourcereset;
+    struct sockaddr_storage allowed_src;
+    int allowed_family;
+
 } udp_sink_local_t;
 
 static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
@@ -144,6 +154,15 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
     local->encapfmt = args->encapfmt;
     local->direction = args->direction;
     local->cin = args->cin;
+
+    local->sourcehost = args->sourcehost;
+    args->sourcehost = NULL;
+    if (args->sourceport) {
+        local->sourceport = strtoul(args->sourceport, NULL, 10);
+    } else {
+        local->sourceport = 0;
+    }
+    local->sourcereset = 1;
     return local;
 }
 
@@ -203,6 +222,7 @@ static int bind_udp_sink_listener(udp_sink_local_t *local, char *key) {
         }
         if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             local->sockfd = sockfd;
+            local->listen_family = rp->ai_family;
             break;
         }
         lasterr = errno;
@@ -213,8 +233,54 @@ static int bind_udp_sink_listener(udp_sink_local_t *local, char *key) {
     if (lasterr != 0 && local->sockfd < 0) {
         logger(LOG_INFO, "OpenLI: UDP sink worker '%s' was unable to bind to its local address: %s\n", key, strerror(lasterr));
     }
+
     return local->sockfd;
 
+}
+
+static int apply_source_filter(udp_sink_local_t *local,
+        struct sockaddr_storage *src) {
+
+    if (local->sourcehost) {
+        if (src->ss_family == AF_INET) {
+            if (local->allowed_family != AF_INET) {
+                return 0;
+            }
+            struct sockaddr_in *src4 = (struct sockaddr_in *)src;
+            struct sockaddr_in *allow4 =
+                    (struct sockaddr_in *)&(local->allowed_src);
+            if (src4->sin_addr.s_addr != allow4->sin_addr.s_addr) {
+                return 0;
+            }
+        } else {
+            if (local->allowed_family != AF_INET6) {
+                return 0;
+            }
+            struct sockaddr_in6 *src6 = (struct sockaddr_in6 *)src;
+            struct sockaddr_in6 *allow6 =
+                    (struct sockaddr_in6 *)&(local->allowed_src);
+            if (memcmp(&(src6->sin6_addr), &(allow6->sin6_addr),
+                    sizeof(struct in6_addr)) != 0) {
+                return 0;
+            }
+        }
+    }
+
+    if (local->sourceport != 0) {
+        if (src->ss_family == AF_INET) {
+            struct sockaddr_in *src4 = (struct sockaddr_in *)src;
+            if (src4->sin_port != htons(local->sourceport)) {
+                return 0;
+            }
+        } else {
+            struct sockaddr_in6 *src6 = (struct sockaddr_in6 *)src;
+            if (src6->sin6_port != htons(local->sourceport)) {
+                return 0;
+            }
+        }
+    }
+
+    return 1;
 }
 
 static int process_udp_datagram(udp_sink_local_t *local, char *key) {
@@ -225,10 +291,13 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
     uint16_t iplen;
     uint32_t cin;
     uint8_t dir;
+    struct sockaddr_storage src;
+    socklen_t srclen = sizeof(src);
 
     openli_export_recv_t *job;
 
-    got = recv(local->sockfd, recvbuf, 65536, 0);
+    got = recvfrom(local->sockfd, recvbuf, 65536, 0, (struct sockaddr *)&src,
+            &srclen);
     if (got < 0) {
         logger(LOG_INFO,
                 "OpenLI: error while receiving UDP datagram in sink thread '%s': %s", key, strerror(errno));
@@ -241,12 +310,46 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         return 0;
     }
 
+    if (local->sourcereset && local->sourcehost) {
+        if (strchr(local->sourcehost, ':')) {
+            struct sockaddr_in6 *in6 =
+                    (struct sockaddr_in6 *)&(local->allowed_src);
+            in6->sin6_family = AF_INET6;
+            inet_pton(AF_INET6, local->sourcehost, &in6->sin6_addr);
+            in6->sin6_port = htons(local->sourceport);
+            local->allowed_family = AF_INET6;
+        } else {
+            struct sockaddr_in *in4 =
+                    (struct sockaddr_in *)&(local->allowed_src);
+            in4->sin_family = AF_INET;
+            inet_pton(AF_INET, local->sourcehost, &in4->sin_addr);
+            in4->sin_port = htons(local->sourceport);
+            local->allowed_family = AF_INET;
+        }
+        local->sourcereset = 0;
+    }
+
     if (!local->zmq_publish) {
         return 0;
     }
 
     if (local->dest_mediator == 0 || local->cept == NULL) {
         /* Haven't received details about the intercept yet */
+        return 0;
+    }
+
+    /*
+     * Not the fastest option, as all packets received still end up
+     * hitting userspace, but still the most flexible (i.e. allows us
+     * to make either the host or port optional)
+     *
+     * Alternatives:
+     *   eBPF -- complex, tricky to support flexibility programatically
+     *   connect() -- must always limit to a single source port
+     *   firewall -- not something we should touch from within OpenLI but
+     *               we should strongly recommend to deployers
+     */
+    if (apply_source_filter(local, &src) == 0) {
         return 0;
     }
 
@@ -325,6 +428,15 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             local->direction = msg->data.udpargs.direction;
             local->encapfmt = msg->data.udpargs.encapfmt;
             local->cin = msg->data.udpargs.cin;
+            if (msg->data.udpargs.sourceport) {
+                local->sourceport = strtoul(msg->data.udpargs.sourceport,
+                        NULL, 10);
+            } else {
+                local->sourceport = 0;
+            }
+            local->sourcereset = 1;
+            local->sourcehost = msg->data.udpargs.sourcehost;
+            msg->data.udpargs.sourcehost = NULL;
             free_published_message(msg);
         } else if (msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
 

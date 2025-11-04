@@ -207,6 +207,13 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.rawip.ipcontent) {
             free(msg->data.rawip.ipcontent);
         }
+    } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
+        if (msg->data.udpargs.sourceport) {
+            free(msg->data.udpargs.sourceport);
+        }
+        if (msg->data.udpargs.sourcehost) {
+            free(msg->data.udpargs.sourcehost);
+        }
     }
 
     free(msg);

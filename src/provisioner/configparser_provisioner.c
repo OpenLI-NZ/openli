@@ -309,6 +309,20 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
             if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value,
+                            "sourcehost") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->sourcehost, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "sourceport") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->sourceport, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
                             "collectorid") == 0) {
                 SET_CONFIG_STRING_OPTION(sink->collectorid, value);
             }

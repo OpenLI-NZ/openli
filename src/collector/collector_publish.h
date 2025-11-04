@@ -53,6 +53,8 @@ typedef struct udp_sink_worker_args {
     uint8_t direction;
     uint8_t encapfmt;
     uint32_t cin;
+    char *sourcehost;
+    char *sourceport;
 } udp_sink_worker_args_t;
 
 enum {

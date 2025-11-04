@@ -140,6 +140,9 @@ typedef struct colsync_udp_sink {
     char *listenport;
     char *identifier;
 
+    char *sourcehost;
+    char *sourceport;
+
     char *attached_liid;
     pthread_t tid;
 

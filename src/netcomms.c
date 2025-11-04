@@ -1077,7 +1077,9 @@ int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
 
 #define UDPSINK_BODY_LEN(liid, sink) \
     (strlen(sink->key) + sizeof(sink->direction) + sizeof(sink->encapfmt) + \
-     strlen(liid) + sizeof(sink->cin) + (5 * 4))
+     strlen(liid) + sizeof(sink->cin) + (5 * 4) + \
+     (sink->sourcehost ? strlen(sink->sourcehost) + 4 : 0) + \
+     (sink->sourceport ? strlen(sink->sourceport) + 4 : 0))
 
 static int push_intercept_udpsink_generic(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink,
@@ -1102,6 +1104,25 @@ static int push_intercept_udpsink_generic(net_buffer_t *nb,
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
             common->liid_len)) == -1) {
         goto pushudpsinkfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
+            (uint8_t *)sink->key, strlen(sink->key))) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if (sink->sourcehost && strlen(sink->sourcehost) > 0) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACL_IPADDR,
+                (uint8_t *)sink->sourcehost, strlen(sink->sourcehost))) == -1) {
+            goto pushudpsinkfail;
+        }
+    }
+
+    if (sink->sourceport && strlen(sink->sourceport) > 0) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACL_PORT,
+                (uint8_t *)sink->sourceport, strlen(sink->sourceport))) == -1) {
+            goto pushudpsinkfail;
+        }
     }
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
@@ -2579,6 +2600,8 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
     sink->direction = ETSI_DIR_INDETERMINATE;
     sink->liid = NULL;
     sink->cin = 1;
+    sink->sourceport = NULL;
+    sink->sourcehost = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2596,6 +2619,10 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(sink->key, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(sink->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ACL_IPADDR) {
+            DECODE_STRING_FIELD(sink->sourcehost, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ACL_PORT) {
+            DECODE_STRING_FIELD(sink->sourceport, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_CIN) {
             sink->cin = *((uint32_t *)valptr);
         } else {
@@ -2619,7 +2646,7 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
         sink->collectorid = strdup(ptr);
     } else {
         logger(LOG_INFO,
-                "OpenLI: invalid SIP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
         free(keycopy);
         return -1;
     }
@@ -2629,7 +2656,7 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
         sink->listenaddr = strdup(ptr);
     } else {
         logger(LOG_INFO,
-                "OpenLI: invalid SIP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
         free(keycopy);
         return -1;
     }
@@ -2639,14 +2666,14 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
         sink->listenport = strdup(ptr);
     } else {
         logger(LOG_INFO,
-                "OpenLI: invalid SIP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
         free(keycopy);
         return -1;
     }
 
     if (strtok(NULL, ",") != NULL) {
         logger(LOG_INFO,
-                "OpenLI: invalid SIP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
         free(keycopy);
         return -1;
     }

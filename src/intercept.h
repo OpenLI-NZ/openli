@@ -211,6 +211,9 @@ typedef struct intercept_udp_sink {
     // provide a session ID (or anything else that can act as a CIN).
     uint32_t cin;
 
+    char *sourcehost;
+    char *sourceport;
+
     char *key;
     char *liid;
     UT_hash_handle hh;
@@ -615,7 +618,6 @@ int generate_ipint_userkey(ipintercept_t *ipint, char *space,
         size_t spacelen);
 
 void clean_intercept_udp_sink(intercept_udp_sink_t *sink);
-void remove_unconfirmed_intercept_udp_sinks(ipintercept_t *cept);
 void remove_all_intercept_udp_sinks(ipintercept_t *cept);
 
 

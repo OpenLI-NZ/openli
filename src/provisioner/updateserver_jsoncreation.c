@@ -285,6 +285,7 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     if (ipint->udp_sinks) {
         intercept_udp_sink_t *sink, *tmp;
         json_object *colid, *addr, *port, *encap, *dir, *sinkobj, *cin;
+        json_object *srchost, *srcport;
 
         udpsinks = json_object_new_array();
         HASH_ITER(hh, ipint->udp_sinks, sink, tmp) {
@@ -306,6 +307,14 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
             json_object_object_add(sinkobj, "direction", dir);
             json_object_object_add(sinkobj, "sessionid", cin);
 
+            if (sink->sourcehost) {
+                srchost = json_object_new_string(sink->sourcehost);
+                json_object_object_add(sinkobj, "sourcehost", srchost);
+            }
+            if (sink->sourceport) {
+                srcport = json_object_new_string(sink->sourceport);
+                json_object_object_add(sinkobj, "sourceport", srcport);
+            }
             json_object_array_add(udpsinks, sinkobj);
         }
 

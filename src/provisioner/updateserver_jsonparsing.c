@@ -1264,7 +1264,8 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
 
     intercept_udp_sink_t *newsink = NULL, *existing = NULL;
     struct json_object *sinkobj;
-    struct json_object *colid, *addr, *port, *encap, *dir, *cin;
+    struct json_object *colid, *addr, *port, *encap, *dir, *cin, *srcport;
+    struct json_object *srchost;
     int parseerr = 0;
     size_t i;
     char *dirstring = NULL;
@@ -1287,6 +1288,8 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
         json_object_object_get_ex(sinkobj, "encapsulation", &(encap));
         json_object_object_get_ex(sinkobj, "direction", &(dir));
         json_object_object_get_ex(sinkobj, "sessionid", &(cin));
+        json_object_object_get_ex(sinkobj, "sourcehost", &(srchost));
+        json_object_object_get_ex(sinkobj, "sourceport", &(srcport));
 
         newsink = calloc(1, sizeof(intercept_udp_sink_t));
         newsink->awaitingconfirm = 1;
@@ -1301,6 +1304,10 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
                 newsink->listenaddr, &parseerr, true);
         EXTRACT_JSON_STRING_PARAM("listenport", "Listening Port", port,
                 newsink->listenport, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("sourcehost", "Source Host", srchost,
+                newsink->sourcehost, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("sourceport", "Source Port", srcport,
+                newsink->sourceport, &parseerr, true);
         EXTRACT_JSON_STRING_PARAM("direction", "Direction", dir,
                 dirstring, &parseerr, false);
         EXTRACT_JSON_STRING_PARAM("encapsulation", "Encapsulation", encap,
@@ -2400,6 +2407,10 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     sink->cin = inmod->cin;
                     modrequired = 1;
                 }
+                MODIFY_STRING_MEMBER(sink->sourcehost, inmod->sourcehost,
+                        &modrequired);
+                MODIFY_STRING_MEMBER(sink->sourceport, inmod->sourceport,
+                        &modrequired);
 
                 if (modrequired) {
                     modify_intercept_udp_sink(state, &(ipint->common), sink);

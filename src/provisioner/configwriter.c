@@ -44,6 +44,23 @@ typedef struct yaml_mem_buf {
     size_t used;
 } yaml_buffer_t;
 
+
+#define YAML_EMIT_STRING(event, label, strval) \
+    if (strval != NULL) {                                               \
+        yaml_scalar_event_initialize(&event, NULL,                      \
+                (yaml_char_t *)YAML_STR_TAG,                            \
+                (yaml_char_t *)label, strlen(label), 1, 0,              \
+                YAML_PLAIN_SCALAR_STYLE);                               \
+        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
+                                                                        \
+        yaml_scalar_event_initialize(&event, NULL,                      \
+                (yaml_char_t *)YAML_STR_TAG,                            \
+                (yaml_char_t *)strval, strlen(strval),                  \
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);                 \
+        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
+    }
+
+
 static const char *access_type_to_string(internet_access_method_t method) {
 
     switch(method) {
@@ -556,85 +573,22 @@ static int emit_intercept_udpsinks(intercept_udp_sink_t *sinks,
                 (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"collectorid", strlen("collectorid"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)sink->collectorid, strlen(sink->collectorid),
-                        1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"listenaddr", strlen("listenaddr"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)sink->listenaddr, strlen(sink->listenaddr),
-                        1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"listenport", strlen("listenport"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)sink->listenport, strlen(sink->listenport),
-                        1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+        YAML_EMIT_STRING(event, "collectorid", sink->collectorid);
+        YAML_EMIT_STRING(event, "listenaddr", sink->listenaddr);
+        YAML_EMIT_STRING(event, "listenport", sink->listenport);
 
         if (sink->cin != 0xFFFFFFFF) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"sessionid", strlen("sessionid"), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
             snprintf(buffer, 64, "%u", sink->cin);
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)buffer, strlen(buffer), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
+            YAML_EMIT_STRING(event, "sessionid", buffer);
         }
 
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"direction", strlen("direction"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
         dirstring = get_etsi_direction_string(sink->direction);
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)dirstring, strlen(dirstring),
-                        1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"encapsulation", strlen("encapsulation"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
         encapstring = get_udp_encap_format_string(sink->encapfmt);
 
-        yaml_scalar_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)encapstring, strlen(encapstring),
-                        1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+        YAML_EMIT_STRING(event, "direction", dirstring);
+        YAML_EMIT_STRING(event, "encapsulation", encapstring);
+        YAML_EMIT_STRING(event, "sourcehost", sink->sourcehost);
+        YAML_EMIT_STRING(event, "sourceport", sink->sourceport);
 
         yaml_mapping_end_event_initialize(&event);
         if (!yaml_emitter_emit(emitter, &event)) return -1;

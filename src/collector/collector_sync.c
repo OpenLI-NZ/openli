@@ -801,12 +801,44 @@ static int sync_modify_intercept_udpsink(collector_sync_t *sync,
     sink->encapfmt = config.encapfmt;
     sink->direction = config.direction;
 
+    if (sink->sourcehost && !config.sourcehost) {
+        free(sink->sourcehost);
+        sink->sourcehost = NULL;
+    } else if (!sink->sourcehost && config.sourcehost) {
+        sink->sourcehost = config.sourcehost;
+        config.sourcehost = NULL;
+    } else if (sink->sourcehost && config.sourcehost &&
+            strcmp(sink->sourcehost, config.sourcehost) != 0) {
+        free(sink->sourcehost);
+        sink->sourcehost = config.sourcehost;
+        config.sourcehost = NULL;
+    }
+
+    if (sink->sourceport && !config.sourceport) {
+        free(sink->sourceport);
+        sink->sourceport = NULL;
+    } else if (!sink->sourceport && config.sourceport) {
+        sink->sourceport = config.sourceport;
+        config.sourceport = NULL;
+    } else if (sink->sourceport && config.sourceport &&
+            strcmp(sink->sourceport, config.sourceport) != 0) {
+        free(sink->sourceport);
+        sink->sourceport = config.sourceport;
+        config.sourceport = NULL;
+    }
+
     msg = calloc(1, sizeof(openli_export_recv_t));
     msg->type = OPENLI_EXPORT_UDP_SINK_ARGS;
     /* Only these parameters are affected by a modification */
     msg->data.udpargs.direction = config.direction;
     msg->data.udpargs.encapfmt = config.encapfmt;
     msg->data.udpargs.cin = config.cin;
+    if (sink->sourceport) {
+        msg->data.udpargs.sourceport = strdup(sink->sourceport);
+    }
+    if (sink->sourcehost) {
+        msg->data.udpargs.sourcehost = strdup(sink->sourcehost);
+    }
 
     publish_openli_msg(sink->zmq_control, msg);
     clean_intercept_udp_sink(&config);
@@ -892,6 +924,10 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     sink->cin = config.cin;
     sink->encapfmt = config.encapfmt;
     sink->direction = config.direction;
+    sink->sourcehost = config.sourcehost;
+    config.sourcehost = NULL;
+    sink->sourceport = config.sourceport;
+    config.sourceport = NULL;
 
     args = calloc(1, sizeof(udp_sink_worker_args_t));
 
@@ -904,6 +940,12 @@ static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
     args->direction = config.direction;
     args->encapfmt = config.encapfmt;
     args->cin = config.cin;
+    if (sink->sourcehost) {
+        args->sourcehost = strdup(sink->sourcehost);
+    }
+    if (sink->sourceport) {
+        args->sourceport = strdup(sink->sourceport);
+    }
 
     pthread_create(&(sink->tid), NULL, start_udp_sink_worker,
             (void *)args);

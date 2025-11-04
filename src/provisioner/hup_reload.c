@@ -96,6 +96,38 @@ static inline int reload_ipintercept_udpsinks(provision_state_t *currstate,
             changed = 1;
         } else {
             int thischanged = 0;
+            if (sink->sourcehost && !found->sourcehost) {
+                found->sourcehost = sink->sourcehost;
+                sink->sourcehost = NULL;
+                thischanged = 1;
+            } else if (!sink->sourcehost && found->sourcehost) {
+                sink->sourcehost = found->sourcehost;
+                found->sourcehost = NULL;
+                thischanged = 1;
+            } else if (sink->sourcehost && found->sourcehost &&
+                    strcmp(found->sourcehost, sink->sourcehost) != 0) {
+                free(sink->sourcehost);
+                sink->sourcehost = found->sourcehost;
+                found->sourcehost = NULL;
+                thischanged = 1;
+            }
+
+            if (sink->sourceport && !found->sourceport) {
+                found->sourceport = sink->sourceport;
+                sink->sourceport = NULL;
+                thischanged = 1;
+            } else if (!sink->sourceport && found->sourceport) {
+                sink->sourceport = found->sourceport;
+                found->sourceport = NULL;
+                thischanged = 1;
+            } else if (sink->sourceport && found->sourceport &&
+                    strcmp(found->sourceport, sink->sourceport) != 0) {
+                free(sink->sourceport);
+                sink->sourceport = found->sourceport;
+                found->sourceport = NULL;
+                thischanged = 1;
+            }
+
             if (sink->encapfmt != found->encapfmt) {
                 sink->encapfmt = found->encapfmt;
                 thischanged = 1;
