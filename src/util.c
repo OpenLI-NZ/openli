@@ -821,11 +821,15 @@ size_t openli_convert_hexstring_to_binary(const char *src, uint8_t *space,
     for (i = 0; i < maxspace; i++) {
         int hi, lo;
         unsigned char c1 = (unsigned char)p[2*i];
-        unsigned char c2 = (unsigned char)p[2*i + 1];
+        unsigned char c2;
 
         if (c1 == '\0') {
             break;
         }
+        if (2 * i + 1 >= maxspace) {
+            break;
+        }
+        c2 = (unsigned char)p[2*i + 1];
         if (c2 == '\0') {
             // uneven number of hex characters??
             break;

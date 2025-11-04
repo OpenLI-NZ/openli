@@ -468,6 +468,7 @@ static int add_collector_to_hashmap(provision_state_t *state,
         HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
                 strlen(col->client->ipaddress), col);
     } else {
+        HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
                 col->client->identifier);
         if (col->identifier) {
@@ -475,6 +476,8 @@ static int add_collector_to_hashmap(provision_state_t *state,
         }
         col->identifier = colname;
         col->client = client;
+        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
+                strlen(col->client->ipaddress), col);
     }
 
     cs->parent = (void *)col;
