@@ -30,6 +30,7 @@
 #include "intercept.h"
 #include "collector_sync.h"
 #include "ipiri.h"
+#include "alushim_parser.h"
 
 #include <zmq.h>
 #include <unistd.h>
@@ -288,7 +289,7 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
     uint8_t recvbuf[65536];
     uint8_t *skipptr = NULL;
     ssize_t got = 0;
-    uint16_t iplen;
+    uint32_t iplen;
     uint32_t cin;
     uint8_t dir;
     struct sockaddr_storage src;
@@ -356,9 +357,17 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
     if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_RAW) {
         // no encapsulation header
         skipptr = recvbuf;
-        iplen = (uint16_t)got;
+        iplen = (uint32_t)got;
         cin = local->cin;
         dir = local->direction;
+    } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_NOKIA) {
+        uint32_t shimintid = 0;
+        skipptr = decode_alushim_from_udp_payload(recvbuf, got, &cin, &dir,
+                &shimintid, &iplen);
+        if (skipptr == NULL) {
+            return 0;
+        }
+
     } else {
         // TODO implement other encap methods
         return 0;

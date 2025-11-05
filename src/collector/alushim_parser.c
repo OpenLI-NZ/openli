@@ -60,7 +60,6 @@ static inline uint32_t alushim_get_interceptid(alushimhdr_t *aluhdr) {
 static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
 
     uint32_t intid = ntohl(aluhdr->interceptid);
-
     /* In ETSI, 0 = from target, 1 = to target, 2 = unknown */
     /* In ALU, 0 = ingress (from subscriber), 1 = egress (to subscriber) */
 
@@ -83,38 +82,24 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
     return 2;
 }
 
-int check_alu_intercept(colthread_local_t *loc,
-        libtrace_packet_t *packet, packet_info_t *pinfo,
-        coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
+uint8_t *decode_alushim_from_udp_payload(uint8_t *payload, uint32_t plen,
+        uint32_t *cin, uint8_t *dir, uint32_t *shimintid, uint32_t *bodylen) {
 
-    coreserver_t *cs;
-    vendmirror_intercept_t *alu, *tmp;
-    vendmirror_intercept_list_t *vmilist;
+
     uint16_t ethertype;
     alushimhdr_t *aluhdr = NULL;
-    uint32_t rem = 0, shimintid, cin;
     void *l3, *l2;
+    uint32_t rem = plen;
 
-    if ((cs = match_packet_to_coreserver(alusources, pinfo, 1)) == NULL) {
-        return 0;
-    }
-
-    /* Extract the intercept ID, direction and session ID */
-    aluhdr = (alushimhdr_t *)get_udp_payload(packet, &rem, NULL, NULL);
+    aluhdr = (alushimhdr_t *)payload;
     if (!aluhdr || rem < sizeof(alushimhdr_t)) {
-        return 0;
+        return NULL;
     }
 
-    shimintid = alushim_get_interceptid(aluhdr);
-
-    /* See if the intercept ID is in our set of intercepts */
-    HASH_FIND(hh, aluints, &shimintid, sizeof(shimintid), vmilist);
-    if (vmilist == NULL) {
-        return 0;
-    }
+    *shimintid = alushim_get_interceptid(aluhdr);
 
     /* Strip the extra headers + shim */
-    l2 = ((char *)aluhdr) + sizeof(alushimhdr_t);
+    l2 = ((uint8_t *)aluhdr) + sizeof(alushimhdr_t);
     rem -= sizeof(alushimhdr_t);
 
     /* TODO add support for layer 3 only intercepts? */
@@ -139,28 +124,67 @@ int check_alu_intercept(colthread_local_t *loc,
                 continue;
             case TRACE_ETHERTYPE_ARP:
                 /* Probably shouldn't be intercepting ARP */
-                return 0;
+                return NULL;
             case TRACE_ETHERTYPE_IP:
             case TRACE_ETHERTYPE_IPV6:
                 break;
             default:
-                return 0;
+                return NULL;
         }
         break;
     }
 
     if (!l3 || rem == 0) {
         logger(LOG_INFO,
-                "Warning: unable to find IP header of ALU-intercepted packet from mirror (ID: %u)",
-                cs->serverkey, shimintid);
-        return -1;
+                "Warning: unable to find IP header of ALU-intercepted packet from mirror (ID: %u)", *shimintid);
+        return NULL;
+    }
+
+    /* Use the session ID from the shim as the CIN */
+    *cin = ntohl(aluhdr->sessionid);
+    *dir = alushim_get_direction(aluhdr);
+    *bodylen = rem;
+    return l3;
+}
+
+int check_alu_intercept(colthread_local_t *loc,
+        libtrace_packet_t *packet, packet_info_t *pinfo,
+        coreserver_t *alusources, vendmirror_intercept_list_t *aluints) {
+
+    coreserver_t *cs;
+    vendmirror_intercept_t *alu, *tmp;
+    vendmirror_intercept_list_t *vmilist;
+    uint32_t rem = 0, shimintid, cin, bodylen;
+    void *l3;
+    uint8_t *payload = NULL;
+    uint8_t direction;
+
+    if ((cs = match_packet_to_coreserver(alusources, pinfo, 1)) == NULL) {
+        return 0;
+    }
+
+    /* Extract the intercept ID, direction and session ID */
+    payload = get_udp_payload(packet, &rem, NULL, NULL);
+    if (!payload || rem < sizeof(alushimhdr_t)) {
+        return 0;
+    }
+
+    l3 = decode_alushim_from_udp_payload(payload, rem, &cin, &direction,
+            &shimintid, &bodylen);
+    if (!l3) {
+        return 0;
+    }
+
+    /* See if the intercept ID is in our set of intercepts */
+    HASH_FIND(hh, aluints, &shimintid, sizeof(shimintid), vmilist);
+    if (vmilist == NULL) {
+        return 0;
     }
 
     /* Direction 0 = ingress (i.e. coming from the subscriber) */
 
     /* Use the session ID from the shim as the CIN */
     /* TODO double check that this will be available in the RADIUS stream */
-    cin = ntohl(aluhdr->sessionid);
 
     HASH_ITER(hh, vmilist->intercepts, alu, tmp) {
         if (pinfo->tv.tv_sec < alu->common.tostart_time) {
@@ -173,8 +197,7 @@ int check_alu_intercept(colthread_local_t *loc,
 
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(alu->common),
-                trace_get_timeval(packet), cin, alushim_get_direction(aluhdr),
-                l3, rem) == 0) {
+                trace_get_timeval(packet), cin, direction, l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 
