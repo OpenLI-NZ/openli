@@ -1125,11 +1125,6 @@ static int push_intercept_udpsink_generic(net_buffer_t *nb,
         }
     }
 
-    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
-            (uint8_t *)sink->key, strlen(sink->key))) == -1) {
-        goto pushudpsinkfail;
-    }
-
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
             (uint8_t *)&(sink->encapfmt), sizeof(sink->encapfmt))) == -1) {
         goto pushudpsinkfail;

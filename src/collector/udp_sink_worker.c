@@ -435,8 +435,15 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
                 local->sourceport = 0;
             }
             local->sourcereset = 1;
-            local->sourcehost = msg->data.udpargs.sourcehost;
-            msg->data.udpargs.sourcehost = NULL;
+            if (strcmp(msg->data.udpargs.sourcehost, "any") == 0) {
+                if (local->sourcehost) {
+                    free(local->sourcehost);
+                }
+                local->sourcehost = NULL;
+            } else {
+                local->sourcehost = msg->data.udpargs.sourcehost;
+                msg->data.udpargs.sourcehost = NULL;
+            }
             free_published_message(msg);
         } else if (msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
 

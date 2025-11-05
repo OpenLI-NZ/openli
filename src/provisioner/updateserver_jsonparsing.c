@@ -1305,9 +1305,9 @@ static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
         EXTRACT_JSON_STRING_PARAM("listenport", "Listening Port", port,
                 newsink->listenport, &parseerr, true);
         EXTRACT_JSON_STRING_PARAM("sourcehost", "Source Host", srchost,
-                newsink->sourcehost, &parseerr, true);
+                newsink->sourcehost, &parseerr, false);
         EXTRACT_JSON_STRING_PARAM("sourceport", "Source Port", srcport,
-                newsink->sourceport, &parseerr, true);
+                newsink->sourceport, &parseerr, false);
         EXTRACT_JSON_STRING_PARAM("direction", "Direction", dir,
                 dirstring, &parseerr, false);
         EXTRACT_JSON_STRING_PARAM("encapsulation", "Encapsulation", encap,
@@ -2407,11 +2407,10 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                     sink->cin = inmod->cin;
                     modrequired = 1;
                 }
-                MODIFY_STRING_MEMBER(sink->sourcehost, inmod->sourcehost,
+                MODIFY_STRING_MEMBER(inmod->sourcehost, sink->sourcehost,
                         &modrequired);
-                MODIFY_STRING_MEMBER(sink->sourceport, inmod->sourceport,
+                MODIFY_STRING_MEMBER(inmod->sourceport, sink->sourceport,
                         &modrequired);
-
                 if (modrequired) {
                     modify_intercept_udp_sink(state, &(ipint->common), sink);
                 }
@@ -2437,12 +2436,12 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                             ipint->common.liid, update_failure_page_end);
                     goto cepterr;
                 }
+                HASH_ADD_KEYPTR(hh, found->udp_sinks, sink->key,
+                        strlen(sink->key), sink);
+                HASH_DELETE(hh, ipint->udp_sinks, sink);
                 sink->awaitingconfirm = 0;
             }
         }
-        tmp = found->udp_sinks;
-        found->udp_sinks = ipint->udp_sinks;
-        ipint->udp_sinks = tmp;
     }
 
     if (ipjson.staticips != NULL) {
