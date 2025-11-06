@@ -148,6 +148,50 @@ ipintercepts:
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "LAN"            # Access tech used by the target to access IP
 
+# This intercept is also consuming a FlowTapLite packet stream into an
+# ETSI-compliant intercept. In this case, we are using a UDP sink instance
+# on the collector to act as the destination for the mirrored stream.
+# Because the mirrored stream is being sent to the collector directly, we
+# do not need to provide the intercept ID using `vendmirrorid`, as we
+# can safely assume that any UDP packets arriving on the UDP sink from the
+# designated source belong to the intercept we are configuring here.
+# FlowTapLite does not include a post-UDP shim in its encapsulation, so
+# we configure it as `raw` in this case. Nokia, Juniper Mirroring, and Cisco
+# are all also supported encapsulation formats.
+
+ - liid: OAPP9321HN             # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   user: "lexluthor"            # Username identifying the target in your AAA
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Spooks"           # ID of agency to send intercept to
+   accesstype: "ADSL"           # Access tech used by the target to access IP
+   udpsinks:
+    - collectorid: "collector01"    # The collector where this sink is running
+      listenaddr: "10.230.1.200"    # The IP address where the sink is listening
+      listenport: 17870             # The UDP port where the sink is listening
+      encapsulation: "raw"          # No shim header to strip
+      direction: "to"               # Tag all traffic on this sink as "to the
+                                    # intercept target"
+      sessionid: 1200               # Use 1200 as the CIN for this intercept
+      sourcehost: "10.230.1.1"      # Only intercept packets coming from this IP
+      sourceport: 9999              # Only intercept packets where the source
+                                    # port is this number
+    - collectorid: "collector02"    # The collector where this sink is running
+      listenaddr: "10.230.1.200"    # The IP address where the sink is listening
+      listenport: 17872             # The UDP port where the sink is listening
+      encapsulation: "raw"          # No shim header to strip
+      direction: "from"             # Tag all traffic on this sink as "from the
+                                    # intercept target"
+      sessionid: 1200               # Use 1200 as the CIN for this intercept
+      sourcehost: "10.230.1.1"      # Only intercept packets coming from this IP
+      sourceport: 8888              # Only intercept packets where the source
+                                    # port is this number
+
+# ^ Note that some encapsulation formats include a session ID and/or direction
+# in their shim headers -- in those cases, OpenLI will use the values
+# derived from the headers rather than those provided in the configuration here.
+
 # This intercept will attempt to intercept all IP traffic for a mobile
 # phone user, using GTPv2 packets to detect the start and end of the target's
 # sessions. Note that the accesstype must be set to "mobile". The user field

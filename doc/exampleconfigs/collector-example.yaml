@@ -192,3 +192,24 @@ x2x3inputs:
  - listenaddr: 10.230.1.1
    listenport: 25000
    certfile: /etc/openli/openli-collector-crt.pem
+
+
+# List of IP/port pairs to act as sinks for intercepted traffic sent by
+# vendor equipment using the vendor's custom UDP-encapsulated format.
+#
+# Note: identifier should be unique to this collector, as it is used to
+# disambiguate between UDP sinks on other collectors that might just also
+# happen to be using the same RFC1918 addresses for UDP sinks.
+udpsinks:
+ - identifier: collector01
+   listenaddr: 10.230.1.200
+   listenport: 17870
+
+ - identifier: collector01
+   listenaddr: 10.230.1.200
+   listenport: 17871
+
+ - identifier: collector01
+   listenaddr: 10.230.1.200
+   listenport: 17872
+
