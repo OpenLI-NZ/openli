@@ -283,7 +283,157 @@ static int parse_and_set_encryption_key(uint8_t *keyspace, size_t *keylen,
     return -1;
 }
 
+static int parse_intercept_udp_sink_config(ipintercept_t *cept,
+        yaml_document_t *doc, yaml_node_t *sinkseq) {
+    yaml_node_item_t *item;
+    intercept_udp_sink_t *sink, *existing;
 
+    for (item = sinkseq->data.sequence.items.start;
+            item != sinkseq->data.sequence.items.top; item++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+        char buf[1024];
+
+        sink = calloc(1, sizeof(intercept_udp_sink_t));
+        sink->direction = ETSI_DIR_INDETERMINATE;
+        sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+        sink->cin = 1;
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair++) {
+            yaml_node_t *key, *value;
+
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "sourcehost") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->sourcehost, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "sourceport") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->sourceport, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "collectorid") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->collectorid, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "listenport") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->listenport, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "listenaddr") == 0) {
+                SET_CONFIG_STRING_OPTION(sink->listenaddr, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "sessionid") == 0) {
+                sink->cin = strtoul((char *)value->data.scalar.value, NULL, 10);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "direction") == 0) {
+                if (strcasecmp((char *)value->data.scalar.value, "from") == 0) {
+                    sink->direction = ETSI_DIR_FROM_TARGET;
+                }
+                else if (strcasecmp((char *)value->data.scalar.value, "to") == 0) {
+                    sink->direction = ETSI_DIR_TO_TARGET;
+                }
+                else if (strcasecmp((char *)value->data.scalar.value, "both") == 0) {
+                    sink->direction = ETSI_DIR_INDETERMINATE;
+                } else {
+                    logger(LOG_INFO,
+                            "OpenLI provisioner: unexpected direction for UDP sink '%s' -- should be one of 'to', 'from' or 'both'",
+                            (char *)value->data.scalar.value);
+                    goto parsefail;
+                }
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "encapsulation") == 0) {
+                if (strcasecmp((char *)value->data.scalar.value, "raw") == 0) {
+                    sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+                }
+                else if (strcasecmp((char *)value->data.scalar.value, "jmirror") == 0) {
+                    sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR;
+                }
+                else if (strcasecmp((char *)value->data.scalar.value, "cisco") == 0) {
+                    sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_CISCO;
+                }
+                else if (strcasecmp((char *)value->data.scalar.value, "nokia") == 0 || strcasecmp((char *)value->data.scalar.value, "alu") == 0) {
+                    sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_NOKIA;
+                } else {
+                    logger(LOG_INFO,
+                            "OpenLI provisioner: unexpected encapsulation for UDP sink '%s' -- should be one of 'raw', 'cisco', 'jmirror', or 'nokia'",
+                            (char *)value->data.scalar.value);
+                    goto parsefail;
+                }
+            }
+
+        }
+
+        if (sink->collectorid == NULL) {
+            logger(LOG_INFO, "OpenLI provisioner: UDP sink configuration must include a 'collectorid' field -- ignoring UDP sink");
+            goto parsefail;
+        }
+        if (strchr(sink->collectorid, ',') != NULL) {
+            logger(LOG_INFO, "OpenLI provisioner: the 'collectorid' field for a UDP sink configuration must not include a comma character -- ignoring UDP sink");
+            goto parsefail;
+        }
+
+        if (sink->listenaddr == NULL) {
+            logger(LOG_INFO, "OpenLI provisioner: UDP sink configuration must include a 'listenaddr' field -- ignoring UDP sink");
+            goto parsefail;
+        }
+
+        if (sink->listenport == NULL) {
+            logger(LOG_INFO, "OpenLI provisioner: UDP sink configuration must include a 'listenport' field -- ignoring UDP sink");
+            goto parsefail;
+        }
+
+        snprintf(buf, 1024, "%s,%s,%s", sink->collectorid, sink->listenaddr,
+                sink->listenport);
+        sink->key = strdup(buf);
+
+        HASH_FIND(hh, cept->udp_sinks, sink->key, strlen(sink->key), existing);
+        if (existing) {
+            logger(LOG_INFO, "OpenLI provisioner: duplicate UDP sink configuration in ipintercept config -- ignoring");
+            goto parsefail;
+        }
+
+        sink->enabled = 1;
+        sink->awaitingconfirm = 1;
+        HASH_ADD_KEYPTR(hh, cept->udp_sinks, sink->key, strlen(sink->key),
+                sink);
+        continue;
+
+parsefail:
+        clean_intercept_udp_sink(sink);
+        free(sink);
+    }
+    return 0;
+}
 
 static int add_intercept_static_ips(static_ipranges_t **statics,
         yaml_document_t *doc, yaml_node_t *ipseq) {
@@ -1005,6 +1155,7 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->awaitingconfirm = 1;
         newcept->username_len = 0;
         newcept->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+        newcept->udp_sinks = NULL;
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
         newcept->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
         newcept->statics = NULL;
@@ -1053,6 +1204,13 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
             }
 
             if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                    "udpsinks") == 0) {
+                parse_intercept_udp_sink_config(newcept, doc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
                     value->type == YAML_SCALAR_NODE &&
                     strcasecmp((char *)key->data.scalar.value, "accesstype") == 0) {
                 newcept->accesstype = map_access_type_string(
@@ -1086,6 +1244,26 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     == 0) {
                 newcept->mobileident = map_mobile_ident_string(
                         (char *)value->data.scalar.value);
+            }
+        }
+
+        if (newcept->udp_sinks) {
+            if (!newcept->common.liid) {
+                newcept->common.liid = strdup("unidentified intercept");
+            }
+            if (newcept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
+                logger(LOG_INFO, "OpenLI: invalid IP intercept configuration for '%s' -- either udpsinks or vendmirrorid may be set, but not both",
+                        newcept->common.liid);
+                free_single_ipintercept(newcept);
+                continue;
+            }
+
+            if (newcept->common.xid_count > 0) {
+                logger(LOG_INFO, "OpenLI: invalid IP intercept configuration for '%s' -- intercepts using XIDs cannot be captured using a UDP sink",
+                        newcept->common.liid);
+                logger(LOG_INFO, "OpenLI: disabling UDP sink configuration for this intercept");
+                remove_all_intercept_udp_sinks(newcept);
+                newcept->udp_sinks = NULL;
             }
         }
 
@@ -1126,6 +1304,35 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
     return 0;
 }
 
+static int validate_udp_sink_intercepts(prov_intercept_conf_t *state) {
+    ipintercept_t *ipint, *tmp;
+    udp_sink_intercept_mapping_t *udp;
+
+    HASH_ITER(hh_liid, state->ipintercepts, ipint, tmp) {
+        if (!ipint->udp_sinks) {
+            continue;
+        }
+        intercept_udp_sink_t *sink, *tmpsink;
+
+        HASH_ITER(hh, ipint->udp_sinks, sink, tmpsink) {
+            HASH_FIND(hh, state->udp_sink_intercept_mappings, sink->key,
+                    strlen(sink->key), udp);
+            if (udp) {
+                logger(LOG_INFO, "OpenLI: UDP Sink %s is configured for multiple IP intercepts! This is invalid, please ensure that (at most) only 1 IP intercept is associated with a UDP sink. Affected LIIDs: %s, %s",
+                        sink->key, ipint->common.liid, udp->liid);
+                return -1;
+            }
+
+            udp = calloc(1, sizeof(udp_sink_intercept_mapping_t));
+            udp->udpsink = strdup(sink->key);
+            udp->liid = strdup(ipint->common.liid);
+            HASH_ADD_KEYPTR(hh, state->udp_sink_intercept_mappings,
+                    udp->udpsink, strlen(udp->udpsink), udp);
+        }
+    }
+    return 1;
+}
+
 static int intercept_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
@@ -1135,6 +1342,9 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "ipintercepts") == 0) {
         if (parse_ipintercept_list(&state->ipintercepts, doc, value) == -1) {
+            return -1;
+        }
+        if (validate_udp_sink_intercepts(state) == -1) {
             return -1;
         }
     }

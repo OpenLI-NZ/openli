@@ -256,7 +256,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
 static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object *jobj;
     json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips, *mobileident;
+    json_object *staticips, *mobileident, *udpsinks;
 
     jobj = json_object_new_object();
     convert_commonintercept_to_json(jobj, &(ipint->common));
@@ -280,6 +280,45 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     if (ipint->vendmirrorid != 0xFFFFFFFF) {
         vendmirrorid = json_object_new_int(ipint->vendmirrorid);
         json_object_object_add(jobj, "vendmirrorid", vendmirrorid);
+    }
+
+    if (ipint->udp_sinks) {
+        intercept_udp_sink_t *sink, *tmp;
+        json_object *colid, *addr, *port, *encap, *dir, *sinkobj, *cin;
+        json_object *srchost, *srcport;
+
+        udpsinks = json_object_new_array();
+        HASH_ITER(hh, ipint->udp_sinks, sink, tmp) {
+            sinkobj = json_object_new_object();
+
+            colid = json_object_new_string(sink->collectorid);
+            addr = json_object_new_string(sink->listenaddr);
+            port = json_object_new_string(sink->listenport);
+            encap = json_object_new_string(
+                    get_udp_encap_format_string(sink->encapfmt));
+            dir = json_object_new_string(
+                    get_etsi_direction_string(sink->direction));
+            cin = json_object_new_int(sink->cin);
+
+            json_object_object_add(sinkobj, "collectorid", colid);
+            json_object_object_add(sinkobj, "listenaddr", addr);
+            json_object_object_add(sinkobj, "listenport", port);
+            json_object_object_add(sinkobj, "encapsulation", encap);
+            json_object_object_add(sinkobj, "direction", dir);
+            json_object_object_add(sinkobj, "sessionid", cin);
+
+            if (sink->sourcehost) {
+                srchost = json_object_new_string(sink->sourcehost);
+                json_object_object_add(sinkobj, "sourcehost", srchost);
+            }
+            if (sink->sourceport) {
+                srcport = json_object_new_string(sink->sourceport);
+                json_object_object_add(sinkobj, "sourceport", srcport);
+            }
+            json_object_array_add(udpsinks, sinkobj);
+        }
+
+        json_object_object_add(jobj, "udpsinks", udpsinks);
     }
 
     if (ipint->statics) {

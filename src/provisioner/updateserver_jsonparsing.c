@@ -76,6 +76,7 @@ struct json_intercept {
     struct json_object *delivercompressed;
     struct json_object *xids;
     struct json_object *xid;
+    struct json_object *udpsinks;
 };
 
 struct json_prov_options {
@@ -234,6 +235,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "encryptionkey", &(ipjson->encryptkey));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
+    json_object_object_get_ex(parsed, "udpsinks", &(ipjson->udpsinks));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
     json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
     json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
@@ -702,23 +704,29 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
 
     HASH_FIND(hh_liid, state->interceptconf.ipintercepts, idstr,
             strlen(idstr), found);
-
-    if (found) {
-        HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
-        halt_existing_intercept(state, (void *)found,
-                OPENLI_PROTO_HALT_IPINTERCEPT);
-        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-                0);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                found->username, HI1_LI_DEACTIVATED);
-        free_prov_intercept_data(&(found->common), state->epoll_fd);
-        free_single_ipintercept(found);
-        logger(LOG_INFO,
-                "OpenLI: removed IP intercept '%s' via update socket.",
-                idstr);
-        return 1;
+    if (!found) {
+        return 0;
     }
-    return 0;
+
+    if (found->udp_sinks) {
+        intercept_udp_sink_t *sink, *tmp;
+        HASH_ITER(hh, found->udp_sinks, sink, tmp) {
+            remove_udp_sink_mapping(state, found->common.liid, sink->key);
+        }
+    }
+    HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
+    halt_existing_intercept(state, (void *)found,
+            OPENLI_PROTO_HALT_IPINTERCEPT);
+    remove_liid_mapping(state, found->common.liid, found->common.liid_len,
+            0);
+    announce_hi1_notification_to_mediators(state, &(found->common),
+            found->username, HI1_LI_DEACTIVATED);
+    free_prov_intercept_data(&(found->common), state->epoll_fd);
+    free_single_ipintercept(found);
+    logger(LOG_INFO,
+            "OpenLI: removed IP intercept '%s' via update socket.",
+            idstr);
+    return 1;
 }
 
 int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
@@ -1251,8 +1259,131 @@ integrityerr:
     return -1;
 }
 
-static int parse_ipintercept_staticips(provision_state_t *state,
-        ipintercept_t *ipint, struct json_object *jsonips, update_con_info_t *cinfo) {
+static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
+        struct json_object *jsonsinks, update_con_info_t *cinfo) {
+
+    intercept_udp_sink_t *newsink = NULL, *existing = NULL;
+    struct json_object *sinkobj;
+    struct json_object *colid, *addr, *port, *encap, *dir, *cin, *srcport;
+    struct json_object *srchost;
+    int parseerr = 0;
+    size_t i;
+    char *dirstring = NULL;
+    char *encapstring = NULL;
+    char keybuf[1024];
+
+    if (json_object_get_type(jsonsinks) != json_type_array) {
+        logger(LOG_INFO, "OpenLI update socket: 'udpsinks' for an IP intercept must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'udpsinks' member for an IP intercept must be expressed as a JSON array. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto sinkerr;
+    }
+
+    for (i = 0; i < (size_t)json_object_array_length(jsonsinks); i++) {
+        sinkobj = json_object_array_get_idx(jsonsinks, i);
+
+        json_object_object_get_ex(sinkobj, "collectorid", &(colid));
+        json_object_object_get_ex(sinkobj, "listenaddr", &(addr));
+        json_object_object_get_ex(sinkobj, "listenport", &(port));
+        json_object_object_get_ex(sinkobj, "encapsulation", &(encap));
+        json_object_object_get_ex(sinkobj, "direction", &(dir));
+        json_object_object_get_ex(sinkobj, "sessionid", &(cin));
+        json_object_object_get_ex(sinkobj, "sourcehost", &(srchost));
+        json_object_object_get_ex(sinkobj, "sourceport", &(srcport));
+
+        newsink = calloc(1, sizeof(intercept_udp_sink_t));
+        newsink->awaitingconfirm = 1;
+        newsink->enabled = 1;
+        newsink->direction = 0xff;
+        newsink->encapfmt = 0xff;
+        newsink->cin = 0xFFFFFFFF;
+
+        EXTRACT_JSON_STRING_PARAM("collectorid", "Collector ID", colid,
+                newsink->collectorid, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("listenaddr", "Listening Address", addr,
+                newsink->listenaddr, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("listenport", "Listening Port", port,
+                newsink->listenport, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("sourcehost", "Source Host", srchost,
+                newsink->sourcehost, &parseerr, false);
+        EXTRACT_JSON_STRING_PARAM("sourceport", "Source Port", srcport,
+                newsink->sourceport, &parseerr, false);
+        EXTRACT_JSON_STRING_PARAM("direction", "Direction", dir,
+                dirstring, &parseerr, false);
+        EXTRACT_JSON_STRING_PARAM("encapsulation", "Encapsulation", encap,
+                encapstring, &parseerr, false);
+        EXTRACT_JSON_INT_PARAM("sessionid", "CIN", cin, newsink->cin,
+                &parseerr, 0, 0xFFFFFFFE, false);
+
+        if (strchr(newsink->collectorid, ',') != NULL) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>The 'collectorid' member of an IP intercept UDP sink must not contain a comma character %s",
+                    update_failure_page_start, update_failure_page_end);
+            parseerr = 1;
+        }
+
+        if (strchr(newsink->listenaddr, ',') != NULL) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>The 'listenaddr' member of an IP intercept UDP sink must not contain a comma character %s",
+                    update_failure_page_start, update_failure_page_end);
+            parseerr = 1;
+        }
+
+        if (strchr(newsink->listenport, ',') != NULL) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>The 'listenport' member of an IP intercept UDP sink must not contain a comma character %s",
+                    update_failure_page_start, update_failure_page_end);
+            parseerr = 1;
+        }
+
+        if (parseerr) {
+            if (dirstring) {
+                free(dirstring);
+                dirstring = NULL;
+            }
+            if (encapstring) {
+                free(encapstring);
+                encapstring = NULL;
+            }
+            goto sinkerr;
+        }
+
+        if (dirstring) {
+            newsink->direction = map_etsi_direction_string(dirstring);
+            free(dirstring);
+            dirstring = NULL;
+        }
+        if (encapstring) {
+            newsink->encapfmt = map_udp_encap_format_string(encapstring);
+            free(encapstring);
+            encapstring = NULL;
+        }
+
+        snprintf(keybuf, 1024, "%s,%s,%s", newsink->collectorid,
+                newsink->listenaddr, newsink->listenport);
+        newsink->key = strdup(keybuf);
+
+
+        HASH_FIND(hh, ipint->udp_sinks, newsink->key, strlen(newsink->key),
+                existing);
+        if (existing == NULL) {
+            HASH_ADD_KEYPTR(hh, ipint->udp_sinks, newsink->key,
+                    strlen(newsink->key), newsink);
+        } else {
+            clean_intercept_udp_sink(newsink);
+            free(newsink);
+        }
+    }
+    return 0;
+
+sinkerr:
+    // free newsink if exists
+    if (newsink) {
+        clean_intercept_udp_sink(newsink);
+        free(newsink);
+    }
+    return -1;
+}
+
+static int parse_ipintercept_staticips(ipintercept_t *ipint,
+        struct json_object *jsonips, update_con_info_t *cinfo) {
 
     static_ipranges_t *newr = NULL;
     static_ipranges_t *existing = NULL;
@@ -1319,9 +1450,6 @@ static int parse_ipintercept_staticips(provision_state_t *state,
         if (!existing) {
             HASH_ADD_KEYPTR(hh, ipint->statics, newr->rangestr,
                     strlen(newr->rangestr), newr);
-            if (!ipint->awaitingconfirm) {
-                add_new_staticip_range(state, ipint, newr);
-            }
         } else {
             free(newr->rangestr);
             free(newr);
@@ -1632,6 +1760,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sinks = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
     ipint->options = 0;
@@ -1675,8 +1804,14 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (ipjson.staticips != NULL) {
-        if (parse_ipintercept_staticips(state, ipint, ipjson.staticips,
-                cinfo) < 0) {
+        if (parse_ipintercept_staticips(ipint, ipjson.staticips, cinfo) < 0) {
+            goto cepterr;
+        }
+    }
+
+    if (ipjson.udpsinks != NULL) {
+        if (parse_ipintercept_udpsinks(ipint, ipjson.udpsinks, cinfo)
+                < 0) {
             goto cepterr;
         }
     }
@@ -2195,6 +2330,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sinks = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->common.liid = strdup(parsedliid);
     free(liidstr);
@@ -2239,11 +2375,79 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (ipjson.udpsinks != NULL) {
+        intercept_udp_sink_t *sink, *tmp, *inmod;
+        if (parse_ipintercept_udpsinks(ipint, ipjson.udpsinks, cinfo)
+                < 0) {
+            goto cepterr;
+        }
+
+        // compare with existing sink configuration
+        HASH_ITER(hh, found->udp_sinks, sink, tmp) {
+            HASH_FIND(hh, ipint->udp_sinks, sink->key, strlen(sink->key),
+                    inmod);
+            if (inmod) {
+                uint8_t modrequired = 0;
+                if (inmod->encapfmt != 0xff &&
+                        inmod->encapfmt != sink->encapfmt) {
+                    sink->encapfmt = inmod->encapfmt;
+                    modrequired = 1;
+                } else if (inmod->encapfmt == 0xff) {
+                    inmod->encapfmt = sink->encapfmt;
+                }
+                if (inmod->direction != 0xff &&
+                        inmod->direction != sink->direction) {
+                    sink->direction = inmod->direction;
+                    modrequired = 1;
+                } else if (inmod->direction == 0xff) {
+                    inmod->direction = sink->direction;
+                }
+                if (inmod->cin != 0xFFFFFFFF &&
+                        inmod->cin != sink->cin) {
+                    sink->cin = inmod->cin;
+                    modrequired = 1;
+                }
+                MODIFY_STRING_MEMBER(inmod->sourcehost, sink->sourcehost,
+                        &modrequired);
+                MODIFY_STRING_MEMBER(inmod->sourceport, sink->sourceport,
+                        &modrequired);
+                if (modrequired) {
+                    modify_intercept_udp_sink(state, &(ipint->common), sink);
+                }
+                inmod->awaitingconfirm = 0;
+            } else {
+                HASH_DELETE(hh, found->udp_sinks, sink);
+                remove_intercept_udp_sink(state, &(ipint->common), sink);
+                remove_udp_sink_mapping(state, ipint->common.liid,
+                        sink->key);
+                clean_intercept_udp_sink(sink);
+                free(sink);
+            }
+        }
+
+        HASH_ITER(hh, ipint->udp_sinks, sink, tmp) {
+            if (sink->awaitingconfirm) {
+                add_new_intercept_udp_sink(state, &(ipint->common), sink);
+                if (add_udp_sink_mapping(state, ipint->common.liid,
+                        sink->key) < 0) {
+                    snprintf(cinfo->answerstring, 4096,
+                            "%s <p>UDP Sink '%s' is already being used by another IP intercept (%s). Either choose another UDP Sink, or move the existing intercept to another available Sink. %s",
+                            update_failure_page_start, sink->key,
+                            ipint->common.liid, update_failure_page_end);
+                    goto cepterr;
+                }
+                HASH_ADD_KEYPTR(hh, found->udp_sinks, sink->key,
+                        strlen(sink->key), sink);
+                HASH_DELETE(hh, ipint->udp_sinks, sink);
+                sink->awaitingconfirm = 0;
+            }
+        }
+    }
+
     if (ipjson.staticips != NULL) {
         static_ipranges_t *range, *tmp, *inmod;
 
-        if (parse_ipintercept_staticips(state, ipint, ipjson.staticips,
-                cinfo) < 0) {
+        if (parse_ipintercept_staticips(ipint, ipjson.staticips, cinfo) < 0) {
             goto cepterr;
         }
 
@@ -2320,7 +2524,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         found->options = ipint->options;
     }
 
-    if (ipint->vendmirrorid != found->vendmirrorid) {
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE &&
+            ipint->vendmirrorid != found->vendmirrorid) {
         changed = 1;
         found->vendmirrorid = ipint->vendmirrorid;
     }

@@ -251,6 +251,81 @@ static void disconnect_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
+static void flag_reorderers(char *liid, Pvoid_t *reorderer_array, time_t at) {
+    PWord_t jval;
+    uint8_t index[256];
+    int_reorderer_t *reord;
+
+    index[0] = '\0';
+    JSLF(jval, *reorderer_array, index);
+    while (jval != NULL) {
+        reord = (int_reorderer_t *)(*jval);
+
+        if (liid != NULL && strcmp(reord->liid, liid) != 0) {
+            JSLN(jval, *reorderer_array, index);
+            continue;
+        }
+        reord->flagged_over = at;
+        JSLN(jval, *reorderer_array, index);
+    }
+
+}
+
+static void remove_flagged_reorderers(char *liid, Pvoid_t *reorderer_array,
+        time_t at) {
+
+    PWord_t jval;
+    PWord_t pval;
+    uint8_t index[256];
+    int_reorderer_t *reord;
+    int err;
+    Word_t seqindex;
+
+    index[0] = '\0';
+    JSLF(jval, *reorderer_array, index);
+    while (jval != NULL) {
+        reord = (int_reorderer_t *)(*jval);
+
+        if (reord->flagged_over == 0) {
+            JSLN(jval, *reorderer_array, index);
+            continue;
+        }
+
+        if (liid != NULL && strcmp(reord->liid, liid) != 0) {
+            JSLN(jval, *reorderer_array, index);
+            continue;
+        }
+
+        /* 5 seconds seems a generous amount of time to wait for any final
+         * encoded records to come through
+         */
+        if (at - reord->flagged_over < 5) {
+            JSLN(jval, *reorderer_array, index);
+            continue;
+        }
+
+        JSLD(err, *reorderer_array, index);
+
+        seqindex = 0;
+        JLF(pval, reord->pending, seqindex);
+        while (pval) {
+            openli_encoded_result_t *res;
+
+            res = (openli_encoded_result_t *)(*pval);
+            free_encoded_result(res);
+            free(res);
+            JLN(pval, reord->pending, seqindex);
+        }
+        JLFA(err, reord->pending);
+
+        free(reord->liid);
+        free(reord->key);
+        free(reord);
+        JSLN(jval, *reorderer_array, index);
+    }
+
+}
+
 static void remove_reorderers(char *liid, Pvoid_t *reorderer_array) {
 
     PWord_t jval;
@@ -313,16 +388,20 @@ static void flag_all_destinations(forwarding_thread_data_t *fwd) {
 
 static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
+    struct timeval tv;
 
     if (msg->type == OPENLI_EXPORT_HALT) {
-	fwd->haltinfo = msg->data.haltinfo;
+	    fwd->haltinfo = msg->data.haltinfo;
         free(msg);
         return 0;
     }
 
     if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
-        remove_reorderers(msg->data.cept.liid, &(fwd->intreorderer_cc));
-        remove_reorderers(msg->data.cept.liid, &(fwd->intreorderer_iri));
+        gettimeofday(&tv, NULL);
+        flag_reorderers(msg->data.cept.liid, &(fwd->intreorderer_cc),
+                tv.tv_sec);
+        flag_reorderers(msg->data.cept.liid, &(fwd->intreorderer_iri),
+                tv.tv_sec);
 
         free(msg->data.cept.liid);
         free(msg->data.cept.authcc);
@@ -396,6 +475,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         reord->key = strdup(res->cinstr);
         reord->pending = NULL;
         reord->expectedseqno = 0;
+        reord->flagged_over = 0;
 
         *jval = (Word_t)reord;
     } else {
@@ -718,7 +798,6 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         if (x <= 0) {
             break;
         }
-
         if (x % sizeof(openli_encoded_result_t) != 0) {
             logger(LOG_INFO, "OpenLI: forwarding thread %d received odd sized message (%d bytes)?",
                     fwd->forwardid, x);
@@ -727,11 +806,11 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         msgcnt = x / sizeof(openli_encoded_result_t);
 
         for (i = 0; i < msgcnt; i++) {
-	    if (res[i].liid == NULL || res[i].destid == 0) {
-		fwd->encoders_over ++;
-            	free_encoded_result(&(res[i]));
-		break;
-	    }
+            if (res[i].liid == NULL || res[i].destid == 0) {
+                fwd->encoders_over ++;
+                free_encoded_result(&(res[i]));
+                break;
+            }
             if (handle_encoded_result(fwd, &(res[i])) < 0) {
                 return -1;
             }
@@ -1046,12 +1125,17 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
 
     if (fwd->topoll[2].revents & ZMQ_POLLIN) {
         struct itimerspec its;
+        struct timeval tv;
 
         connect_export_targets(fwd);
 
         for (i = 3; i < fwd->nextpoll; i++) {
             fwd->forcesend[i] = 1;
         }
+
+        gettimeofday(&tv, NULL);
+        remove_flagged_reorderers(NULL, &(fwd->intreorderer_cc), tv.tv_sec);
+        remove_flagged_reorderers(NULL, &(fwd->intreorderer_iri), tv.tv_sec);
 
         fwd->forcesend_rmq = 1;
         its.it_interval.tv_sec = 0;

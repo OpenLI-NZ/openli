@@ -35,6 +35,10 @@
 #include <Judy.h>
 #include <uuid/uuid.h>
 
+#define ETSI_DIR_FROM_TARGET 0
+#define ETSI_DIR_TO_TARGET 1
+#define ETSI_DIR_INDETERMINATE 2
+
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
 
 #define OPENLI_LIID_MAXSIZE 26      // +1 for null byte
@@ -187,6 +191,35 @@ typedef struct hi1_notify_data {
     openli_liid_format_t liid_format;
 } hi1_notify_data_t;
 
+enum {
+    INTERCEPT_UDP_ENCAP_FORMAT_RAW,
+    INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR,
+    INTERCEPT_UDP_ENCAP_FORMAT_NOKIA,
+    INTERCEPT_UDP_ENCAP_FORMAT_CISCO
+};
+
+typedef struct intercept_udp_sink {
+    uint8_t enabled;
+    uint8_t awaitingconfirm;
+    char *collectorid;
+    char *listenport;
+    char *listenaddr;
+    uint8_t direction;
+    uint8_t encapfmt;
+
+    // CIN to use in circumstances where the encapsulation format does not
+    // provide a session ID (or anything else that can act as a CIN).
+    uint32_t cin;
+
+    char *sourcehost;
+    char *sourceport;
+
+    char *key;
+    char *liid;
+    UT_hash_handle hh;
+
+} intercept_udp_sink_t;
+
 typedef struct ipintercept {
     intercept_common_t common;
 
@@ -198,6 +231,12 @@ typedef struct ipintercept {
     /* Used in cases where we are converting vendor-mirrored packets into
      * ETSI records */
     uint32_t vendmirrorid;
+
+    /* Used in cases where the traffic for this intercept are going to be
+     * sent to a collector directly using some form of UDP encapsulation
+     * (e.g. FlowtapLite)
+     */
+    intercept_udp_sink_t *udp_sinks;
 
     static_ipranges_t *statics;
 
@@ -578,15 +617,23 @@ int add_intercept_to_email_user_intercept_list(
 int generate_ipint_userkey(ipintercept_t *ipint, char *space,
         size_t spacelen);
 
+void clean_intercept_udp_sink(intercept_udp_sink_t *sink);
+void remove_all_intercept_udp_sinks(ipintercept_t *cept);
+
+
 const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
+const char *get_udp_encap_format_string(uint8_t encapfmt);
+const char *get_etsi_direction_string(uint8_t etsidir);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
 openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr);
 uint8_t map_email_decompress_option_string(char *decstr);
 openli_mobile_identifier_t map_mobile_ident_string(char *idstr);
+uint8_t map_etsi_direction_string(char *dirstr);
+uint8_t map_udp_encap_format_string(char *fmtstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);

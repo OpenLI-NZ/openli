@@ -117,8 +117,11 @@ intercept targets across them.
 
 
 ### Nokia Mirror Configuration
+NOTE: Nokia mirrored traffic can also be handled using a UDP Sink (see below
+for more information).
+
 If you are using OpenLI to translate the intercept records produced by
-Alcatel-Lucent devices into ETSI-compliant output, any collectors that
+Nokia / Alcatel-Lucent devices into ETSI-compliant output, any collectors that
 are expected to receive mirrored copies of the Nokia intercept records need
 to be able to identify which packets are encapsulated records to be
 translated.
@@ -133,6 +136,9 @@ Note that in this context, the sink refers to the destination IP address
 and port of the mirrored Nokia traffic.
 
 ### Juniper Mirror Configuration
+NOTE: JMirror traffic can also be handled using a UDP Sink (see below
+for more information).
+
 If you are using Juniper Packet Mirroring (a.k.a. JMirror) to mirror intercepted
 traffic into an OpenLI collector, you will need to configure OpenLI with the
 IP address and port that the mirrored traffic is being sent to so that the
@@ -185,6 +191,40 @@ Only enable this option if you absolutely trust that the SIP "From:" fields
 are not spoofed (maybe because the SIP is being generated from inside your
 network) and you are unable to include any of the more reliable fields in
 your SIP traffic.
+
+### UDP Sinks
+Many networking equipment vendors offer a limited lawful interception
+capability on their devices that can siphon copies of traffic for a
+particular network user (i.e. an intercept target) to a pre-defined destination.
+These streams typically encapsulate the captured traffic in IP/UDP, and may
+also include a small shim header at the beginning of the datagram payload.
+
+OpenLI collectors can act as the destination for these UDP streams, whereby
+the collector can be configured to listen on certain UDP ports for datagrams.
+We call these IP/port pairs "UDP sinks". Then, in the intercept configuration,
+tell OpenLI which UDP sinks will be the recipients of traffic for the target
+user. Finally, when you configure the mirroring on your router/device, set the
+destination to be the IP address and UDP port that you designated as the
+corresponding sink on your collector.
+
+The OpenLI collector will then assume any traffic delivered to it on the
+IP address and UDP port of the specified sink(s) must belong to the target
+of the associated intercept, and automatically intercept and encode each
+packet accordingly.
+
+Important notes:
+ * each UDP sink on a collector can only be associated with at most one
+   intercept at a time, but you may have multiple sinks attached to a single
+   intercept (e.g. to handle cases where inbound and outbound traffic were
+   mirrored separately).
+ * UDP sinks currently only support IP intercepts, not VoIP or email
+   intercepts.
+ * vendmirrorid configuration is not required for IP intercepts that use UDP
+   sinks, and in fact no checking of the intercept ID in the post-UDP shim
+   is performed at all.
+ * UDP sinks without an attached intercept will remain idle until an
+   intercept is assigned to it via the provisioner.
+
 
 ### Configuration Syntax
 All config options aside from the input configuration are standard YAML
@@ -302,6 +342,17 @@ elements:
 
 * ip -- the IP address of the device that received the mirrored traffic
 * port -- the port that the sink was listening on for mirrored traffic
+
+---
+
+UDP sinks are defined a YAML sequence with a key of `udpsinks:`. Each sequence
+item describes a single listening UDP sink instance and must contain the
+following three key-value elements:
+* listenaddr -- the IP address of the interface to consume UDP mirror traffic on
+* listenport -- the port number to receive UDP mirror traffic on
+* identifier -- an identifier string that is unique to this particular
+                collector (in case another collector is also listening on the
+                exact same IP address and port).
 
 
 ### Email interception options

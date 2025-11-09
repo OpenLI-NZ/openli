@@ -63,6 +63,7 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
 
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.liid;
         case OPENLI_EXPORT_IPCC:
         case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.liid;
@@ -91,6 +92,7 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
 
     switch(recvd->type) {
         case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.cin;
         case OPENLI_EXPORT_IPCC:
         case OPENLI_EXPORT_UMTSCC:
             return recvd->data.ipcc.cin;
@@ -116,6 +118,44 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
             "OpenLI: invalid message type in extract_cin_from_job: %u",
             recvd->type);
     return 0;
+}
+
+static inline etsili_iri_type_t extract_iritype_from_job(
+        openli_export_recv_t *recvd) {
+    uint8_t special = 255;
+    etsili_iri_type_t iritype = ETSILI_IRI_NONE;
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMIRI:
+            iritype = recvd->data.ipmmiri.iritype;
+            break;
+        case OPENLI_EXPORT_IPIRI:
+            special = recvd->data.ipiri.special;
+            iritype = recvd->data.ipiri.iritype;
+            break;
+        case OPENLI_EXPORT_EMAILIRI:
+            iritype = recvd->data.emailiri.iritype;
+            break;
+        case OPENLI_EXPORT_EPSIRI:
+            iritype = recvd->data.mobiri.iritype;
+            break;
+        default:
+            return ETSILI_IRI_NONE;
+    }
+
+    if (special == OPENLI_IPIRI_ENDWHILEACTIVE) {
+        // we'll encode this as IRI-Report, but for the purposes of
+        // tracking if we've sent an "END" or not then we should consider
+        // this to be one
+        return ETSILI_IRI_END;
+    } else if (special == OPENLI_IPIRI_STARTWHILEACTIVE) {
+        return ETSILI_IRI_BEGIN;
+    } else if (special == OPENLI_IPIRI_SILENTLOGOFF) {
+        return ETSILI_IRI_END;
+    }
+
+    // special flag is not set, so this is just a standard IRI
+    return iritype;
 }
 
 static void purge_removedints(seqtracker_thread_data_t *seqdata) {
@@ -324,12 +364,14 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
+    etsili_iri_type_t iritype = ETSILI_IRI_NONE;
     int ret = 1;
     openli_encoding_job_t job;
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
     cin = extract_cin_from_job(recvd);
+    iritype = extract_iritype_from_job(recvd);
 
     HASH_FIND(hh, seqdata->intercepts, liid, strlen(liid), intstate);
     if (!intstate) {
@@ -357,21 +399,13 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->iri_seqno = 0;
         cinseq->cc_seqno = 0;
         cinseq->cin_string = strdup(cinstr);
+        cinseq->iri_begin = 0;
+        cinseq->iri_end = 0;
 
         HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
                 sizeof(cin), cinseq);
     }
 
-
-	job.preencoded = intstate->preencoded;
-	job.origreq = recvd;
-	job.liid = strdup(liid);
-    job.cinstr = strdup(cinseq->cin_string);
-    job.cin = (int64_t)cin;
-    job.cept_version = intstate->version;
-    job.encryptmethod = intstate->details.encryptmethod;
-    job.timefmt = intstate->details.timefmt;
-    job.liid_format = intstate->details.liid_format;
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
             recvd->type == OPENLI_EXPORT_UMTSCC ||
@@ -382,9 +416,35 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->cc_seqno ++;
 
 	} else {
+        if (iritype == ETSILI_IRI_BEGIN) {
+            if (cinseq->iri_begin) {
+                // already produced a BEGIN for this session/call
+                free_published_message(recvd);
+                return 0;
+            }
+            cinseq->iri_begin = 1;
+        } else if (iritype == ETSILI_IRI_END) {
+            if (cinseq->iri_end) {
+                // already produced a END for this session/call
+                free_published_message(recvd);
+                return 0;
+            }
+            cinseq->iri_end = 1;
+        }
+
 		job.seqno = cinseq->iri_seqno;
         cinseq->iri_seqno ++;
 	}
+
+	job.preencoded = intstate->preencoded;
+	job.origreq = recvd;
+	job.liid = strdup(liid);
+    job.cinstr = strdup(cinseq->cin_string);
+    job.cin = (int64_t)cin;
+    job.cept_version = intstate->version;
+    job.encryptmethod = intstate->details.encryptmethod;
+    job.timefmt = intstate->details.timefmt;
+    job.liid_format = intstate->details.liid_format;
 
     while (1) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsock, (char *)&job,

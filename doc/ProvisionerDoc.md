@@ -242,6 +242,13 @@ used to identify the intercept target.
 * Static IPs -- if the target has a static IP (range), you can use this
   parameter to tell OpenLI which IPs belong to the target.
 
+Alternatively, you can configure your OpenLI collectors to act as the
+recipient for one of the vendor mirrored streams over UDP. If you wish to use
+this approach, you can tell OpenLI which of the collector UDP sinks you intend
+to use as a destination for the mirrored stream(s) and any packets that
+arrive at those UDP sinks will be de-encapsulated and intercepted as part of
+this IP intercept.
+
 If you are relying solely on the User as the target identification method, you
 will need to ensure that the OpenLI collectors receive a copy of all RADIUS
 traffic relating to the subscribers whose IP traffic will be passing that
@@ -639,6 +646,44 @@ Optional key-value elements for an IP intercept are:
                            mirroring platform for the target user.
                            (only for re-encoding ALU or JMirror intercepts as
                            ETSI)
+* `udpsinks`              -- the set of collector UDP sinks that should be
+                             used to intercept mirrored traffic for this
+                             intercept.
+
+`udpsinks:` are expressed as a YAML list: one list item per UDP sink that
+you want to attach to this intercept. Each list item is a YAML map containing
+the following key-value elements:
+
+    * `collectorid`         -- the collector instance that the UDP sink is
+                               running on. This should match the `identifier`
+                               field in the corresponding UDP sink configuration
+                               on that collector.
+    * `listenaddr`          -- the IP address that the UDP sink is listening on.
+    * `listenport`          -- the UDP port that the UDP sink is listening on.
+    * `sessionid`           -- the session ID (also known as CIN) to use when
+                               encoding traffic intercepted via this UDP sink.
+                               Only applies if the encapsulation format does
+                               not include a session ID already.
+    * `direction`           -- if the encapsulation format does not include
+                               a direction tag on each mirrored packet, packets
+                               received by this UDP sink will be tagged as
+                               travelling in this direction relative to the
+                               intercept target. Possible values are `from`,
+                               `to`, and `both` -- default is `both`.
+    * `encapsulation`       -- the format of the post-UDP shim header that
+                               precedes the mirrored packet content (if any).
+                               Supported values are `raw` (i.e. no shim),
+                               `jmirror`, `nokia` and `cisco`. Default is `raw`.
+    * `sourcehost`          -- if set, the UDP sink will only intercept packets
+                               that originate from this source IP address. May
+                               be set to `any` to allow any source IP (be
+                               careful!).
+    * `sourceport`          -- if set, the UDP sink will only intercept packet
+                               that have a source port matching this number.
+                               May be set to 0 to allow any source port
+                               number (be careful!).
+
+
 * `staticips`             -- a list of IP ranges that are known to have been
                            assigned to the target.
 
@@ -646,13 +691,14 @@ Optional key-value elements for an IP intercept are:
 is associated with the target. Each list item is a YAML map containing the
 following key-value elements:
 
-* `iprange`               -- the IP range, expressed in CIDR notation. If a
+    * `iprange`               -- the IP range, expressed in CIDR notation. If a
                              single address (i.e. no subnet) is given, a /32
                              or /128 mask will be added automatically.
-* `sessionid`             -- the session ID (also known as CIN) to associate
+    * `sessionid`             -- the session ID (also known as CIN) to associate
                              with intercepts for this address range. See
                              example config for more information about the
                              meaning of this field.
+
 
 ---
 A VOIP intercept must contain the following key-value elements:

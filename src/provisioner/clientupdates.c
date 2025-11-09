@@ -278,6 +278,45 @@ int withdraw_default_radius_username(provision_state_t *state,
     return 0;
 }
 
+void add_new_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_intercept_udp_sink_onto_net_buffer(sock->outgoing,
+                common, sink) < 0) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
+void modify_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_modify_intercept_udp_sink_onto_net_buffer(sock->outgoing,
+                common, sink) < 0) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
+void remove_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_remove_intercept_udp_sink_onto_net_buffer(sock->outgoing,
+                common, sink) < 0) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
 void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 

@@ -44,6 +44,23 @@ typedef struct yaml_mem_buf {
     size_t used;
 } yaml_buffer_t;
 
+
+#define YAML_EMIT_STRING(event, label, strval) \
+    if (strval != NULL) {                                               \
+        yaml_scalar_event_initialize(&event, NULL,                      \
+                (yaml_char_t *)YAML_STR_TAG,                            \
+                (yaml_char_t *)label, strlen(label), 1, 0,              \
+                YAML_PLAIN_SCALAR_STYLE);                               \
+        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
+                                                                        \
+        yaml_scalar_event_initialize(&event, NULL,                      \
+                (yaml_char_t *)YAML_STR_TAG,                            \
+                (yaml_char_t *)strval, strlen(strval),                  \
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);                 \
+        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
+    }
+
+
 static const char *access_type_to_string(internet_access_method_t method) {
 
     switch(method) {
@@ -542,6 +559,43 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
     return 0;
 }
 
+static int emit_intercept_udpsinks(intercept_udp_sink_t *sinks,
+        yaml_emitter_t *emitter) {
+    intercept_udp_sink_t *sink, *tmp;
+    yaml_event_t event;
+    const char *dirstring;
+    const char *encapstring;
+    char buffer[256];
+
+    HASH_ITER(hh, sinks, sink, tmp) {
+
+        yaml_mapping_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        YAML_EMIT_STRING(event, "collectorid", sink->collectorid);
+        YAML_EMIT_STRING(event, "listenaddr", sink->listenaddr);
+        YAML_EMIT_STRING(event, "listenport", sink->listenport);
+
+        if (sink->cin != 0xFFFFFFFF) {
+            snprintf(buffer, 64, "%u", sink->cin);
+            YAML_EMIT_STRING(event, "sessionid", buffer);
+        }
+
+        dirstring = get_etsi_direction_string(sink->direction);
+        encapstring = get_udp_encap_format_string(sink->encapfmt);
+
+        YAML_EMIT_STRING(event, "direction", dirstring);
+        YAML_EMIT_STRING(event, "encapsulation", encapstring);
+        YAML_EMIT_STRING(event, "sourcehost", sink->sourcehost);
+        YAML_EMIT_STRING(event, "sourceport", sink->sourceport);
+
+        yaml_mapping_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+    return 0;
+}
+
 static int emit_static_ipranges(static_ipranges_t *ranges,
         yaml_emitter_t *emitter) {
 
@@ -963,6 +1017,27 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
                     YAML_PLAIN_SCALAR_STYLE);
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
+
+
+        if (ipint->udp_sinks) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"udpsinks", strlen("udpsinks"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_sequence_start_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            if (emit_intercept_udpsinks(ipint->udp_sinks, emitter) < 0) {
+                return -1;
+            }
+
+            yaml_sequence_end_event_initialize(&event);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
 
         if (ipint->statics != NULL) {
             yaml_scalar_event_initialize(&event, NULL,
