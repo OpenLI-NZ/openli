@@ -196,7 +196,8 @@ int check_alu_intercept(colthread_local_t *loc,
         }
 
         /* Create an appropriate IPCC and export it */
-        if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(alu->common),
+        if (push_vendor_mirrored_ipcc_job(
+                loc->zmq_pubsocks[alu->common.seqtrackerid], &(alu->common),
                 trace_get_timeval(packet), cin, direction, l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */

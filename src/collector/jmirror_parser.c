@@ -44,41 +44,57 @@ static inline uint32_t jmirror_get_interceptid(jmirrorhdr_t *header) {
     return (ntohl(header->interceptid) & 0x3fffffff);
 }
 
+uint8_t *decode_jmirror_from_udp_payload(uint8_t *payload, uint32_t plen,
+        uint32_t *cin, uint32_t *shimintid, uint32_t *bodylen) {
+
+    jmirrorhdr_t *header;
+    uint32_t rem = plen;
+    uint8_t *l3;
+
+    header = (jmirrorhdr_t *)payload;
+    if (!header || rem < sizeof(jmirrorhdr_t)) {
+        return NULL;
+    }
+
+    *shimintid = jmirror_get_interceptid(header);
+    *cin = ntohl(header->sessionid);
+
+    rem -= sizeof(jmirrorhdr_t);
+    l3 = ((uint8_t *)header) + sizeof(jmirrorhdr_t);
+
+    if (rem == 0) {
+        return NULL;
+    }
+    *bodylen = rem;
+    return l3;
+}
+
 int check_jmirror_intercept(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *jmirror_sources,
         vendmirror_intercept_list_t *jmirror_ints) {
 
     coreserver_t *cs;
-    jmirrorhdr_t *header = NULL;
-    uint32_t rem = 0, cept_id, cin;
+    uint32_t rem = 0, cept_id, cin, bodylen;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
-    char *l3;
+    uint8_t *l3, *start;
 
     if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1)) == NULL) {
         return 0;
     }
 
-    header = (jmirrorhdr_t *)get_udp_payload(packet, &rem, NULL, NULL);
-    if (rem < sizeof(jmirrorhdr_t) || header == NULL) {
+    start = get_udp_payload(packet, &rem, NULL, NULL);
+    l3 = decode_jmirror_from_udp_payload(start, rem, &cin, &cept_id,
+            &bodylen);
+    if (l3 == NULL) {
         return 0;
     }
-
-    cept_id = jmirror_get_interceptid(header);
 
     HASH_FIND(hh, jmirror_ints, &cept_id, sizeof(cept_id), vmilist);
     if (vmilist == NULL) {
         return 0;
     }
-
-    rem -= sizeof(jmirrorhdr_t);
-    l3 = ((char *)header) + sizeof(jmirrorhdr_t);
-
-    if (rem == 0) {
-        return 0;
-    }
-    cin = ntohl(header->sessionid);
 
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
@@ -89,9 +105,10 @@ int check_jmirror_intercept(colthread_local_t *loc,
             continue;
         }
                 /* Create an appropriate IPCC and export it */
-        if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(cept->common),
+        if (push_vendor_mirrored_ipcc_job(
+                loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
                 trace_get_timeval(packet), cin, ETSI_DIR_INDETERMINATE,
-                l3, rem) == 0) {
+                l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 

@@ -31,6 +31,8 @@
 #include "collector_sync.h"
 #include "ipiri.h"
 #include "alushim_parser.h"
+#include "jmirror_parser.h"
+#include "cisco_parser.h"
 
 #include <zmq.h>
 #include <unistd.h>
@@ -368,8 +370,24 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
             return 0;
         }
 
+    } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR) {
+        uint32_t shimintid = 0;
+        skipptr = decode_jmirror_from_udp_payload(recvbuf, got, &cin,
+                &shimintid, &iplen);
+        if (skipptr == NULL) {
+            return 0;
+        }
+        dir = local->direction;
+    } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_CISCO) {
+        uint32_t shimintid = 0;
+        skipptr = decode_cisco_from_udp_payload(recvbuf, got, &shimintid,
+                &iplen);
+        if (skipptr == NULL) {
+            return 0;
+        }
+        dir = local->direction;
+        cin = local->cin;
     } else {
-        // TODO implement other encap methods
         return 0;
     }
 

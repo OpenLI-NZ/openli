@@ -43,6 +43,30 @@ static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {
     return ntohl(hdr->interceptid);
 }
 
+uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
+        uint32_t *shimintid, uint32_t *bodylen) {
+
+    ciscomirror_hdr_t *header;
+    uint32_t rem;
+    uint8_t *l3;
+
+    if (payload == NULL || plen < sizeof(ciscomirror_hdr_t)) {
+        return NULL;
+    }
+    rem = plen;
+    header = (ciscomirror_hdr_t *)payload;
+    *shimintid = ciscomirror_get_intercept_id(header);
+
+    rem -= sizeof(ciscomirror_hdr_t);
+    l3 = ((uint8_t *)header) + sizeof(ciscomirror_hdr_t);
+
+    if (rem == 0) {
+        return 0;
+    }
+    *bodylen = rem;
+    return l3;
+}
+
 /** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
  *  any intercepts that have requested its vendor mirror ID.
  *
@@ -64,31 +88,23 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         vendmirror_intercept_list_t *ciscomirrors) {
 
-    ciscomirror_hdr_t *hdr = NULL;
     void *payload;
     uint8_t *l3;
-    uint32_t rem, cept_id;
+    uint32_t rem, cept_id, bodylen;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
 
     payload = get_udp_payload(packet, &rem, NULL, NULL);
-    if (rem < sizeof(ciscomirror_hdr_t) || payload == NULL) {
+    l3 = decode_cisco_from_udp_payload(payload, rem, &cept_id, &bodylen);
+    if (l3 == NULL) {
         return 0;
     }
-    hdr = (ciscomirror_hdr_t *)payload;
-
-    cept_id = ciscomirror_get_intercept_id(hdr);
 
     HASH_FIND(hh, ciscomirrors, &cept_id, sizeof(cept_id), vmilist);
     if (vmilist == NULL) {
         return 0;
     }
-    rem -= sizeof(ciscomirror_hdr_t);
-    l3 = ((uint8_t *)payload) + sizeof(ciscomirror_hdr_t);
 
-    if (rem == 0) {
-        return 0;
-    }
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
             continue;
@@ -98,9 +114,10 @@ int generate_cc_from_cisco(colthread_local_t *loc,
             continue;
         }
         /* Create an appropriate IPCC and export it */
-        if (push_vendor_mirrored_ipcc_job(loc->zmq_pubsocks[0], &(cept->common),
+        if (push_vendor_mirrored_ipcc_job(
+                loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
                 trace_get_timeval(packet), cept_id, ETSI_DIR_INDETERMINATE,
-                l3, rem) == 0) {
+                l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 

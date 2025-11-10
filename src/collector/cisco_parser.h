@@ -32,6 +32,21 @@
 #include "coreserver.h"
 #include "intercept.h"
 
+/** Given the UDP payload of a Cisco LI-mirrored packet, this method will
+ *  skip past the shim header and return a pointer to the original packet
+ *  along with the intercept ID.
+ *
+ * @param payload       The UDP payload from the mirrored packet
+ * @param plen          The length of the UDP payload
+ * @param[out] shimintid    Updated to contain the intercept ID from the
+ *                          shim header
+ * @param[out] bodylen      The amount of bytes remaining after stripping
+ *                          the shim header
+ * @return a pointer to the first byte immediately after the shim header
+ */
+uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
+        uint32_t *shimintid, uint32_t *bodylen);
+
 /** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
  *  any intercepts that have requested its vendor mirror ID.
  *
