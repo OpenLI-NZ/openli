@@ -104,6 +104,7 @@ static int parse_udp_sink_config(collector_global_t *glob,
         snprintf(fullkey, 512, "%s,%s,%s", snk->identifier, snk->listenaddr,
                 snk->listenport);
         snk->key = strdup(fullkey);
+        snk->running = 0;
 
         HASH_FIND(hh, glob->syncip.udpsinks, snk->key, strlen(snk->key), found);
         if (found) {

@@ -1404,6 +1404,40 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     return 1;
 }
 
+static void reload_udpsinks(collector_global_t *glob,
+        collector_global_t *newstate) {
+
+    colsync_udp_sink_t *oldsink, *newsink, *tmp;
+
+    pthread_mutex_lock(&(glob->syncip.mutex));
+    HASH_ITER(hh, glob->syncip.udpsinks, oldsink, tmp) {
+        HASH_FIND(hh, newstate->syncip.udpsinks, oldsink->key,
+                strlen(oldsink->key), newsink);
+        if (newsink) {
+            newsink->running = 1;
+            oldsink->running = 1;
+        } else {
+            // this sink has been removed, flag it
+            oldsink->running = 0;
+        }
+    }
+
+    HASH_ITER(hh, newstate->syncip.udpsinks, newsink, tmp) {
+        if (newsink->running) {
+            continue;
+        }
+        HASH_DELETE(hh, newstate->syncip.udpsinks, newsink);
+        HASH_ADD_KEYPTR(hh, glob->syncip.udpsinks, newsink->key,
+                strlen(newsink->key), newsink);
+        newsink->running = 1;
+        // the sync thread will handle activating the sink if there is
+        // already an intercept configured for it
+
+    }
+
+    pthread_mutex_unlock(&(glob->syncip.mutex));
+}
+
 static void reload_x2x3_inputs(collector_global_t *glob,
         collector_global_t *newstate, collector_sync_t *sync, int tlschanged) {
 
@@ -1702,11 +1736,17 @@ static void destroy_collector_state(collector_global_t *glob) {
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
     x_input_t *xinp, *xtmp;
+    colsync_udp_sink_t *sink, *sinktmp;
 
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
         free(inp);
+    }
+
+    HASH_ITER(hh, glob->syncip.udpsinks, sink, sinktmp) {
+        HASH_DELETE(hh, glob->syncip.udpsinks, sink);
+        destroy_colsync_udp_sink(sink);
     }
 
     HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
@@ -2147,7 +2187,7 @@ static int reload_collector_config(collector_global_t *glob,
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
     reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
-
+    reload_udpsinks(glob, &newstate);
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
      * flow-on effects to a change.

@@ -179,6 +179,9 @@ static void cleanup_local_udp_sink(udp_sink_local_t *local) {
     if (local->listenport) {
         free(local->listenport);
     }
+    if (local->sourcehost) {
+        free(local->sourcehost);
+    }
     if (local->expectedliid) {
         free(local->expectedliid);
     }
@@ -462,12 +465,16 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
                 local->sourceport = 0;
             }
             local->sourcereset = 1;
-            if (strcmp(msg->data.udpargs.sourcehost, "any") == 0) {
+            if (msg->data.udpargs.sourcehost &&
+                    strcmp(msg->data.udpargs.sourcehost, "any") == 0) {
                 if (local->sourcehost) {
                     free(local->sourcehost);
                 }
                 local->sourcehost = NULL;
             } else {
+                if (local->sourcehost) {
+                    free(local->sourcehost);
+                }
                 local->sourcehost = msg->data.udpargs.sourcehost;
                 msg->data.udpargs.sourcehost = NULL;
             }
@@ -590,6 +597,12 @@ exitthread:
     }
     if (start->key) {
         free(start->key);
+    }
+    if (start->sourceport) {
+        free(start->sourceport);
+    }
+    if (start->sourcehost) {
+        free(start->sourcehost);
     }
     free(start);
     pthread_exit(NULL);

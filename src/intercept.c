@@ -638,6 +638,9 @@ void free_all_staticipranges(static_ipranges_t **ipranges) {
 }
 
 void clean_intercept_udp_sink(intercept_udp_sink_t *sink) {
+    if (!sink) {
+        return;
+    }
 
     if (sink->collectorid) {
         free(sink->collectorid);
@@ -656,6 +659,9 @@ void clean_intercept_udp_sink(intercept_udp_sink_t *sink) {
     }
     if (sink->sourceport) {
         free(sink->sourceport);
+    }
+    if (sink->liid) {
+        free(sink->liid);
     }
     sink->enabled = 0;
 }
