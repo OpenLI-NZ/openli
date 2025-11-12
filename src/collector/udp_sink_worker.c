@@ -63,6 +63,8 @@ typedef struct udp_sink_local {
     struct sockaddr_storage allowed_src;
     int allowed_family;
 
+    uint8_t outformat;
+
 } udp_sink_local_t;
 
 static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
@@ -76,6 +78,7 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
 
     local->cept = NULL;
     local->dest_mediator = 0;
+    local->outformat = OPENLI_EXPORT_IPCC;
 
     local->zmq_control = zmq_socket(args->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 1024, "inproc://openliudpsink_sync-%s", args->key);
@@ -394,8 +397,17 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         return 0;
     }
 
-    job = create_ipcc_job_from_ipcontent(skipptr, iplen,
-            local->expectedliid, cin, dir, local->dest_mediator);
+    if (local->outformat == OPENLI_EXPORT_RAW_CC) {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        job = create_rawip_job_from_ip(local->expectedliid,
+                local->dest_mediator, skipptr, iplen, tv,
+                OPENLI_EXPORT_RAW_CC);
+    } else {
+        job = create_ipcc_job_from_ipcontent(skipptr, iplen,
+                local->expectedliid, cin, dir, local->dest_mediator);
+    }
+
     if (!job) {
         return -1;
     }
@@ -447,6 +459,13 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             }
             local->dest_mediator = msg->destid;
             local->cept = msg;
+            if (local->cept && local->cept->data.cept.targetagency &&
+                    strcmp(local->cept->data.cept.targetagency, "pcapdisk")
+                            == 0) {
+                local->outformat = OPENLI_EXPORT_RAW_CC;
+            } else {
+                local->outformat = OPENLI_EXPORT_IPCC;
+            }
 
             if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS) {
                 logger(LOG_INFO,
