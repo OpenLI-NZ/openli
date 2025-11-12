@@ -175,7 +175,9 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
 static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
+    int err;
     if (med->fd != -1) {
+        JLD(err, fwd->destinations_by_fd, med->fd);
         close(med->fd);
     }
     med->fd = -1;
