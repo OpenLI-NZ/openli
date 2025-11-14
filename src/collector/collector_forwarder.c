@@ -305,7 +305,6 @@ static void remove_flagged_reorderers(char *liid, Pvoid_t *reorderer_array,
             JSLN(jval, *reorderer_array, index);
             continue;
         }
-
         JSLD(err, *reorderer_array, index);
 
         seqindex = 0;
@@ -328,14 +327,32 @@ static void remove_flagged_reorderers(char *liid, Pvoid_t *reorderer_array,
 
 }
 
+static void clean_reorderer(int_reorderer_t *reord) {
+    Word_t seqindex;
+    PWord_t pval;
+    int err;
+
+    seqindex = 0;
+    JLF(pval, reord->pending, seqindex);
+    while (pval) {
+        openli_encoded_result_t *res;
+
+        res = (openli_encoded_result_t *)(*pval);
+        free_encoded_result(res);
+        free(res);
+        JLN(pval, reord->pending, seqindex);
+    }
+    JLFA(err, reord->pending);
+    reord->pending = NULL;
+    reord->expectedseqno = 0;
+}
+
 static void remove_reorderers(char *liid, Pvoid_t *reorderer_array) {
 
     PWord_t jval;
-    PWord_t pval;
     uint8_t index[256];
     int_reorderer_t *reord;
     int err;
-    Word_t seqindex;
 
     index[0] = '\0';
     JSLF(jval, *reorderer_array, index);
@@ -347,18 +364,7 @@ static void remove_reorderers(char *liid, Pvoid_t *reorderer_array) {
             continue;
         }
         JSLD(err, *reorderer_array, index);
-
-        seqindex = 0;
-        JLF(pval, reord->pending, seqindex);
-        while (pval) {
-            openli_encoded_result_t *res;
-
-            res = (openli_encoded_result_t *)(*pval);
-            free_encoded_result(res);
-            free(res);
-            JLN(pval, reord->pending, seqindex);
-        }
-        JLFA(err, reord->pending);
+        clean_reorderer(reord);
 
         free(reord->liid);
         free(reord->key);
@@ -438,6 +444,62 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     return 1;
 }
 
+static int session_begin_again(int_reorderer_t *reord,
+        openli_encoded_result_t *res) {
+
+    /* This session never really started, so don't worry about it */
+    if (reord->expectedseqno == 0) {
+        return 0;
+    }
+
+    /* Basically, we are looking for an IRI BEGIN that has been sent
+     * while the session is in the flagged state (i.e. we were recently
+     * told the session was over but haven't removed it fully yet).
+     *
+     * In that case, it is most likely that the BEGIN has been sent as
+     * a result of someone re-adding the intercept with the same static
+     * session ID before the "old" reorderer for that same session key
+     * has been removed.
+     *
+     * It's not necessarily obvious to the user that a session ID should
+     * be changed in this situation, so it is going to happen and we
+     * should probably try to at least do what the user would expect. The LEA
+     * can explain to them later on if the session ID duplication is a
+     * problem...
+     */
+
+    if (res->origreq->type == OPENLI_EXPORT_IPIRI) {
+        openli_ipiri_job_t *job = &(res->origreq->data.ipiri);
+        if (job->iritype == ETSILI_IRI_REPORT &&
+                job->special == OPENLI_IPIRI_STARTWHILEACTIVE) {
+            return 1;
+        }
+        if (job->iritype == ETSILI_IRI_BEGIN) {
+            return 1;
+        }
+    }
+
+    if (res->origreq->type == OPENLI_EXPORT_IPMMIRI) {
+        if (res->origreq->data.ipmmiri.iritype == ETSILI_IRI_BEGIN) {
+            return 1;
+        }
+    }
+
+    if (res->origreq->type == OPENLI_EXPORT_EMAILIRI) {
+        if (res->origreq->data.emailiri.iritype == ETSILI_IRI_BEGIN) {
+            return 1;
+        }
+    }
+
+    if (res->origreq->type == OPENLI_EXPORT_UMTSIRI ||
+            res->origreq->type == OPENLI_EXPORT_EPSIRI) {
+        if (res->origreq->data.mobiri.iritype == ETSILI_IRI_BEGIN) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
@@ -482,6 +544,21 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         *jval = (Word_t)reord;
     } else {
         reord = (int_reorderer_t *)(*jval);
+
+        if (reorderer == &(fwd->intreorderer_iri) && reord->flagged_over) {
+            if (session_begin_again(reord, res)) {
+                /* Session ID is statically defined in OpenLI intercept
+                 * config, and it looks like someone has "restarted" the
+                 * intercept without changing the session ID.
+                 *
+                 * This isn't ideal, but let's try and do the right thing
+                 * here?
+                 */
+                logger(LOG_WARNING, "OpenLI: the session ID '%s' appears to be being reused for multiple intercepts? If you have configured the session ID directly, we recommend using either a new session ID or LIID for each intercept that you add to OpenLI.", reord->key);
+                clean_reorderer(reord);
+                reord->flagged_over = 0;
+            }
+        }
     }
 
     if (res->seqno != reord->expectedseqno) {
