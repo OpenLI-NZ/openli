@@ -547,6 +547,7 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         if (reorderer == &(fwd->intreorderer_iri) && reord->flagged_over) {
             if (session_begin_again(reord, res)) {
+                int_reorderer_t *cc_reord;
                 /* Session ID is statically defined in OpenLI intercept
                  * config, and it looks like someone has "restarted" the
                  * intercept without changing the session ID.
@@ -556,6 +557,13 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
                  */
                 logger(LOG_WARNING, "OpenLI: the session ID '%s' appears to be being reused for multiple intercepts? If you have configured the session ID directly, we recommend using either a new session ID or LIID for each intercept that you add to OpenLI.", reord->key);
                 clean_reorderer(reord);
+                /* Also reset the reordering state for the corresponding CCs */
+                JSLG(jval, fwd->intreorderer_cc, (unsigned char *)res->cinstr);
+                if (jval) {
+                    cc_reord = (int_reorderer_t *)(*jval);
+                    clean_reorderer(cc_reord);
+                    cc_reord->flagged_over = 0;
+                }
                 reord->flagged_over = 0;
             }
         }
