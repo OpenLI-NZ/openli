@@ -691,7 +691,7 @@ static void check_agency_digest_config(coll_recv_t *col,
     char *agencyid = NULL;
     agency_digest_config_t *agdigest = NULL;
     uint8_t reencode_needed = 0;
-    openli_liid_format_t liid_format;
+    openli_liid_format_t liid_format = OPENLI_LIID_FORMAT_ASCII;
 
     if (found->lastseen-found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
         return;
@@ -729,6 +729,7 @@ static void check_agency_digest_config(coll_recv_t *col,
         }
     }
 
+    found->liid_format = liid_format;
     if (reencode_needed) {
         preencode_etsi_for_known_liid(col, found, liid_format);
     }
