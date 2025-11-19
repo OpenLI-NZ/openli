@@ -223,7 +223,7 @@ int encode_templated_ipmmiri(wandder_encoder_t *encoder,
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
                 body->len, NULL, 0,
                 //(uint8_t *)(irijob->content), irijob->contentlen,
-                job) < 0) {
+                job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(encoder, body);
             return -1;
         }

@@ -76,6 +76,7 @@ static void init_mediator_agency(mediator_agency_t *agency,
     agency->disabled_msg = 0;
     agency->handover_retry = fromprov->handover_retry;
     agency->timefmt = fromprov->time_fmt;
+
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
             fromprov->hi2_portstr, HANDOVER_HI2, fromprov->keepalivefreq,
             fromprov->keepalivewait, fromprov->resend_window_kbs);
@@ -829,10 +830,25 @@ int create_agency_thread_timers(lea_thread_state_t *state) {
 static void publish_hi1_notification(lea_thread_state_t *state,
         hi1_notify_data_t *ndata) {
 
-    wandder_encoded_result_t *encoded_hi1 = NULL;
+    openli_encoded_result_t *encoded_hi1 = NULL;
+    liid_map_entry_t *liidmap = NULL;
+    uint8_t *enckey = NULL;
+    size_t enckeylen = 0;
+    payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
     if (!ndata) {
         return;
+    }
+
+    liidmap = lookup_liid_agency_mapping(&(state->active_liids), ndata->liid);
+    if (!liidmap) {
+        goto freehi1;
+    }
+
+    if (liidmap->encryptkey_len > 0) {
+        enckey = liidmap->encryptkey;
+        enckeylen = liidmap->encryptkey_len;
+        encmethod = liidmap->encrypt;
     }
 
     if (state->agency.hi2->ho_state->encoder == NULL) {
@@ -844,7 +860,8 @@ static void publish_hi1_notification(lea_thread_state_t *state,
     /* encode into ETSI format using libwandder */
     encoded_hi1 = encode_etsi_hi1_notification(
             state->agency.hi2->ho_state->encoder, ndata, state->operator_id,
-            state->short_operator_id, state->agency.timefmt);
+            state->short_operator_id, state->agency.timefmt,
+            &(state->encryptstate), encmethod, enckey, enckeylen);
     if (encoded_hi1 == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to construct HI1 Notification message for %s:%s", ndata->agencyid, ndata->liid);
         goto freehi1;
@@ -852,15 +869,12 @@ static void publish_hi1_notification(lea_thread_state_t *state,
 
     /* push onto the HI2 export buffer */
     if (append_etsipdu_to_buffer(&(state->agency.hi2->ho_state->buf),
-            encoded_hi1->encoded, encoded_hi1->len, 0) == 0) {
+            encoded_hi1->msgbody->encoded, encoded_hi1->msgbody->len, 0) == 0) {
         if (state->agency.hi2->disconnect_msg == 0) {
             logger(LOG_INFO,
                     "OpenLI Mediator: unable to enqueue HI1 Notification PDU for %s:%s", ndata->agencyid, ndata->liid);
         }
     }
-
-    wandder_release_encoded_result(state->agency.hi2->ho_state->encoder,
-            encoded_hi1);
 
 freehi1:
     /* free all the malloc'd memory for the HI1 notification */
@@ -881,6 +895,15 @@ freehi1:
     }
     free(ndata);
 
+    if (encoded_hi1) {
+        if (encoded_hi1->msgbody) {
+            if (encoded_hi1->msgbody->encoded) {
+                free(encoded_hi1->msgbody->encoded);
+            }
+            free(encoded_hi1->msgbody);
+        }
+        free(encoded_hi1);
+    }
 }
 
 /** Read and act upon any messages in the message queue for an LEA send
@@ -1226,6 +1249,8 @@ int mediator_start_agency_thread(mediator_lea_t *medleas, liagency_t *lea) {
     found->epoll_fd = epoll_create1(0);
     found->handover_id = medleas->next_handover_id;
     found->lea = lea;
+
+    memset(&(found->encryptstate), 0, sizeof(encrypt_encode_state_t));
 
     /* Increment by 2 to account for HI2 and HI3 */
     medleas->next_handover_id += 2;

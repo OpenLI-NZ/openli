@@ -29,6 +29,83 @@
 #include "etsili_core.h"
 #include "logger.h"
 
+void free_encoded_header_templates(Pvoid_t *headers) {
+    PWord_t pval;
+    Word_t index = 0;
+    int rcint;
+
+    JLF(pval, *headers, index);
+    while (pval) {
+        encoded_header_template_t *tplate;
+
+        tplate = (encoded_header_template_t *)(*pval);
+        if (tplate->header) {
+            free(tplate->header);
+        }
+        free(tplate);
+        JLN(pval, *headers, index);
+    }
+    JLFA(rcint, *headers);
+}
+
+encoded_header_template_t *encode_templated_psheader(
+        wandder_encoder_t *encoder, Pvoid_t *headermap,
+        wandder_encode_job_t *preencoded, uint32_t seqno,
+        struct timeval *tv, int64_t cin, uint32_t cept_version,
+        openli_timestamp_encoding_fmt_t timefmt) {
+
+    uint8_t seqlen, tvsec_len, tvusec_len;
+    uint32_t key = 0;
+    PWord_t pval;
+    encoded_header_template_t *tplate = NULL;
+
+    if (!tv || !encoder || !headermap) {
+        return NULL;
+    }
+
+    if (tv->tv_sec == 0) {
+        gettimeofday(tv, NULL);
+    }
+    seqlen = DERIVE_INTEGER_LENGTH(seqno);
+    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        tvsec_len = DERIVE_INTEGER_LENGTH(tv->tv_sec);
+        tvusec_len = DERIVE_INTEGER_LENGTH(tv->tv_usec);
+
+        key = (cept_version << 24) + (seqlen << 16) + (tvsec_len << 8) +
+                tvusec_len;
+    } else if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        // all libwandder generalized timestamps are encoded with the
+        // same length
+        key = (cept_version << 24) + (seqlen << 16);
+    } else {
+        return NULL;
+    }
+
+    JLI(pval, *headermap, key);
+    if (*pval == 0) {
+        tplate = calloc(1, sizeof(encoded_header_template_t));
+
+        if (etsili_create_header_template(encoder, preencoded, cin,
+                (int64_t)seqno, tv, tplate, timefmt) < 0) {
+            free(tplate);
+            return NULL;
+        }
+
+        *pval = (Word_t)tplate;
+
+    } else {
+        tplate = (encoded_header_template_t *)(*pval);
+
+        if (etsili_update_header_template(tplate, (int64_t)seqno, tv,
+                timefmt) < 0) {
+            return NULL;
+        }
+    }
+
+    return tplate;
+}
+
+
 encoded_global_template_t *lookup_global_template(Pvoid_t *saved_templates,
         uint32_t key, uint8_t *is_new) {
 

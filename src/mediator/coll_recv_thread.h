@@ -640,10 +640,6 @@ void clear_digest_key_map(col_known_liid_t *known);
 payload_encryption_method_t check_encryption_requirements(
         mediator_collector_config_t *config, char *liid,
         uint8_t *enckey, size_t *enckeylen);
-uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
-        wandder_etsispec_t *etsidecoder,
-        uint8_t *fullrec, uint16_t reclen, uint8_t *enckey,
-        size_t enckeylen);
 
 void handle_lea_withdrawal_within_integrity_check_state(
         integrity_check_state_t **state, char *agencyid);
