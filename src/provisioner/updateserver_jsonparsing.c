@@ -366,7 +366,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 	if (is_new) {
         common->tostart_time = 0;
         common->toend_time = 0;
-        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
         timers = calloc(1, sizeof(prov_intercept_data_t));
         timers->start_timer = NULL;
         timers->end_timer = NULL;
