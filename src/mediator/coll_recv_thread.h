@@ -141,6 +141,9 @@ typedef struct col_known_liid {
     /** The length of the LIID string */
     int liidlen;
 
+    /** The format of the LIID (binary vs string) */
+    openli_liid_format_t liid_format;
+
     /** Timestamp when this LIID was last seen */
     time_t lastseen;
 
@@ -243,6 +246,7 @@ struct integrity_check_state {
 
     char *key;
     char *liid;
+    openli_liid_format_t liid_format;
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
 
