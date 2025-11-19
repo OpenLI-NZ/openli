@@ -360,7 +360,11 @@ int create_ipiri_job_from_vendor(collector_sync_t *sync,
     openli_export_recv_t *irimsg;
 
     irimsg = _create_ipiri_job_basic(ipint, ipint->username, cin);
-    irimsg->data.ipiri.iritype = iritype;
+    if (iritype == OPENLI_IPIRI_ENDWHILEACTIVE) {
+        irimsg->data.ipiri.iritype = ETSILI_IRI_END;
+    } else if (iritype == OPENLI_IPIRI_STARTWHILEACTIVE) {
+        irimsg->data.ipiri.iritype = ETSILI_IRI_REPORT;
+    }
     irimsg->data.ipiri.customparams = NULL;
     irimsg->data.ipiri.special = iritype;
 
