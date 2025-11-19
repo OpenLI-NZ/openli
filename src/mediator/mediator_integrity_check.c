@@ -166,6 +166,7 @@ static inline void populate_integrity_check_pshdr_data(
 
     hdrdata->liid = ics->liid;
     hdrdata->liid_len = strlen(ics->liid);
+    hdrdata->liid_format = ics->liid_format;
     if (ics->agency->config->agencycc &&
             strlen(ics->agency->config->agencycc) == 2) {
         hdrdata->authcc = ics->agency->config->agencycc;
@@ -342,6 +343,7 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->cin = cin;
         found->msgtype = msgtype;
         found->liid = strdup(known->liid);
+        found->liid_format = known->liid_format;
         found->hashed_seqnos = calloc(32, sizeof(int64_t));
         found->signing_seqnos = calloc(16, sizeof(int64_t));
         found->seqno_array_size = 32;
@@ -677,7 +679,7 @@ int send_integrity_check_signing_request(coll_recv_t *col,
 
     ics_sign_request_t *job = NULL;
 
-    if (ics->sign_timer->fd != -1) {
+    if (ics->sign_timer && ics->sign_timer->fd != -1) {
         halt_mediator_timer(ics->sign_timer);
     }
 

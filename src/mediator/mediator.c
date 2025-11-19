@@ -1055,8 +1055,12 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         added->liid = strdup(liid);
         added->liid_format = liidfmt;
         added->agencyid = strdup(agencyid);
-        memset(added->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
-        added->encryptkey_len = 0;       // not required in LEA threads
+        if (encryptlen > 0) {
+            memcpy(added->encryptkey, encryptkey, encryptlen);
+        } else {
+            memset(added->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+        }
+        added->encryptkey_len = encryptlen;
         added->encrypt = encmethod;
 
         memset(&msg, 0, sizeof(msg));

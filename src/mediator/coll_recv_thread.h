@@ -141,6 +141,9 @@ typedef struct col_known_liid {
     /** The length of the LIID string */
     int liidlen;
 
+    /** The format of the LIID (binary vs string) */
+    openli_liid_format_t liid_format;
+
     /** Timestamp when this LIID was last seen */
     time_t lastseen;
 
@@ -243,6 +246,7 @@ struct integrity_check_state {
 
     char *key;
     char *liid;
+    openli_liid_format_t liid_format;
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
 
@@ -636,10 +640,6 @@ void clear_digest_key_map(col_known_liid_t *known);
 payload_encryption_method_t check_encryption_requirements(
         mediator_collector_config_t *config, char *liid,
         uint8_t *enckey, size_t *enckeylen);
-uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
-        wandder_etsispec_t *etsidecoder,
-        uint8_t *fullrec, uint16_t reclen, uint8_t *enckey,
-        size_t enckeylen);
 
 void handle_lea_withdrawal_within_integrity_check_state(
         integrity_check_state_t **state, char *agencyid);
