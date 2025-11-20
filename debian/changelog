@@ -1,4 +1,4 @@
-openli (1.1.16-1~internaltest01) unstable; urgency=medium
+openli (1.1.16-1) unstable; urgency=medium
 
   * Collectors may now act as an explicit destination for a vendor mirror that
     encapsulates target traffic inside a UDP datagram (e.g. FlowTapLite,
