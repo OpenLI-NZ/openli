@@ -1,3 +1,30 @@
+openli (1.1.16-1~internaltest01) unstable; urgency=medium
+
+  * Collectors may now act as an explicit destination for a vendor mirror that
+    encapsulates target traffic inside a UDP datagram (e.g. FlowTapLite,
+    Nokia mirroring, JMirror, etc.). Traffic arriving on the destination
+    socket will automatically be treated as belonging to an IP intercept
+    that is associated with that destination.
+  * Provisioner: support encryption keys and LIIDs that contain binary octets
+    which cannot be expressed using ASCII characters.
+  * Fixed bug where all CC sequencing tracking jobs would be delivered to
+    the first sequence tracking thread, rather than being hashed amongst
+    the available threads.
+  * REST API: fix bug where encryption key formatting was being enforced
+    even when encryption was disabled for the intercept.
+  * Collector: resolve missing IRIs when an intercept with a user-defined
+    session ID is removed and re-added without modifying the session ID.
+  * REST API: fix bug where intercepts would not inherit their encryption
+    settings from the destination agency if created without explicit
+    encryption configuration.
+  * Mediator: fixed crash when an integrity check timer fired for an
+    intercept that is no longer active.
+  * Added support for encrypting HI1 Operations messages -- if an intercept
+    configured to use encryption, then any related HI1 Operations messages
+    will also be encrypted.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 20 Nov 2025 15:23:50 +1300
+
 openli (1.1.15-1) unstable; urgency=medium
 
   * Collector: fix buffer overflow bug in GTP parsing code.
