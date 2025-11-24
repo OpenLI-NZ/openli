@@ -1196,6 +1196,43 @@ static int respond_mediator_auth(provision_state_t *state,
     return 0;
 }
 
+static int process_udp_sink_announcement(provision_state_t *state,
+        prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
+
+    char *listenport = NULL;
+    char *listenaddr = NULL;
+    char *identifier = NULL;
+    uint64_t ts = 0;
+
+    if (decode_udp_sink(msgbody, msglen, &listenaddr, &listenport,
+            &identifier, &ts) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error decoding UDP sink announcement from collector %s -- ignoring", col->identifier);
+        return -1;
+    }
+
+    if (listenport != NULL && listenaddr != NULL && ts != 0 &&
+            identifier != NULL) {
+
+        if (update_udp_sink_row(state, col, listenaddr, listenport, identifier,
+                ts) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while updating UDP sink information for collector %s in client DB -- ignoring", col->identifier);
+            return -1;
+        }
+    }
+
+    if (listenport) {
+        free(listenport);
+    }
+    if (listenaddr) {
+        free(listenaddr);
+    }
+    if (identifier) {
+        free(identifier);
+    }
+
+    return 0;
+}
+
 static int process_x2x3_listener_announcement(provision_state_t *state,
         prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
 
@@ -1209,17 +1246,19 @@ static int process_x2x3_listener_announcement(provision_state_t *state,
         return -1;
     }
 
-    if (listenport == NULL || listenaddr == NULL || ts == 0) {
-        return 0;
+    if (listenport != NULL && listenaddr != NULL && ts != 0) {
+        if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
+            return -1;
+        }
     }
 
-    if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
-        logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
-        return -1;
+    if (listenport) {
+        free(listenport);
     }
-
-    free(listenport);
-    free(listenaddr);
+    if (listenaddr) {
+        free(listenaddr);
+    }
 
     return 0;
 }
@@ -1252,6 +1291,10 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 break;
             case OPENLI_PROTO_X2X3_LISTENER:
                 process_x2x3_listener_announcement(state,
+                        (prov_collector_t *)(cs->parent), msgbody, msglen);
+                break;
+            case OPENLI_PROTO_ADD_UDPSINK:
+                process_udp_sink_announcement(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
             case OPENLI_PROTO_COLLECTOR_AUTH:

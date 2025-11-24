@@ -538,10 +538,11 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
 json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
-    json_object *jarray, *jobj, *x2x3obj;
+    json_object *jarray, *jobj, *x2x3obj, *sinkobj;
     known_client_t *cols;
-    size_t colcount, x2x3count, i, j;
+    size_t colcount, x2x3count, sinkcount, i, j;
     x2x3_listener_t *x2x3;
+    collector_udp_sink_t *sinks;
 
     cols = fetch_all_collector_clients(state, &colcount);
     if (!cols || colcount == 0) {
@@ -552,12 +553,16 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
     for (i = 0; i < colcount; i++) {
         jobj = convert_client_to_json(&(cols[i]));
         x2x3obj = json_object_new_array();
+        sinkobj = json_object_new_array();
 
         if (cols[i].colname) {
             x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
                     cols[i].colname);
+            sinks = fetch_udp_sinks_for_collector(state, &sinkcount,
+                    cols[i].colname);
         } else {
             x2x3 = NULL;
+            sinks = NULL;
         }
         if (x2x3) {
             for (j = 0; j < x2x3count; j++) {
@@ -578,7 +583,30 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
             }
             free(x2x3);
         }
+        if (sinks) {
+            for (j = 0; j < sinkcount; j++) {
+                json_object *base, *ipaddr, *port, *lastseen, *ident;
+                base = json_object_new_object();
+
+                ipaddr = json_object_new_string(sinks[j].ipaddr);
+                port = json_object_new_string(sinks[j].port);
+                lastseen = openli_json_object_new_uint64(sinks[j].lastseen);
+                ident = json_object_new_string(sinks[j].identifier);
+
+                json_object_object_add(base, "ipaddress", ipaddr);
+                json_object_object_add(base, "port", port);
+                json_object_object_add(base, "identifier", ident);
+                json_object_object_add(base, "lastseen", lastseen);
+
+                free(sinks[j].ipaddr);
+                free(sinks[j].port);
+                free(sinks[j].identifier);
+                json_object_array_add(sinkobj, base);
+            }
+            free(sinks);
+        }
         json_object_object_add(jobj, "x2x3listeners", x2x3obj);
+        json_object_object_add(jobj, "udpsinks", sinkobj);
         json_object_array_add(jarray, jobj);
         if (cols[i].colname) {
             free((void *)(cols[i].colname));

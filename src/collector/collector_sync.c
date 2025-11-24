@@ -3207,6 +3207,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             if ((tv.tv_sec % 10) == 0) {
                 x_input_sync_t *xpush, *xtmp;
+                colsync_udp_sink_t *sink, *sinktmp;
                 HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
 
                     if (xpush->listenaddr == NULL ||
@@ -3219,6 +3220,19 @@ int sync_thread_main(collector_sync_t *sync) {
                         logger(LOG_INFO,"OpenLI: collector is unable to queue X2/X3 listener update message (%s) for provisioner.", xpush->identifier);
                     }
                 }
+                pthread_mutex_lock(&(sync->glob->mutex));
+                HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+                    if (sink->listenaddr == NULL || sink->identifier == NULL ||
+                            sink->listenport == NULL) {
+                        continue;
+                    }
+                    if (push_udp_sink_onto_net_buffer(sync->outgoing,
+                            sink->listenaddr, sink->listenport,
+                            sink->identifier, (uint64_t)tv.tv_sec) < 0) {
+                        logger(LOG_INFO,"OpenLI: collector is unable to queue UDP sink update message (%s) for provisioner.", sink->key);
+                    }
+                }
+                pthread_mutex_unlock(&(sync->glob->mutex));
                 sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
             }
             do {

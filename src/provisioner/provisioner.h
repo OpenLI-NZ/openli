@@ -89,6 +89,15 @@ typedef struct x2x3_listener {
     time_t lastseen;
 } x2x3_listener_t;
 
+/** Describes a single UDP sink that is available on a collector
+ */
+typedef struct col_udp_sink {
+    char *ipaddr;
+    char *port;
+    char *identifier;
+    time_t lastseen;
+} collector_udp_sink_t;
+
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
     /** The event type -- one of the PROV_EPOLL_* values listed below */
@@ -547,6 +556,9 @@ void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
+int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
+       char *listenaddr, char *listenport, char *identifier,
+       uint64_t timestamp);
 int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
        char *listenaddr, char *listenport, uint64_t timestamp);
 void update_all_client_rows(provision_state_t *state);
@@ -556,6 +568,8 @@ known_client_t *fetch_all_mediator_clients(provision_state_t *state,
         size_t *clientcount);
 x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         size_t *listenercount, const char *collectorid);
+collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
+        size_t *sinkcount, const char *collectorid);
 int remove_collector_from_clientdb(provision_state_t *state, const char *idstr);
 #endif
 

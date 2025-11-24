@@ -252,6 +252,50 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+#define UDP_SINK_BODY_LEN(addr, port, identifier) \
+    (strlen(addr) + strlen(port) + strlen(identifier) + sizeof(uint64_t) + \
+    (4 * 4))
+
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
+        char *identifier, uint64_t ts) {
+
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = UDP_SINK_BODY_LEN(addr, port, identifier);
+    // another sneaky re-use of an existing message type...
+    populate_header(&hdr, OPENLI_PROTO_ADD_UDPSINK, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    /* may as well re-use these field types */
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
+            strlen(addr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
+            strlen(port)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
+            (uint8_t *)identifier, strlen(identifier)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
 #define X2X3_BODY_LEN(addr, port) \
     (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
 
@@ -2890,6 +2934,41 @@ int decode_default_email_compression_announcement(uint8_t *msgbody,
         msgbody += (vallen + 4);
     }
     return 0;
+}
+
+int decode_udp_sink(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, char **identifier, uint64_t *ts) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_CORESERVER_IP) {
+            DECODE_STRING_FIELD(*addr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
+            DECODE_STRING_FIELD(*port, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER) {
+            DECODE_STRING_FIELD(*identifier, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
+            (*ts) = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received UDP sink announcement: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
+
 }
 
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,

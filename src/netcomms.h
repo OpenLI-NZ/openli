@@ -295,6 +295,8 @@ int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype, char *name);
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, char *identifier, uint64_t ts);
 int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
@@ -379,6 +381,8 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, uint8_t *encryptkey, size_t *encryptlen,
         payload_encryption_method_t *method,
         openli_liid_format_t *liidformat);
+int decode_udp_sink(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, char **identifier, uint64_t *ts);
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, uint64_t *ts);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
