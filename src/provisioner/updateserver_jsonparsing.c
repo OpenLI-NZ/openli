@@ -2436,9 +2436,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
                             ipint->common.liid, update_failure_page_end);
                     goto cepterr;
                 }
+                HASH_DELETE(hh, ipint->udp_sinks, sink);
                 HASH_ADD_KEYPTR(hh, found->udp_sinks, sink->key,
                         strlen(sink->key), sink);
-                HASH_DELETE(hh, ipint->udp_sinks, sink);
                 sink->awaitingconfirm = 0;
             }
         }
