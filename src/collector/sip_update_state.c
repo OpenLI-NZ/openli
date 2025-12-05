@@ -352,7 +352,7 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
     }
 
 
-    /* A bit of an explanation of invitecseq_stack...
+    /* A bit of an explanation of invitecseq, inviterport, inviter
      *
      * This is mainly dedicated to resolving issues that arise
      * when we see both sides of a proxied SIP session (i.e.
@@ -373,13 +373,12 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
      *  1. always track the RTP stream for A->B session only.
      *  2. don't screw up if we see a reversed INVITE.
      *
-     * I'm doing this by counting the number of times I see a
-     * specific INVITE cseq, and reducing that count whenever I
-     * see a 183 or 200 with the response SDP info. When the count
-     * gets down to zero, that response must belong to the initial
-     * A->B INVITE.
+     * I'm doing this by retaining the source IP address and port of
+     * the initial INVITE for any given cseq. Then, when I see the
+     * a 183 or 200 with that IP/port pair as the destination then
+     * that response must belong to the initial A->B INVITE.
      *
-     * For subsequent INVITEs, the counting only starts when the initial
+     * For subsequent INVITEs, we only pay attention when the initial
      * inviting IP address was involved (either as a sender or receiver)
      * so if a reverse INVITE from C->B won't be looked at for RTP stream
      * tracking purposes until it is proxied to the B->A link.
@@ -394,17 +393,14 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
         if (dir != 0xff && thisrtp->invitecseq == NULL) {
             // this is the first INVITE for the call
             thisrtp->invitecseq = strdup(invitecseq);
-            thisrtp->invitecseq_stack = 1;
         } else if (thisrtp->invitecseq != NULL &&
                 strcmp(invitecseq, thisrtp->invitecseq) == 0) {
             // this is a copy of the original INVITE
-            thisrtp->invitecseq_stack ++;
         } else if (dir != 0xff && thisrtp->invitecseq != NULL) {
             // this is a subsequent INVITE
             free(thisrtp->invitecseq);
             thisrtp->invitecseq = NULL;
             thisrtp->invitecseq = strdup(invitecseq);
-            thisrtp->invitecseq_stack = 1;
         }
     }
 
@@ -570,7 +566,7 @@ static int update_rtp_stream(rtpstreaminf_t *rtp, char *ipstr, char *portstr,
         }
         rtp->ai_family = family;
         rtp->targetaddr = saddr;
-        if (mstream->targetport != 0 && port != mstream->targetport) {
+        if (port != mstream->targetport) {
             changed = 1;
         }
         mstream->targetport = (uint16_t)port;
@@ -587,7 +583,7 @@ static int update_rtp_stream(rtpstreaminf_t *rtp, char *ipstr, char *portstr,
         }
         rtp->ai_family = family;
         rtp->otheraddr = saddr;
-        if (mstream->otherport != 0 && port != mstream->otherport) {
+        if (port != mstream->otherport) {
             changed = 1;
         }
         mstream->otherport = (uint16_t)port;
@@ -1003,7 +999,7 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
         if (mediatype == NULL) {
             goto responseover;
         }
-        if (dir != 0xff && thisrtp->invitecseq_stack == 1) {
+        if (dir == 1) {
             r = extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
                         dir);
             if (r < 0) {
@@ -1013,12 +1009,13 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
                 }
                 sipworker->sipparser->badsip = 1;
             }
-        }
-        if (thisrtp->invitecseq_stack >= 1) {
-            thisrtp->invitecseq_stack --;
-            if (sip_worker_announce_rtp_streams(sipworker, thisrtp)) {
-                free(thisrtp->invitecseq);
-                thisrtp->invitecseq = NULL;
+            if (thisrtp->changed) {
+                if (sip_worker_announce_rtp_streams(sipworker, thisrtp)) {
+                    if (thisrtp->invitecseq) {
+                        free(thisrtp->invitecseq);
+                        thisrtp->invitecseq = NULL;
+                    }
+                }
             }
         }
     } else if (thisrtp->byecseq && strcmp(thisrtp->byecseq, cseqstr) == 0 &&
