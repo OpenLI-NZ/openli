@@ -706,6 +706,7 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
     if (extract_sip_identities(sipworker->sipparser, &all_identities,
             sipworker->debug.log_bad_sip) < 0) {
         sipworker->debug.log_bad_sip = 0;
+        release_openli_sip_identity_set(&all_identities);
         return -1;
     }
 

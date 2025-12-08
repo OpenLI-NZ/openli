@@ -129,7 +129,7 @@ encoded_global_template_t *lookup_global_template(Pvoid_t *saved_templates,
 }
 
 void clear_global_templates(Pvoid_t *saved_templates) {
-    Word_t indexint;
+    Word_t indexint = 0;
     PWord_t pval;
     encoded_global_template_t *t;
     int rcint;

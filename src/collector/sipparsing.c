@@ -738,7 +738,6 @@ char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
     char *semicolon;
     osip_uri_t *uri;
     osip_to_t *to = osip_message_get_to(parser->osip);
-    char *buf;
 
     if (to == NULL) {
         return NULL;
@@ -758,7 +757,6 @@ char *get_sip_to_uri_username(openli_sip_parser_t *parser) {
      * the username and leave the realm option blank.
      */
     if ((uriuser = osip_uri_get_username(uri)) == NULL) {
-        osip_uri_to_str(uri, &buf);
         uriuser = osip_uri_get_host(uri);
     }
 
