@@ -296,6 +296,7 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
     sip_saved_redirection_t *rd;
     struct timeval tv;
     int i;
+    uint32_t count = 0;
 
     gettimeofday(&tv, NULL);
     callid[0] = '\0';
@@ -303,6 +304,9 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
 
     while (pval) {
         rd = (sip_saved_redirection_t *)(*pval);
+        fprintf(stderr, "     %p %u -- %s %lu %lu\n", sipworker, count,
+                rd->callid, tv.tv_sec - rd->last_packet, rd->redir_mask);
+        count++;
 
         if (rd->redir_mask != 0) {
             /* a worker has claimed this, or at least not all workers have
@@ -311,19 +315,21 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
             continue;
         }
 
-        if (tv.tv_sec - rd->last_packet < 300) {
+        if (tv.tv_sec - rd->last_packet < 120) {
             /* 5 minutes is more than long enough to wait */
             JSLN(pval, sipworker->redir_data.redirections, callid);
             continue;
         }
 
         JSLD(rc, sipworker->redir_data.redirections, callid);
-        for (i = 0; i < sipworker->sipworker_threads; i++) {
-            if (i == sipworker->workerid) {
-                continue;
+        if (rd->receive_status == 0) {
+            for (i = 0; i < sipworker->sipworker_threads; i++) {
+                if (i == sipworker->workerid) {
+                    continue;
+                }
+                send_sip_redirect_instruction(sipworker, REDIRECTED_SIP_PURGE,
+                        rd->callid, i);
             }
-            send_sip_redirect_instruction(sipworker, REDIRECTED_SIP_PURGE,
-                    rd->callid, i);
         }
         free(rd->callid);
         free(rd);
