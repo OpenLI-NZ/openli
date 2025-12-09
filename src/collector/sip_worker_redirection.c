@@ -296,7 +296,6 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
     sip_saved_redirection_t *rd;
     struct timeval tv;
     int i;
-    uint32_t count = 0;
 
     gettimeofday(&tv, NULL);
     callid[0] = '\0';
@@ -304,9 +303,6 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
 
     while (pval) {
         rd = (sip_saved_redirection_t *)(*pval);
-        fprintf(stderr, "     %p %u -- %s %lu %lu\n", sipworker, count,
-                rd->callid, tv.tv_sec - rd->last_packet, rd->redir_mask);
-        count++;
 
         if (rd->redir_mask != 0) {
             /* a worker has claimed this, or at least not all workers have
