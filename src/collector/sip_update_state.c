@@ -1220,8 +1220,8 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
          */
         struct timeval tv;
         int i;
+        char *cseq = NULL, *ptr = NULL;
         tv.tv_sec = 0;
-
         pthread_rwlock_rdlock(sipworker->shared_mutex);
         if (sipworker->shared->disable_sip_redirect) {
             pthread_rwlock_unlock(sipworker->shared_mutex);
@@ -1242,7 +1242,30 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
 
+        /* Don't bother forwarding OPTIONS or REGISTER messages -- they
+         * should definitely be using the same 5-tuple for both directions
+         * and, even if they didn't, the amount of work we'd be doing to
+         * move these packets around far outweighs any benefit from it
+         */
+        cseq = get_sip_cseq(sipworker->sipparser);
+        ptr = strtok(cseq, " ");
+        if (ptr == NULL) {
+            free(cseq);
+            goto sipgiveup;
+        }
+        ptr = strtok(NULL, " ");
+        if (ptr == NULL) {
+            free(cseq);
+            goto sipgiveup;
+        }
+
+        if (strcasecmp(ptr, "OPTIONS") == 0 || strcasecmp(ptr, "REGISTER") == 0)
+        {
+            free(cseq);
+            goto sipgiveup;
+        }
         redirect_sip_worker_packets(sipworker, callid, pkts, pkt_cnt);
+        free(cseq);
     }
 
 sipgiveup:
