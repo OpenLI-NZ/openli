@@ -215,7 +215,14 @@ static void convert_commonintercept_to_json(json_object *jobj,
         }
     }
 
-    liid = json_object_new_string(common->liid);
+    if (common->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        char prepended[128];
+        snprintf(prepended, 128, "0x%s", common->liid);
+        liid = json_object_new_string(prepended);
+
+    } else {
+        liid = json_object_new_string(common->liid);
+    }
     authcc = json_object_new_string(common->authcc);
     delivcc = json_object_new_string(common->delivcc);
     agencyid = json_object_new_string(common->targetagency);
