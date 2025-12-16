@@ -297,7 +297,7 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
         sink = calloc(1, sizeof(intercept_udp_sink_t));
         sink->direction = ETSI_DIR_INDETERMINATE;
         sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
-        sink->cin = 1;
+        sink->cin = 0;
 
         for (pair = node->data.mapping.pairs.start;
                 pair < node->data.mapping.pairs.top; pair++) {
@@ -1258,13 +1258,6 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 continue;
             }
 
-            if (newcept->common.xid_count > 0) {
-                logger(LOG_INFO, "OpenLI: invalid IP intercept configuration for '%s' -- intercepts using XIDs cannot be captured using a UDP sink",
-                        newcept->common.liid);
-                logger(LOG_INFO, "OpenLI: disabling UDP sink configuration for this intercept");
-                remove_all_intercept_udp_sinks(newcept);
-                newcept->udp_sinks = NULL;
-            }
         }
 
 		if (newcept->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&

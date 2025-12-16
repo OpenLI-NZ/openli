@@ -305,7 +305,9 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
             json_object_object_add(sinkobj, "listenport", port);
             json_object_object_add(sinkobj, "encapsulation", encap);
             json_object_object_add(sinkobj, "direction", dir);
-            json_object_object_add(sinkobj, "sessionid", cin);
+            if (sink->cin > 0) {
+                json_object_object_add(sinkobj, "sessionid", cin);
+            }
 
             if (sink->sourcehost) {
                 srchost = json_object_new_string(sink->sourcehost);

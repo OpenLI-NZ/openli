@@ -404,6 +404,10 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
                 local->dest_mediator, skipptr, iplen, tv,
                 OPENLI_EXPORT_RAW_CC);
     } else {
+        if (cin == 0) {
+            // no useful CIN was configured, just use '1' in its place
+            cin = 1;
+        }
         job = create_ipcc_job_from_ipcontent(skipptr, iplen,
                 local->expectedliid, cin, dir, local->dest_mediator);
     }
