@@ -22,8 +22,16 @@ openli (1.1.16-1) unstable; urgency=medium
   * Added support for encrypting HI1 Operations messages -- if an intercept
     configured to use encryption, then any related HI1 Operations messages
     will also be encrypted.
+  * SIP: fixed bug where a collector would start dropping many packets if
+    multiple SIP worker threads were used.
+  * SIP: fixed bug where calls would not be intercepted if the INVITE is
+    retransmitted due to a lack of response from the recipient.
+  * SIP: improved performance of worker threads by preventing REGISTER and
+    OPTIONS responses from being subject to redirection to other workers.
+  * SIP: fixed memory leak if the parser is unable to extract a valid
+    username from a REGISTER or INVITE message.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 20 Nov 2025 15:23:50 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 16 Dec 2025 15:36:15 +1300
 
 openli (1.1.15-1) unstable; urgency=medium
 
