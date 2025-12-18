@@ -2821,27 +2821,29 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    if (modified.encryptkey_len != 0xffffffff &&
-            modified.encryptkey_len != found->ag->encryptkey_len) {
-        changed = 1;
-        encryptchanged = 1;
-        if (modified.encryptkey_len > 0) {
+    if (modified.encryptkey_len != 0xffffffff) {
+        if (modified.encryptkey_len != found->ag->encryptkey_len) {
+            changed = 1;
+            encryptchanged = 1;
+            if (modified.encryptkey_len > 0) {
+                memcpy(found->ag->encryptkey, modified.encryptkey,
+                        modified.encryptkey_len);
+            }
+            if (modified.encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                memset(found->ag->encryptkey + modified.encryptkey_len, 0,
+                       OPENLI_MAX_ENCRYPTKEY_LEN - modified.encryptkey_len);
+            }
+            found->ag->encryptkey_len = modified.encryptkey_len;
+        } else if (found->ag->encryptkey_len > 0 &&
+                modified.encryptkey_len > 0 &&
+                memcmp(found->ag->encryptkey, modified.encryptkey,
+                        modified.encryptkey_len)) {
+            // new key, same length as before but different bytes
+            changed = 1;
+            encryptchanged = 1;
             memcpy(found->ag->encryptkey, modified.encryptkey,
                     modified.encryptkey_len);
         }
-        if (modified.encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
-            memset(found->ag->encryptkey + modified.encryptkey_len, 0,
-                   OPENLI_MAX_ENCRYPTKEY_LEN - modified.encryptkey_len);
-        }
-        found->ag->encryptkey_len = modified.encryptkey_len;
-    } else if (found->ag->encryptkey_len > 0 && modified.encryptkey_len > 0 &&
-            memcmp(found->ag->encryptkey, modified.encryptkey,
-                    modified.encryptkey_len)) {
-        // new key, same length as before but different bytes
-        changed = 1;
-        encryptchanged = 1;
-        memcpy(found->ag->encryptkey, modified.encryptkey,
-                modified.encryptkey_len);
     }
 
     // check for change in encryption key first, so we can set the
