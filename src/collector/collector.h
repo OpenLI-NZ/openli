@@ -73,6 +73,7 @@ enum {
     OPENLI_PUSH_UPDATE_VENDMIRROR_INTERCEPT=15,
     OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT=16,
     OPENLI_PUSH_UPDATE_VOIPINTERCEPT=17,
+    OPENLI_PUSH_HUP_RELOAD=18,
 };
 
 enum {
@@ -275,6 +276,8 @@ typedef struct colthread_local {
      */
     coreserver_t *pop3servers;
 
+    coreserver_fast_filter_v4_t *cs_v4_fast_filter;
+
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
     patricia_tree_t *dynamicv6ranges;
@@ -367,6 +370,13 @@ int register_sync_queues(sync_thread_global_t *glob,
         libtrace_thread_t *parent);
 void deregister_sync_queues(sync_thread_global_t *glob,
         libtrace_thread_t *t);
+
+
+// implemented in collector.c
+int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
+        uint8_t ismirror);
+void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
+        uint8_t ismirror);
 
 
 #endif

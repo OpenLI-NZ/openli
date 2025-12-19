@@ -177,8 +177,151 @@ static void log_collector_stats(collector_global_t *glob) {
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
 }
 
+static void free_coreserver_fast_filters(colthread_local_t *loc) {
+    coreserver_fast_filter_v4_t *fast, *tmp;
+
+    HASH_ITER(hh, loc->cs_v4_fast_filter, fast, tmp) {
+        HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+        free(fast);
+    }
+
+}
+
+static int fast_coreserver_check(colthread_local_t *loc, packet_info_t *pinfo) {
+    coreserver_fast_filter_v4_t *fast;
+
+    if (pinfo->family == AF_INET) {
+        struct sockaddr_in *sa;
+        sa = (struct sockaddr_in *)(&(pinfo->destip));
+
+        HASH_FIND(hh, loc->cs_v4_fast_filter, &(sa->sin_addr.s_addr),
+                sizeof(uint32_t), fast);
+        if (fast) {
+            return 1;
+        }
+    }
+
+    return 0;
+
+}
+
+int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
+        uint8_t ismirror) {
+    coreserver_fast_filter_v4_t *fast;
+
+    if (cs->info == NULL) {
+        if (prepare_coreserver(cs) < 0) {
+            return -1;
+        }
+    }
+    if (cs->info->ai_family == AF_INET) {
+        HASH_FIND(hh, loc->cs_v4_fast_filter,
+                &(CS_TO_V4(cs)->sin_addr.s_addr), sizeof(uint32_t), fast);
+        if (fast) {
+            fast->refcount ++;
+            if (ismirror) {
+                fast->mirrorrefs ++;
+            }
+            return 0;
+        }
+        fast = calloc(1, sizeof(coreserver_fast_filter_v4_t));
+        fast->server_ipv4 = CS_TO_V4(cs)->sin_addr.s_addr;
+        fast->refcount = 1;
+        if (ismirror) {
+            fast->mirrorrefs = 1;
+        } else {
+            fast->mirrorrefs = 0;
+        }
+
+        HASH_ADD_KEYPTR(hh, loc->cs_v4_fast_filter, &(fast->server_ipv4),
+                sizeof(uint32_t), fast);
+    }
+    return 0;
+}
+
+void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
+        uint8_t ismirror) {
+    coreserver_fast_filter_v4_t *fast;
+
+    if (cs->info == NULL) {
+        return;
+    }
+
+    if (cs->info->ai_family == AF_INET) {
+        HASH_FIND(hh, loc->cs_v4_fast_filter,
+                &(CS_TO_V4(cs)->sin_addr.s_addr), sizeof(uint32_t), fast);
+        if (!fast) {
+            /* shouldn't happen? */
+            return;
+        }
+
+        if (ismirror) {
+            fast->mirrorrefs --;
+        }
+        fast->refcount --;
+        if (fast->refcount == 0) {
+            HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+            free(fast);
+        }
+    }
+    return ;
+}
+
+static void populate_coreserver_fast_filters_from_global(colthread_local_t *loc,
+        collector_global_t *glob) {
+
+    coreserver_t *cs, *tmp;
+
+    HASH_ITER(hh, glob->alumirrors, cs, tmp) {
+        if (update_coreserver_fast_filter(loc, cs, 1) < 0) {
+            HASH_DELETE(hh, glob->alumirrors, cs);
+        }
+    }
+
+    HASH_ITER(hh, glob->jmirrors, cs, tmp) {
+        if (update_coreserver_fast_filter(loc, cs, 1) < 0) {
+            HASH_DELETE(hh, glob->jmirrors, cs);
+        }
+    }
+
+    HASH_ITER(hh, glob->ciscomirrors, cs, tmp) {
+        if (update_coreserver_fast_filter(loc, cs, 1) < 0) {
+            HASH_DELETE(hh, glob->ciscomirrors, cs);
+        }
+    }
+}
+
+static void remove_mirrors_from_coreserver_fast_filters(colthread_local_t *loc)
+{
+    coreserver_fast_filter_v4_t *fast, *tmp;
+
+    HASH_ITER(hh, loc->cs_v4_fast_filter, fast, tmp) {
+        if (fast->mirrorrefs > fast->refcount) {
+            HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+            free(fast);
+            continue;
+        }
+        fast->refcount -= fast->mirrorrefs;
+        fast->mirrorrefs = 0;
+
+        if (fast->refcount == 0) {
+            HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+            free(fast);
+        }
+    }
+
+}
+
 static void process_incoming_messages(colthread_local_t *loc,
-        openli_pushed_t *syncpush) {
+        openli_pushed_t *syncpush, collector_global_t *glob) {
+
+    if (syncpush->type == OPENLI_PUSH_HUP_RELOAD) {
+        remove_mirrors_from_coreserver_fast_filters(loc);
+        pthread_rwlock_rdlock(&(glob->config_mutex));
+        populate_coreserver_fast_filters_from_global(loc, glob);
+        pthread_rwlock_unlock(&(glob->config_mutex));
+
+    }
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
         handle_push_ipintercept(loc, syncpush->data.ipsess);
@@ -244,7 +387,8 @@ static void process_incoming_messages(colthread_local_t *loc,
 
 #define PACKETS_PER_READ_THRESH 100
 
-static void check_for_messages(colthread_local_t *loc) {
+static void check_for_messages(colthread_local_t *loc,
+        collector_global_t *glob) {
     openli_pushed_t syncpush;
     int i;
 
@@ -252,14 +396,14 @@ static void check_for_messages(colthread_local_t *loc) {
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(loc, &syncpush);
+        process_incoming_messages(loc, &syncpush, glob);
     }
 
     for (i = 0; i < loc->gtpq_count; i++) {
         while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
     }
 
@@ -267,7 +411,7 @@ static void check_for_messages(colthread_local_t *loc) {
         while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
     }
     loc->pkts_since_msg_read = 0;
@@ -281,7 +425,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_stat_t *stats;
     struct timeval tv;
 
-    check_for_messages(loc);
+    check_for_messages(loc, glob);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
@@ -344,6 +488,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->smtpservers = NULL;
     loc->imapservers = NULL;
     loc->pop3servers = NULL;
+    loc->cs_v4_fast_filter = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
@@ -462,6 +607,8 @@ static void *start_processing_thread(libtrace_t *trace,
         init_collocal(loc, glob);
     }
 
+    populate_coreserver_fast_filters_from_global(loc, glob);
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     register_sync_queues(&(glob->syncip), loc->tosyncq_ip,
@@ -534,7 +681,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(loc, &syncpush);
+        process_incoming_messages(loc, &syncpush, glob);
     }
 
     deregister_sync_queues(&(glob->syncip), t);
@@ -563,7 +710,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
 
         while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
                     (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
         pthread_mutex_lock(&(worker->col_queue_mutex));
         sendq_hash = (sync_sendq_t *)(worker->collector_queues);
@@ -588,7 +735,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         zmq_close(loc->sip_worker_queues[i]);
         while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
                     (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
         pthread_mutex_lock(&(sipworker->col_queue_mutex));
         sendq_hash = (sync_sendq_t *)(sipworker->collector_queues);
@@ -647,6 +794,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     free_coreserver_list(loc->smtpservers);
     free_coreserver_list(loc->imapservers);
     free_coreserver_list(loc->pop3servers);
+    free_coreserver_fast_filters(loc);
 
     destroy_ipfrag_reassembler(loc->fragreass);
 
@@ -933,7 +1081,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     packet_info_t pinfo;
 
-	check_for_messages(loc);
+	check_for_messages(loc, glob);
 
     loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
@@ -1020,6 +1168,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = 0;
         proto = 0;
         pinfo.family = 0;
+    }
+
+    if (fast_coreserver_check(loc, &pinfo) == 0) {
+        goto skipcoreservers;
     }
 
     /* All these special packets are UDP, so we can avoid a whole bunch
@@ -1173,7 +1325,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
     }
 
-
+skipcoreservers:
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if ((ret = ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
