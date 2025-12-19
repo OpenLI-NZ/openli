@@ -199,6 +199,13 @@ static int fast_coreserver_check(colthread_local_t *loc, packet_info_t *pinfo) {
         if (fast) {
             return 1;
         }
+        sa = (struct sockaddr_in *)(&(pinfo->srcip));
+
+        HASH_FIND(hh, loc->cs_v4_fast_filter, &(sa->sin_addr.s_addr),
+                sizeof(uint32_t), fast);
+        if (fast) {
+            return 1;
+        }
     }
 
     return 0;
