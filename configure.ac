@@ -1,4 +1,5 @@
-# Super primitive configure script
+ * (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+ * (C) 2025 by Original Author(shane@alcock.co.nz)
 
 AC_INIT([openli],[1.1.16],[shane@alcock.co.nz])
 
@@ -24,6 +25,10 @@ AC_ARG_ENABLE([provisioner], AS_HELP_STRING([--disable-provisioner],
         [Disable building the OpenLI provisioner]))
 AC_ARG_ENABLE([collector], AS_HELP_STRING([--disable-collector],
         [Disable building the OpenLI collector]))
+AC_ARG_ENABLE([oqs], [AS_HELP_STRING([--enable-oqs], [Enable OQS support])],
+  [enable_oqs=$enableval],
+  [enable_oqs=no]
+)
 
 PKG_PROG_PKG_CONFIG
 AC_ARG_WITH([systemdsystemunitdir],
@@ -186,6 +191,25 @@ if test "$libzmq_found" = 0; then
         AC_MSG_ERROR(Required library libzmq not found; use LDFLAGS to specify library location)
 fi
 
+if test "x$enable_oqs" = "xyes"; then
+    LIBOQS_REQUIRED_VERSION="0.13.0-dev"
+    PKG_CHECK_MODULES([OQS], [liboqs >= $LIBOQS_REQUIRED_VERSION], [liboqs_found=1], [liboqs_found=0])
+    if test "$liboqs_found" -eq 0; then
+        AC_MSG_ERROR([Required library liboqs with verison equal or greated than $LIBOQS_REQUIRED_VERSION; please install and use LDFLAGS to specify library location])
+    fi
+    LIBSSL_REQUIRED_VERSION="3.3.0"
+    PKG_CHECK_MODULES([SSL], [libssl >= $LIBSSL_REQUIRED_VERSION], [libssl_found=1], [libssl_found=0])
+    if test "$libssl_found" -eq 0; then
+        AC_MSG_ERROR([Required library libssl with verison equal or greated than $LIBSSL_REQUIRED_VERSION; please install and use LDFLAGS to specify library location])
+
+    fi
+
+    AC_DEFINE([ENABLE_OQS], [1], [Enable OQS support])
+    AM_CONDITIONAL([ENABLE_OQS], [test "x$enable_oqs" = "xyes"])
+else
+    AM_CONDITIONAL([ENABLE_OQS], [false])
+fi
+
 
 AM_CONDITIONAL([BUILD_MEDIATOR], [test "x$enable_mediator" != "xno"])
 AM_CONDITIONAL([BUILD_PROVISIONER], [test "x$enable_provisioner" != "xno"])
@@ -200,7 +224,6 @@ AC_SUBST([COLLECTOR_LIBS])
 AC_SUBST([MEDIATOR_LIBS])
 AC_SUBST([PROVISIONER_LIBS])
 AC_SUBST([PROVISIONER_CFLAGS])
-
 AC_OUTPUT
 
 # Function for reporting whether an option was set or not
@@ -211,4 +234,3 @@ reportopt() {
                 AC_MSG_NOTICE([$1: No])
         fi
 }
-

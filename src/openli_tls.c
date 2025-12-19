@@ -21,7 +21,10 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  *
- *
+ * (C) 2019 by Original Author(shane@alcock.co.nz)
+ * Quantum Safe implementation (section #ifdef ENABLE_OQS) developed by (C) 2025 Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+
+
  */
 
 #include <string.h>
@@ -66,96 +69,225 @@ static void sslkeylog_cb(const SSL *ssl, const char *line) {
     }
 }
 
-//takes in struct containing the CA, own cert and private key
-//if all 3 files names are null, returns null as successfully doing nothing
-//returns -1 if an error happened
-//otherwise returns a new SSL_CTX with the provided certificates using TLSv1_2
-//and enforces identity checking at handshake
-static SSL_CTX * ssl_init(openli_ssl_config_t *sslconf) {
+#ifdef ENABLE_OQS
+    #include <oqs/oqs.h>
+    #include <openssl/provider.h>
+    #include <openssl/decoder.h>
+    #include <oqs/oqs.h>
 
-    /* SSL library initialisation */
-    SSL_library_init();
-    OpenSSL_add_all_algorithms();
-    SSL_load_error_strings();
-    ERR_load_crypto_strings();
+    static SSL_CTX * ssl_init(openli_ssl_config_t *sslconf) {
+
+        /* SSL library initialisation */
+        SSL_library_init();
+        OpenSSL_add_all_algorithms();
+        SSL_load_error_strings();
+        ERR_load_crypto_strings();
     
-    /* create the SSL context */
-
-#if OPENSSL_VERSION_NUMBER < 0x10100000L
-    SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());
-#else
-    SSL_CTX *ctx = SSL_CTX_new(TLS_method());
-#endif
-
-    if (!ctx){ //check not NULL
-        logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
-        return NULL;
-    }
-
-    /* Enforce use of TLSv1_3 */
-    SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
-
-    if (SSL_CTX_load_verify_locations(ctx, sslconf->cacertfile,
-                "./") != 1){ //TODO this might want to be changed
-        logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed",
-                sslconf->cacertfile);
-        SSL_CTX_free(ctx);
-        return NULL;
-    }
-
-    //enforce cheking of client/server 
-    SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
-
-    if (SSL_CTX_use_certificate_file(ctx, sslconf->certfile,
-                SSL_FILETYPE_PEM) != 1){
-        logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed",
-                sslconf->certfile);
-        SSL_CTX_free(ctx);
-        return NULL;
-    }
-
-    if (SSL_CTX_use_PrivateKey_file(ctx, sslconf->keyfile,
-                SSL_FILETYPE_PEM) != 1){
-        logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed",
-                sslconf->keyfile);
-        SSL_CTX_free(ctx);
-        return NULL;
-    }
-
-    /* Make sure the key and certificate file match. */
-    if (SSL_CTX_check_private_key(ctx) != 1){
-        logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", sslconf->keyfile, sslconf->certfile);
-        SSL_CTX_free(ctx);
-        return NULL;
-    }
-
-    logger(LOG_DEBUG, "OpenLI: OpenSSL CTX initialised, TLS encryption enabled.");
-    logger(LOG_DEBUG, "OpenLI: Using %s, %s and %s.", sslconf->certfile,
-            sslconf->keyfile, sslconf->cacertfile);
-
-    if (sslconf->logkeyfile) {
-        if (openli_ssl_keylog_hdl) {
-            fclose(openli_ssl_keylog_hdl);
+        /* create the library context */
+        OSSL_LIB_CTX *libctx = OSSL_LIB_CTX_new();
+        if (libctx == NULL) {
+            logger(0, "OpenLI: Failed to create OSSL_LIB_CTX.");
+            return NULL;
         }
-        openli_ssl_keylog_hdl = fopen(sslconf->logkeyfile, "w");
-        if (openli_ssl_keylog_hdl == NULL) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to open file for logging TLS keys (%s): %s",
-                    sslconf->logkeyfile, strerror(errno));
+        OSSL_PROVIDER *default_provider = OSSL_PROVIDER_load(libctx, "default");
+        if (default_provider == NULL) {
+            logger(LOG_INFO, "Error loading the default provider\n");
+            OSSL_LIB_CTX_free(libctx);
+            return NULL;
+        }
+        OSSL_PROVIDER *oqs_provider = OSSL_PROVIDER_load(libctx, "oqsprovider");
+        if (oqs_provider == NULL) {
+            logger(LOG_INFO, "Error loading the oqsprovider provider\n");
+            return NULL;
         } else {
-            logger(LOG_DEBUG, "OpenLI: logging TLS keys to %s",
-                    sslconf->logkeyfile);
+            logger(LOG_INFO, "Oqsprovider loaded correctly\n");
         }
-        SSL_CTX_set_keylog_callback(ctx, sslkeylog_cb);
-    } else {
-        if (openli_ssl_keylog_hdl) {
-            fclose(openli_ssl_keylog_hdl);
+        if (!OSSL_PROVIDER_available(libctx, "oqsprovider")) {
+            fprintf(stderr, "OQS provider not available.\n");
+            OSSL_LIB_CTX_free(libctx);
+            return NULL;
         }
-        openli_ssl_keylog_hdl = NULL;
-    }
+        /* create the SSL context mandatory TLS 1.3*/
+        const char *tls_version;
+    #if OPENSSL_VERSION_NUMBER >= 0x30000000L
+        SSL_CTX *ctx = SSL_CTX_new_ex(libctx, NULL, TLS_method());
+        SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+        SSL_CTX_set_max_proto_version(ctx, TLS1_3_VERSION);
+        tls_version = "1.3";
+    #elif OPENSSL_VERSION_NUMBER >= 0x10002000L
+        SSL_CTX *ctx = SSL_CTX_new_ex(libctx, NULL, TLSv1_2_method());
+        tls_version = "1.2";
+    #else
+        SSL_CTX *ctx = SSL_CTX_new_ex(libctx, NULL, TLSv1_1_method());
+        tls_version = "1.1";
+    #endif
+        logger(LOG_INFO, "OpenLI: Using TLS Version %s.", tls_version);
 
-    return ctx;
-}
+        /* Assign Quantum-Safe ciphers (AES256)*/
+        if (SSL_CTX_set_ciphersuites(ctx, "TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256") != 1) {
+            ERR_print_errors_fp(stderr);
+            SSL_CTX_free(ctx);
+            OSSL_LIB_CTX_free(libctx);
+            return NULL;
+        }
+        if (!ctx){ //check not NULL
+            logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
+            return NULL;
+        }
+
+        if (SSL_CTX_load_verify_locations(ctx, sslconf->cacertfile,
+                    "./") != 1){ //TODO this might want to be changed
+            logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed",
+                    sslconf->cacertfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        //enforce cheking of client/server 
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+
+        if (SSL_CTX_use_certificate_file(ctx, sslconf->certfile,
+                    SSL_FILETYPE_PEM) != 1){
+            logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed",
+                    sslconf->certfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        if (SSL_CTX_use_PrivateKey_file(ctx, sslconf->keyfile,
+                    SSL_FILETYPE_PEM) != 1){
+            logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed",
+                    sslconf->keyfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        /* Make sure the key and certificate file match. */
+        if (SSL_CTX_check_private_key(ctx) != 1){
+            logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", sslconf->keyfile, sslconf->certfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        logger(LOG_DEBUG, "OpenLI: OpenSSL CTX initialised, TLS encryption enabled.");
+        logger(LOG_DEBUG, "OpenLI: Using %s, %s and %s.", sslconf->certfile,
+                sslconf->keyfile, sslconf->cacertfile);
+
+        if (sslconf->logkeyfile) {
+            if (openli_ssl_keylog_hdl) {
+                fclose(openli_ssl_keylog_hdl);
+            }
+            openli_ssl_keylog_hdl = fopen(sslconf->logkeyfile, "w");
+            if (openli_ssl_keylog_hdl == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to open file for logging TLS keys (%s): %s",
+                        sslconf->logkeyfile, strerror(errno));
+            } else {
+                logger(LOG_DEBUG, "OpenLI: logging TLS keys to %s",
+                        sslconf->logkeyfile);
+            }
+            SSL_CTX_set_keylog_callback(ctx, sslkeylog_cb);
+        } else {
+            if (openli_ssl_keylog_hdl) {
+                fclose(openli_ssl_keylog_hdl);
+            }
+            openli_ssl_keylog_hdl = NULL;
+        }
+
+        return ctx;
+    }
+#else
+    //takes in struct containing the CA, own cert and private key
+    //if all 3 files names are null, returns null as successfully doing nothing
+    //returns -1 if an error happened
+    //otherwise returns a new SSL_CTX with the provided certificates using TLSv1_2
+    //and enforces identity checking at handshake
+    static SSL_CTX * ssl_init(openli_ssl_config_t *sslconf) {
+
+        /* SSL library initialisation */
+        SSL_library_init();
+        OpenSSL_add_all_algorithms();
+        SSL_load_error_strings();
+        ERR_load_crypto_strings();
+        
+        /* create the SSL context */
+
+    #if OPENSSL_VERSION_NUMBER < 0x10100000L
+        SSL_CTX *ctx = SSL_CTX_new(TLSv1_2_method());
+    #else
+        SSL_CTX *ctx = SSL_CTX_new(TLS_method());
+    #endif
+
+        if (!ctx){ //check not NULL
+            logger(LOG_INFO, "OpenLI: SSL_CTX creation failed");
+            return NULL;
+        }
+
+        /* Enforce use of TLSv1_3 */
+        SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
+
+        if (SSL_CTX_load_verify_locations(ctx, sslconf->cacertfile,
+                    "./") != 1){ //TODO this might want to be changed
+            logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed",
+                    sslconf->cacertfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        //enforce cheking of client/server 
+        SSL_CTX_set_verify(ctx, SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT, NULL);
+
+        if (SSL_CTX_use_certificate_file(ctx, sslconf->certfile,
+                    SSL_FILETYPE_PEM) != 1){
+            logger(LOG_INFO, "OpenLI: SSL cert loading {%s} failed",
+                    sslconf->certfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        if (SSL_CTX_use_PrivateKey_file(ctx, sslconf->keyfile,
+                    SSL_FILETYPE_PEM) != 1){
+            logger(LOG_INFO, "OpenLI: SSL Key loading {%s} failed",
+                    sslconf->keyfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        /* Make sure the key and certificate file match. */
+        if (SSL_CTX_check_private_key(ctx) != 1){
+            logger(LOG_INFO, "OpenLI: SSL CTX private key failed, %s and %s do not match", sslconf->keyfile, sslconf->certfile);
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+
+        logger(LOG_DEBUG, "OpenLI: OpenSSL CTX initialised, TLS encryption enabled.");
+        logger(LOG_DEBUG, "OpenLI: Using %s, %s and %s.", sslconf->certfile,
+                sslconf->keyfile, sslconf->cacertfile);
+
+        if (sslconf->logkeyfile) {
+            if (openli_ssl_keylog_hdl) {
+                fclose(openli_ssl_keylog_hdl);
+            }
+            openli_ssl_keylog_hdl = fopen(sslconf->logkeyfile, "w");
+            if (openli_ssl_keylog_hdl == NULL) {
+                logger(LOG_INFO,
+                        "OpenLI: unable to open file for logging TLS keys (%s): %s",
+                        sslconf->logkeyfile, strerror(errno));
+            } else {
+                logger(LOG_DEBUG, "OpenLI: logging TLS keys to %s",
+                        sslconf->logkeyfile);
+            }
+            SSL_CTX_set_keylog_callback(ctx, sslkeylog_cb);
+        } else {
+            if (openli_ssl_keylog_hdl) {
+                fclose(openli_ssl_keylog_hdl);
+            }
+            openli_ssl_keylog_hdl = NULL;
+        }
+
+        return ctx;
+    }
+#endif
 
 int create_ssl_context(openli_ssl_config_t *sslconf) {
 
@@ -323,7 +455,7 @@ int reload_ssl_config(openli_ssl_config_t *current,
     return 1;
 }
 
-#define PEM_READ_SIZE 1024
+#define PEM_READ_SIZE 16384
 
 int load_pem_into_memory(char *pemfile, char **memspace) {
 
