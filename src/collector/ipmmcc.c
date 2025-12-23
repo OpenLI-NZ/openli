@@ -113,6 +113,10 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
     uint8_t is_comfort = 255;
     struct timeval tv;
 
+    if (loc->activertpintercepts == NULL) {
+        return 0;
+    }
+
     tv = trace_get_timeval(pkt);
 
     /* TODO change active RTP so we can look up by 5 tuple? */
