@@ -290,6 +290,7 @@ typedef struct colthread_local {
 
     time_t startedat;
     uint16_t pkts_since_msg_read;
+    uint16_t tick_counter;
 
     UT_hash_handle hh;
 

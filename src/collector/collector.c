@@ -433,6 +433,11 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     struct timeval tv;
 
     check_for_messages(loc, glob);
+    loc->tick_counter ++;
+    if (loc->tick_counter < 100) {
+        return;
+    }
+    loc->tick_counter = 0;
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
@@ -505,6 +510,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->accepted = 0;
     loc->dropped = 0;
     loc->pkts_since_msg_read = 0;
+    loc->tick_counter = 0;
 
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
@@ -1088,9 +1094,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     packet_info_t pinfo;
 
-	check_for_messages(loc, glob);
+	//check_for_messages(loc, glob);
 
-    loc->pkts_since_msg_read ++;
+    //loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
@@ -1547,7 +1553,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     }
 
-    trace_set_tick_interval(inp->trace, 1000);
+    trace_set_tick_interval(inp->trace, 10);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
