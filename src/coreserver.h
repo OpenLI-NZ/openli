@@ -76,11 +76,19 @@ typedef struct coreserver {
     UT_hash_handle hh;
 } coreserver_t;
 
+typedef struct coreserver_fast_filter_v4 {
+    uint32_t server_ipv4;
+    uint32_t refcount;
+    uint32_t mirrorrefs;
+    UT_hash_handle hh;
+} coreserver_fast_filter_v4_t;
+
 void free_single_coreserver(coreserver_t *cs);
 char *construct_coreserver_key(coreserver_t *cs);
 void free_coreserver_list(coreserver_t *servlist);
 const char *coreserver_type_to_string(uint8_t cstype);
 coreserver_t *deep_copy_coreserver(coreserver_t *cs);
+int prepare_coreserver(coreserver_t *cs);
 
 coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
         packet_info_t *pinfo, uint8_t just_dest);

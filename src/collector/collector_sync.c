@@ -565,6 +565,14 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
+static inline void push_hup_reload_to_collectors(libtrace_message_queue_t *q) {
+    openli_pushed_t msg;
+
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_HUP_RELOAD;
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 void sync_thread_publish_reload(collector_sync_t *sync) {
 
     size_t i;
@@ -572,6 +580,7 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
     colsync_udp_sink_t *sink, *tmp;
     saved_udpsink_mapping_t *map;
     ipintercept_t *ipint;
+    sync_sendq_t *qtmp, *sendq;
 
     pthread_mutex_lock(&(sync->glob->mutex));
     HASH_ITER(hh, sync->glob->udpsinks, sink, tmp) {
@@ -616,6 +625,10 @@ void sync_thread_publish_reload(collector_sync_t *sync) {
         }
     }
     pthread_mutex_unlock(&(sync->glob->mutex));
+
+    HASH_ITER(hh, (sync_sendq_t *)sync->glob->collector_queues, sendq, qtmp) {
+        push_hup_reload_to_collectors(sendq->q);
+    }
 
     for (i = 0; i < sync->pubsockcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -799,7 +812,6 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     }
 
 }
-
 
 static inline void push_static_iprange_to_collectors(
         libtrace_message_queue_t *q, ipintercept_t *ipint,

@@ -30,8 +30,11 @@ openli (1.1.16-1) unstable; urgency=medium
     OPTIONS responses from being subject to redirection to other workers.
   * SIP: fixed memory leak if the parser is unable to extract a valid
     username from a REGISTER or INVITE message.
+  * Collector: improved packet processing performance by adding a fast path
+    to bypass the full coreserver checks when neither the source or
+    destination IP address match any known coreserver.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 16 Dec 2025 15:36:15 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 7 Jan 2026 15:46:41 +1300
 
 openli (1.1.15-1) unstable; urgency=medium
 

@@ -570,10 +570,17 @@ void handle_push_coreserver(colthread_local_t *loc, coreserver_t *cs) {
                     cs->servertype);
             return;
     }
+
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (!found) {
+        if (update_coreserver_fast_filter(loc, cs, 0) < 0) {
+            free_single_coreserver(cs);
+            return;
+        }
+
         HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey, strlen(cs->serverkey),
                 cs);
+
     } else {
         free_single_coreserver(cs);
     }
@@ -610,6 +617,7 @@ void handle_remove_coreserver(colthread_local_t *loc, coreserver_t *cs) {
     }
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (found) {
+        remove_coreserver_fast_filter(loc, found, 0);
         HASH_DELETE(hh, *servlist, found);
         free_single_coreserver(found);
     }
