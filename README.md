@@ -63,6 +63,19 @@ Instructions on packaged installs can be found at:
   https://github.com/OpenLI-NZ/openli/wiki/Installing-Debian-Packaged-Version
   https://github.com/OpenLI-NZ/openli/wiki/Installing-via-RPM
 
+## Complementary Software
+
+Here are some other software projects that are able to interface with an OpenLI
+deployment in useful ways:
+
+ * [mediaMin](https://github.com/signalogic/SigSRF_SDK/blob/master/mediaTest_readme.md)
+   can ingest pcaps containing the intercept records produced by OpenLI and perform
+   deep analysis of the media from intercepted calls. Very useful for both validating
+   your OpenLI install by comparing the intercepted call audio with the original, or
+   to form the basis of a LEA system to receive and process intercepts.
+ * [OpenLI Web Provisioner](https://github.com/OpenLI-NZ/openli-provisioner-web) is a
+   web-based GUI that allows you to configure intercepts, agencies and other core
+   OpenLI configuration through your web browser.
 
 ## The OpenLI Wiki
 
