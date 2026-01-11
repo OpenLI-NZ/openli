@@ -31,6 +31,9 @@
 #include "coreserver.h"
 #include "intercept.h"
 
+uint8_t *decode_jmirror_from_udp_payload(uint8_t *payload, uint32_t plen,
+        uint32_t *cin, uint32_t *shimintid, uint32_t *bodylen);
+
 int check_jmirror_intercept(colthread_local_t *loc,
         libtrace_packet_t *packet, packet_info_t *pinfo,
         coreserver_t *alusources, vendmirror_intercept_list_t *jmirrors);

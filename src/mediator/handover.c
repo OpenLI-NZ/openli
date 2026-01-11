@@ -261,7 +261,7 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
         }
         hdrdata.liid = liidstring;
         hdrdata.liid_len = strlen(hdrdata.liid);
-
+        hdrdata.liid_format = OPENLI_LIID_FORMAT_ASCII;
         if (operator_id) {
             hdrdata.operatorid = operator_id;
         } else {

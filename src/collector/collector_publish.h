@@ -43,6 +43,20 @@ typedef struct halt_info {
     pthread_cond_t cond;
 } halt_info_t;
 
+typedef struct udp_sink_worker_args {
+    void *zmq_ctxt;
+    char *key;
+    char *listenaddr;
+    char *listenport;
+    char *liid;
+    int trackerid;
+    uint8_t direction;
+    uint8_t encapfmt;
+    uint32_t cin;
+    char *sourcehost;
+    char *sourceport;
+} udp_sink_worker_args_t;
+
 enum {
     OPENLI_EXPORT_HALT_WORKER = 1,
     OPENLI_EXPORT_PACKET_FIN = 2,
@@ -70,6 +84,7 @@ enum {
     OPENLI_EXPORT_RAW_IRI = 24,
     OPENLI_EXPORT_EPSCC = 25,
     OPENLI_EXPORT_EPSIRI = 26,
+    OPENLI_EXPORT_UDP_SINK_ARGS = 27,
 };
 
 typedef struct openli_ipcc_job {
@@ -210,8 +225,10 @@ typedef struct published_intercept_msg {
     char *delivcc;
     int seqtrackerid;
     payload_encryption_method_t encryptmethod;
-    char *encryptkey;
     openli_timestamp_encoding_fmt_t timefmt;
+    openli_liid_format_t liid_format;
+    uint8_t *encryptkey;
+    size_t encryptkey_len;
     uuid_t *xids;
     size_t xid_count;
     openli_intercept_types_t cepttype;
@@ -220,7 +237,6 @@ typedef struct published_intercept_msg {
     // optional fields
     char *username;
     internet_access_method_t accesstype;
-
 } published_intercept_msg_t;
 
 typedef struct provisioner_msg {
@@ -249,7 +265,8 @@ struct openli_export_recv {
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
-	halt_info_t *haltinfo;
+        udp_sink_worker_args_t udpargs;
+    	halt_info_t *haltinfo;
     } data;
 };
 
@@ -331,6 +348,10 @@ openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
 int push_vendor_mirrored_ipcc_job(void *pubqueue,
         intercept_common_t *common, struct timeval tv,
         uint32_t cin, uint8_t dir, void *l3, uint32_t rem);
+
+openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
+        uint16_t iplen, char *liid, uint32_t cin, uint8_t dir,
+        uint32_t destid);
 
 void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
         openli_location_t *loc, int loc_count);

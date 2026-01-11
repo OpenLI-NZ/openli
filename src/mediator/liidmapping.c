@@ -53,9 +53,6 @@ liid_map_entry_t *lookup_liid_agency_mapping(liid_map_t *map, char *liidstr) {
  *  @param m        The LIID map entry to be freed
  */
 void destroy_liid_mapping(liid_map_entry_t *m) {
-    if (m->encryptkey) {
-        free(m->encryptkey);
-    }
     free(m->liid);
     free(m);
 }
@@ -130,14 +127,13 @@ int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
         } else {
             ret = 0;
         }
-        if (m->encryptkey) {
-            free(m->encryptkey);
-        }
-        m->encryptkey = toadd->encryptkey;
+        memcpy(m->encryptkey, toadd->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
         m->encrypt = toadd->encrypt;
+        m->encryptkey_len = toadd->encryptkey_len;
         m->unconfirmed = 0;
         m->ccqueue_deleted = 0;
         m->iriqueue_deleted = 0;
+        m->liid_format = toadd->liid_format;
         return ret;
     }
 
@@ -153,7 +149,9 @@ int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
     m->ccqueue_deleted = 0;
     m->iriqueue_deleted = 0;
     m->encrypt = toadd->encrypt;
-    m->encryptkey = toadd->encryptkey;
+    m->encryptkey_len = toadd->encryptkey_len;
+    m->liid_format = toadd->liid_format;
+    memcpy(m->encryptkey, toadd->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
 
     /* Create a new entry in the mapping array */
     JSLI(jval, map->liid_array, (unsigned char *)(m->liid));

@@ -209,12 +209,11 @@ static encoded_encrypt_template_t *lookup_encrypted_template(
 
 int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
         uint8_t *dest, uint16_t destlen, uint32_t seqno,
-        char *encryptkey) {
+        const uint8_t *encryptkey) {
 
     uint8_t IV_128[16];
     uint8_t key[24];
     uint32_t swapseqno;
-    size_t keylen = strlen(encryptkey);
     int len, i;
 
     assert(buflen <= destlen);
@@ -226,11 +225,9 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
         memcpy(&(IV_128[i]), &swapseqno, sizeof(uint32_t));
     }
 
-    if (keylen > 24) {
-        keylen = 24;
-    }
-    memset(key, 0, 24);
-    memcpy(key, encryptkey, keylen);
+    /* The key is 24 bytes for AES-192.  */
+    memcpy(key, encryptkey, 24);
+
 
     /* Trust that we have correctly pre-padded the data to encrypt */
     EVP_CIPHER_CTX_set_padding(ctx, 0);
@@ -240,6 +237,17 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
             logger(LOG_INFO, "OpenLI: unable to initialise EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
             return -1;
     }
+
+    /* ETSI-IP.nl uses AES-192-CBC with application-layer padding (if any).
+     * Disable PKCS#7 inside the cipher so ciphertext length == input length. */
+    EVP_CIPHER_CTX_set_padding(ctx, 0);
+
+    /* Sanity: with padding disabled, input MUST be a multiple of 16. */
+    if ((buflen & 0x0F) != 0) {
+        logger(LOG_INFO, "OpenLI: AES-192-CBC called with non-block-aligned input (%u bytes)", buflen);
+        return -1;
+    }
+
 
     if (EVP_EncryptUpdate(ctx, dest, &len, buf, (int)buflen) != 1) {
             logger(LOG_INFO, "OpenLI: unable to perform EVP encryption operation -- openssl error %s", ERR_error_string(ERR_get_error(), NULL));
@@ -251,29 +259,34 @@ int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
             return -1;
     }
 
+    /* Cleanse local key copy */
+#if defined(__GLIBC__) && defined(_GNU_SOURCE)
+    explicit_bzero(key, sizeof(key));
+#else
+    volatile uint8_t *p = key;
+    for (size_t i = 0; i < sizeof(key); ++i) p[i] = 0;
+#endif
     return 0;
 
 }
 
-int create_preencrypted_message_body(wandder_encoder_t *encoder,
-                encrypt_encode_state_t *encrypt,
-                openli_encoded_result_t *res,
-                encoded_header_template_t *hdr_tplate,
-                uint8_t *payloadbody, uint16_t bodylen,
-                uint8_t *ipcontents, uint16_t ipclen,
-                openli_encoding_job_t *job) {
+uint8_t *wrap_etsili_preencryption(encrypt_encode_state_t *encrypt,
+        payload_encryption_method_t encryptmethod, uint32_t header_len,
+        uint8_t *payloadbody, uint16_t bodylen,
+        uint8_t *ipcontents, uint16_t ipclen, uint32_t *enclen) {
 
     uint32_t inplen;
-    uint32_t enclen = 0, newbodylen = 0;
-    uint8_t containerlen = 0, is_new = 0;
+    uint32_t newbodylen = 0;
+    uint8_t containerlen = 0;
     uint8_t *buf, *ptr;
     uint32_t bytecounter;
     uint32_t bc_increase;
-    encoded_encrypt_template_t *tplate = NULL;
+
+    *enclen = 0;
 
     if (payloadbody == NULL) {
         logger(LOG_INFO, "OpenLI: cannot encrypt an ETSI PDU that does not have valid encoded payload");
-        return -1;
+        return NULL;
     }
 
     /* Calculate length of encryptable data, including padding. */
@@ -293,18 +306,18 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
         containerlen = 4;
     }
 
-    if (job->encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        enclen = AES_OUTPUT_SIZE(inplen);
+    if (encryptmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
+        *enclen = AES_OUTPUT_SIZE(inplen);
     } else {
-        enclen = inplen;
+        *enclen = inplen;
     }
 
     /* Add 16 bytes extra, just to be safe...
      */
-    buf = calloc(enclen + 16, sizeof(uint8_t));
+    buf = calloc((*enclen) + 16, sizeof(uint8_t));
 
-    /* Take the contents of body_tplate (minus the initial "payload" field).
-     * Add EncryptedPayload and byteCounter fields to the front to get
+    /* Take the contents of the body payload (minus the initial "payload"
+     * field). Add EncryptedPayload and byteCounter fields to the front to get
      * the "unencrypted" version of the payload.
      *
      * We shouldn't need the overhead of an encoder to add the two preceding
@@ -358,7 +371,7 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
     /* Of course, byte counter has to be incremented based on the size
      * of the "unencrypted" record, not the encrypted one...
      */
-    bc_increase = calculate_pspdu_length(inplen + hdr_tplate->header_len);
+    bc_increase = calculate_pspdu_length(inplen + header_len);
     encrypt->byte_counter += bc_increase;
 
     /* Put the body contents and any additional IP packet content into
@@ -377,17 +390,39 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
         memcpy(ptr, ipcontents, ipclen);
         ptr += ipclen;
     }
+    return buf;
 
-    /* Generate a full PS-PDU wrapping the contents of buf. Note that
+}
+
+
+int create_preencrypted_message_body(wandder_encoder_t *encoder,
+                encrypt_encode_state_t *encrypt,
+                openli_encoded_result_t *res,
+                encoded_header_template_t *hdr_tplate,
+                uint8_t *payloadbody, uint16_t bodylen,
+                uint8_t *ipcontents, uint16_t ipclen,
+                openli_encoding_job_t *job) {
+
+    uint32_t enclen = 0;
+    encoded_encrypt_template_t *tplate = NULL;
+    uint8_t *buf, is_new = 0;
+
+    /* Generate a full PS-PDU wrapping the contents of payloadbody. Note that
      * encryption type must be set to None, so we end up with an
      * EncryptionContainer containing unencrypted data.
      *
-     * The mediator will need to use this fake PDU to generate a message
-     * digest in case the receiving agency wants us to send Integrity Checks,
-     * and then the record will be re-encoded with encrypted content by the
-     * mediator itself.
+     * For CCs and IRIs, the mediator will need to use this fake PDU to
+     * generate a message digest in case the receiving agency wants us to send
+     * Integrity Checks, and then the record will be re-encoded with encrypted
+     * content by the mediator itself.
      */
 
+    buf = wrap_etsili_preencryption(encrypt, job->encryptmethod,
+            hdr_tplate->header_len, payloadbody, bodylen,
+            ipcontents, ipclen, &enclen);
+    if (buf == NULL || enclen == 0) {
+        return -1;
+    }
 
     /* Lookup the template for a message of this length and encryption method */
     tplate = lookup_encrypted_template(&(encrypt->saved_encryption_templates),
@@ -403,8 +438,7 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
             return -1;
         }
     } else {
-        if (etsili_update_encrypted_template(tplate, buf, enclen,
-                job) < 0) {
+        if (etsili_update_encrypted_template(tplate, buf, enclen, job) < 0) {
             free(buf);
             return -1;
         }
@@ -413,13 +447,69 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
     /* We should now have a suitable header template and body template to
      * create a complete ETSI PSPDU record */
     if (create_etsi_encoded_result(res, hdr_tplate, tplate->start,
-            tplate->totallen, NULL, 0, job) < 0) {
+            tplate->totallen, NULL, 0, job->origreq->type, job->liid) < 0) {
         free(buf);
         return -1;
     }
 
     free(buf);
     return 0;
+}
+
+uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
+        wandder_etsispec_t *etsidecoder, uint8_t *fullrec, uint16_t reclen,
+        uint8_t *enckey, size_t enckeylen) {
+
+
+    uint8_t *dest = NULL;
+    uint8_t *buf = NULL;
+    uint32_t buflen = 0;
+    int64_t seqno = 0;
+    uint8_t *container;
+    uint32_t container_len = 0;
+    uint8_t *enctypeptr = NULL;
+
+    if (!enckey) {
+        return NULL;
+    }
+    if (!ctx) {
+        return NULL;
+    }
+
+    if (enckeylen < OPENLI_AES192_KEY_LEN) {
+        return NULL;
+    }
+
+    wandder_attach_etsili_buffer(etsidecoder, fullrec, reclen, 0);
+
+    seqno = wandder_etsili_get_sequence_number(etsidecoder);
+
+    container = wandder_etsili_get_encryption_container(etsidecoder,
+            etsidecoder->dec, &container_len);
+    if (!container || container_len == 0) {
+        return NULL;
+    }
+
+    wandder_decode_next(etsidecoder->dec);      // encryptionType
+    enctypeptr = wandder_get_itemptr(etsidecoder->dec);
+    *enctypeptr = OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC;
+
+    wandder_decode_next(etsidecoder->dec);      // encryptedPayload
+    buflen = wandder_get_itemlen(etsidecoder->dec);
+    buf = malloc(buflen);
+    dest = wandder_get_itemptr(etsidecoder->dec);
+
+    if (encrypt_aes_192_cbc(ctx, dest,
+            buflen, buf, buflen, (uint32_t)seqno, enckey) < 0) {
+        free(buf);
+        return NULL;
+    }
+
+    memcpy(dest, buf, buflen);
+    free(buf);
+
+    return dest;
+
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -35,11 +35,29 @@
 #include <Judy.h>
 #include <uuid/uuid.h>
 
+#define ETSI_DIR_FROM_TARGET 0
+#define ETSI_DIR_TO_TARGET 1
+#define ETSI_DIR_INDETERMINATE 2
+
 #define OPENLI_VENDOR_MIRROR_NONE (0xffffffff)
+
+#define OPENLI_LIID_MAXSIZE 26      // +1 for null byte
+
+#ifndef OPENLI_MAX_ENCRYPTKEY_LEN
+#define OPENLI_MAX_ENCRYPTKEY_LEN 32   /* room for AES-256 later */
+#endif
+
+#ifndef OPENLI_AES192_KEY_LEN
+#define OPENLI_AES192_KEY_LEN 24
+#endif
 
 #define INTERCEPT_IS_ACTIVE(cept, now) \
     (cept->common.tostart_time <= now.tv_sec && ( \
         cept->common.toend_time == 0 || cept->common.toend_time > now.tv_sec))
+
+#define STRING_EXPRESSED_IN_HEX(liidstr) \
+    (strlen(liidstr) > 2 && liidstr[0] == '0' && \
+        (liidstr[1] == 'x' || liidstr[1] == 'X'))
 
 typedef enum {
     OPENLI_INTERCEPT_TYPE_UNKNOWN = 0,
@@ -109,6 +127,11 @@ enum {
 };
 
 typedef enum {
+    OPENLI_LIID_FORMAT_ASCII = 1,
+    OPENLI_LIID_FORMAT_BINARY_OCTETS = 2,
+} openli_liid_format_t;
+
+typedef enum {
     HI1_LI_ACTIVATED = 1,
     HI1_LI_DEACTIVATED = 2,
     HI1_LI_MODIFIED = 3,
@@ -125,6 +148,7 @@ typedef struct static_ipranges {
 
 typedef struct intercept_common {
     char *liid;
+    openli_liid_format_t liid_format;
     char *authcc;
     char *delivcc;
     int liid_len;
@@ -138,9 +162,10 @@ typedef struct intercept_common {
     time_t toend_time;
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
-    char *encryptkey;
     uint8_t encrypt_inherited;      // only used by provisioner
     openli_timestamp_encoding_fmt_t time_fmt;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+    size_t encryptkey_len;   /* set to 24 when valid */
 
     uuid_t *xids;
     size_t xid_count;
@@ -163,7 +188,37 @@ typedef struct hi1_notify_data {
     uint64_t ts_sec;
     uint32_t ts_usec;
     char *target_info;
+    openli_liid_format_t liid_format;
 } hi1_notify_data_t;
+
+enum {
+    INTERCEPT_UDP_ENCAP_FORMAT_RAW,
+    INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR,
+    INTERCEPT_UDP_ENCAP_FORMAT_NOKIA,
+    INTERCEPT_UDP_ENCAP_FORMAT_CISCO
+};
+
+typedef struct intercept_udp_sink {
+    uint8_t enabled;
+    uint8_t awaitingconfirm;
+    char *collectorid;
+    char *listenport;
+    char *listenaddr;
+    uint8_t direction;
+    uint8_t encapfmt;
+
+    // CIN to use in circumstances where the encapsulation format does not
+    // provide a session ID (or anything else that can act as a CIN).
+    uint32_t cin;
+
+    char *sourcehost;
+    char *sourceport;
+
+    char *key;
+    char *liid;
+    UT_hash_handle hh;
+
+} intercept_udp_sink_t;
 
 typedef struct ipintercept {
     intercept_common_t common;
@@ -176,6 +231,12 @@ typedef struct ipintercept {
     /* Used in cases where we are converting vendor-mirrored packets into
      * ETSI records */
     uint32_t vendmirrorid;
+
+    /* Used in cases where the traffic for this intercept are going to be
+     * sent to a collector directly using some form of UDP encapsulation
+     * (e.g. FlowtapLite)
+     */
+    intercept_udp_sink_t *udp_sinks;
 
     static_ipranges_t *statics;
 
@@ -386,7 +447,6 @@ struct rtpstreaminf {
     uint8_t byematched;
     char *invitecseq;
     char *byecseq;
-    uint16_t invitecseq_stack;
 
     uint8_t inviter[16];
     uint16_t inviterport;
@@ -556,21 +616,66 @@ int add_intercept_to_email_user_intercept_list(
 int generate_ipint_userkey(ipintercept_t *ipint, char *space,
         size_t spacelen);
 
+void clean_intercept_udp_sink(intercept_udp_sink_t *sink);
+void remove_all_intercept_udp_sinks(ipintercept_t *cept);
+
+
 const char *get_mobile_identifier_string(openli_mobile_identifier_t idtype);
 const char *get_access_type_string(internet_access_method_t method);
 const char *get_radius_ident_string(uint32_t radoptions);
+const char *get_udp_encap_format_string(uint8_t encapfmt);
+const char *get_etsi_direction_string(uint8_t etsidir);
 internet_access_method_t map_access_type_string(char *confstr);
 uint32_t map_radius_ident_string(char *confstr);
 payload_encryption_method_t map_encrypt_method_string(char *encstr);
 openli_timestamp_encoding_fmt_t map_timestamp_format_string(char *fmtstr);
 uint8_t map_email_decompress_option_string(char *decstr);
 openli_mobile_identifier_t map_mobile_ident_string(char *idstr);
+uint8_t map_etsi_direction_string(char *dirstr);
+uint8_t map_udp_encap_format_string(char *fmtstr);
 
 void intercept_mediation_mode_as_string(intercept_outputs_t mode,
         char *space, int spacelen);
 void intercept_encryption_mode_as_string(payload_encryption_method_t method,
         char *space, int spacelen);
 void email_decompress_option_as_string(uint8_t opt, char *space, int spacelen);
-#endif
 
+/* Copy src_len bytes from src → dst (capacity dst_cap), zero-fill the tail.
+ * Returns the number of bytes copied (clamped to dst_cap).
+ * If src==NULL or src_len==0: dst is zeroed and 0 is returned. */
+size_t openli_copy_encryptkey(uint8_t *dst, size_t dst_cap,
+                              const uint8_t *src, size_t src_len);
+
+/* Move variant: copy like above, then securely wipe + free *psrc if non-NULL
+ * and free_src_len>0, and set *psrc=NULL. Returns bytes copied. */
+size_t openli_move_encryptkey(uint8_t *dst, size_t dst_cap,
+                              uint8_t **psrc, size_t free_src_len);
+
+/* Clear a destination key buffer and (optionally) reset the caller's length. */
+void openli_clear_encryptkey(uint8_t *dst, size_t dst_cap, size_t *dst_len);
+
+/* Convenience wrappers for AES-192 (24 bytes) using the project-wide capacity */
+static inline size_t openli_copy_encryptkey_aes192(uint8_t *dst,
+                                                   const uint8_t *src) {
+    return openli_copy_encryptkey(dst, OPENLI_MAX_ENCRYPTKEY_LEN, src,
+                                  OPENLI_AES192_KEY_LEN);
+}
+static inline size_t openli_move_encryptkey_aes192(uint8_t *dst,
+                                                   uint8_t **psrc) {
+    return openli_move_encryptkey(dst, OPENLI_MAX_ENCRYPTKEY_LEN, psrc,
+                                  OPENLI_AES192_KEY_LEN);
+}
+/* Allocate a new heap buffer and duplicate src_len bytes; returns NULL on OOM. */
+uint8_t *openli_dup_encryptkey_ptr(const uint8_t *src, size_t src_len);
+
+/* Securely wipe and free a heap-allocated key pointer (if *pp non-NULL). */
+void openli_free_encryptkey_ptr(uint8_t **pp, size_t len);
+
+
+int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
+        size_t *keylen, char *errorstring, size_t errorstringsize);
+int openli_parse_liid_string(char *liidstr, char **storage,
+        openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize);
+
+#endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -809,5 +809,44 @@ libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
     return copy;
 }
 
+size_t openli_convert_hexstring_to_binary(const char *src, uint8_t *space,
+        size_t maxspace) {
+
+    const char *p = src;
+    size_t i;
+    if (space == NULL || src == NULL || maxspace == 0) {
+        return 0;
+    }
+
+    for (i = 0; i < maxspace; i++) {
+        int hi, lo;
+        unsigned char c1 = (unsigned char)p[2*i];
+        unsigned char c2;
+
+        if (c1 == '\0') {
+            break;
+        }
+        if (2 * i + 1 >= maxspace) {
+            break;
+        }
+        c2 = (unsigned char)p[2*i + 1];
+        if (c2 == '\0') {
+            // uneven number of hex characters??
+            break;
+        }
+        if (c1 >= '0' && c1 <= '9') hi = c1 - '0';
+        else if (c1 >= 'a' && c1 <= 'f') hi = 10 + (c1 - 'a');
+        else if (c1 >= 'A' && c1 <= 'F') hi = 10 + (c1 - 'A');
+        else return 0;
+        if (c2 >= '0' && c2 <= '9') lo = c2 - '0';
+        else if (c2 >= 'a' && c2 <= 'f') lo = 10 + (c2 - 'a');
+        else if (c2 >= 'A' && c2 <= 'F') lo = 10 + (c2 - 'A');
+        else return 0;
+        space[i] = (uint8_t)((hi << 4) | lo);
+    }
+
+    return i;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

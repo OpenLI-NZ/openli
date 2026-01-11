@@ -57,7 +57,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *digest_hash_pdulimit;
     json_object *digest_sign_timeout;
     json_object *digest_sign_hashlimit;
-    json_object *encryptkey, *encryptmethod;
+    json_object *encryptmethod;
     json_object *timefmt;
 
     const char *encrypt_str;
@@ -92,11 +92,6 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     resend_win = json_object_new_int(lea->ag->resend_window_kbs);
     timefmt = json_object_new_string(timefmt_str);
     encryptmethod = json_object_new_string(encrypt_str);
-    if (lea->ag->encryptkey) {
-        encryptkey = json_object_new_string(lea->ag->encryptkey);
-    } else {
-        encryptkey = NULL;
-    }
 
     json_object_object_add(jobj, "agencyid", agencyid);
     if (agencycc) {
@@ -112,9 +107,10 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "resendwindow", resend_win);
     json_object_object_add(jobj, "timestampformat", timefmt);
     json_object_object_add(jobj, "payloadencryption", encryptmethod);
-    if (encryptkey) {
-        json_object_object_add(jobj, "encryptionkey", encryptkey);
-    }
+    json_object_object_add(jobj, "has_encryptionkey",
+            json_object_new_boolean(lea->ag->encryptkey_len == OPENLI_AES192_KEY_LEN));
+    json_object_object_add(jobj, "encryptionkey_len",
+            json_object_new_int((int)lea->ag->encryptkey_len));
 
     digest_required = json_object_new_boolean(lea->ag->digest_required);
     json_object_object_add(integrity, "enabled", digest_required);
@@ -190,7 +186,8 @@ static void convert_commonintercept_to_json(json_object *jobj,
 
     const char *encrypt_str;
     json_object *liid, *authcc, *delivcc, *agencyid, *mediator;
-    json_object *encryptkey, *xids;
+/*    json_object *encryptkey, *xids; */
+    json_object *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
     json_object *encrypt_inherited;
     char uuid[64];
@@ -218,7 +215,14 @@ static void convert_commonintercept_to_json(json_object *jobj,
         }
     }
 
-    liid = json_object_new_string(common->liid);
+    if (common->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        char prepended[128];
+        snprintf(prepended, 128, "0x%s", common->liid);
+        liid = json_object_new_string(prepended);
+
+    } else {
+        liid = json_object_new_string(common->liid);
+    }
     authcc = json_object_new_string(common->authcc);
     delivcc = json_object_new_string(common->delivcc);
     agencyid = json_object_new_string(common->targetagency);
@@ -226,12 +230,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
     tomediate = json_object_new_int(common->tomediate);
     encrypt_inherited = json_object_new_boolean(common->encrypt_inherited);
     encryption = json_object_new_string(encrypt_str);
-
-    if (common->encryptkey) {
-        encryptkey = json_object_new_string(common->encryptkey);
-    } else {
-        encryptkey = NULL;
-    }
 
     json_object_object_add(jobj, "liid", liid);
     json_object_object_add(jobj, "authcc", authcc);
@@ -241,9 +239,11 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object_object_add(jobj, "outputhandovers", tomediate);
     json_object_object_add(jobj, "encrypt_inherited", encrypt_inherited);
     json_object_object_add(jobj, "payloadencryption", encryption);
-    if (encryptkey) {
-        json_object_object_add(jobj, "encryptionkey", encryptkey);
-    }
+	json_object_object_add(jobj, "has_encryptionkey",
+			json_object_new_boolean(common->encryptkey_len == OPENLI_AES192_KEY_LEN));
+	json_object_object_add(jobj, "encryptionkey_len",
+	    json_object_new_int((int)common->encryptkey_len));
+
 
     if (common->tostart_time != 0) {
         starttime = json_object_new_int(common->tostart_time);
@@ -263,7 +263,7 @@ static void convert_commonintercept_to_json(json_object *jobj,
 static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object *jobj;
     json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips, *mobileident;
+    json_object *staticips, *mobileident, *udpsinks;
 
     jobj = json_object_new_object();
     convert_commonintercept_to_json(jobj, &(ipint->common));
@@ -287,6 +287,47 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     if (ipint->vendmirrorid != 0xFFFFFFFF) {
         vendmirrorid = json_object_new_int(ipint->vendmirrorid);
         json_object_object_add(jobj, "vendmirrorid", vendmirrorid);
+    }
+
+    if (ipint->udp_sinks) {
+        intercept_udp_sink_t *sink, *tmp;
+        json_object *colid, *addr, *port, *encap, *dir, *sinkobj, *cin;
+        json_object *srchost, *srcport;
+
+        udpsinks = json_object_new_array();
+        HASH_ITER(hh, ipint->udp_sinks, sink, tmp) {
+            sinkobj = json_object_new_object();
+
+            colid = json_object_new_string(sink->collectorid);
+            addr = json_object_new_string(sink->listenaddr);
+            port = json_object_new_string(sink->listenport);
+            encap = json_object_new_string(
+                    get_udp_encap_format_string(sink->encapfmt));
+            dir = json_object_new_string(
+                    get_etsi_direction_string(sink->direction));
+            cin = json_object_new_int(sink->cin);
+
+            json_object_object_add(sinkobj, "collectorid", colid);
+            json_object_object_add(sinkobj, "listenaddr", addr);
+            json_object_object_add(sinkobj, "listenport", port);
+            json_object_object_add(sinkobj, "encapsulation", encap);
+            json_object_object_add(sinkobj, "direction", dir);
+            if (sink->cin > 0) {
+                json_object_object_add(sinkobj, "sessionid", cin);
+            }
+
+            if (sink->sourcehost) {
+                srchost = json_object_new_string(sink->sourcehost);
+                json_object_object_add(sinkobj, "sourcehost", srchost);
+            }
+            if (sink->sourceport) {
+                srcport = json_object_new_string(sink->sourceport);
+                json_object_object_add(sinkobj, "sourceport", srcport);
+            }
+            json_object_array_add(udpsinks, sinkobj);
+        }
+
+        json_object_object_add(jobj, "udpsinks", udpsinks);
     }
 
     if (ipint->statics) {
@@ -506,10 +547,11 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
 json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
-    json_object *jarray, *jobj, *x2x3obj;
+    json_object *jarray, *jobj, *x2x3obj, *sinkobj;
     known_client_t *cols;
-    size_t colcount, x2x3count, i, j;
+    size_t colcount, x2x3count, sinkcount, i, j;
     x2x3_listener_t *x2x3;
+    collector_udp_sink_t *sinks;
 
     cols = fetch_all_collector_clients(state, &colcount);
     if (!cols || colcount == 0) {
@@ -520,12 +562,16 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
     for (i = 0; i < colcount; i++) {
         jobj = convert_client_to_json(&(cols[i]));
         x2x3obj = json_object_new_array();
+        sinkobj = json_object_new_array();
 
         if (cols[i].colname) {
             x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
                     cols[i].colname);
+            sinks = fetch_udp_sinks_for_collector(state, &sinkcount,
+                    cols[i].colname);
         } else {
             x2x3 = NULL;
+            sinks = NULL;
         }
         if (x2x3) {
             for (j = 0; j < x2x3count; j++) {
@@ -546,7 +592,30 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
             }
             free(x2x3);
         }
+        if (sinks) {
+            for (j = 0; j < sinkcount; j++) {
+                json_object *base, *ipaddr, *port, *lastseen, *ident;
+                base = json_object_new_object();
+
+                ipaddr = json_object_new_string(sinks[j].ipaddr);
+                port = json_object_new_string(sinks[j].port);
+                lastseen = openli_json_object_new_uint64(sinks[j].lastseen);
+                ident = json_object_new_string(sinks[j].identifier);
+
+                json_object_object_add(base, "ipaddress", ipaddr);
+                json_object_object_add(base, "port", port);
+                json_object_object_add(base, "identifier", ident);
+                json_object_object_add(base, "lastseen", lastseen);
+
+                free(sinks[j].ipaddr);
+                free(sinks[j].port);
+                free(sinks[j].identifier);
+                json_object_array_add(sinkobj, base);
+            }
+            free(sinks);
+        }
         json_object_object_add(jobj, "x2x3listeners", x2x3obj);
+        json_object_object_add(jobj, "udpsinks", sinkobj);
         json_object_array_add(jarray, jobj);
         if (cols[i].colname) {
             free((void *)(cols[i].colname));

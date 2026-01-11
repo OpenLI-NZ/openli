@@ -146,9 +146,6 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
     added_liid_t *iter, *tmp;
     HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
         HASH_DELETE(hh, config->liid_to_agency_map, iter);
-        if (iter->encryptkey) {
-            free(iter->encryptkey);
-        }
         free(iter->liid);
         free(iter->agencyid);
         free(iter);
@@ -168,40 +165,29 @@ void destroy_med_collector_config(mediator_collector_config_t *config) {
  *  @param encmethod    The encryption method to apply to IRIs and CCs using
  *                      this LIID.
  *  @param encryptkey   The key to use when encrypting an IRI or CC.
+ *  @param encryptlen   The length of the encryption key, in bytes.
+ *  @param liidfmt      The format of the LIID, for encryption purposes.
  */
 void add_liid_mapping_collector_config(mediator_collector_config_t *config,
         char *liid, char *agencyid, payload_encryption_method_t encmethod,
-        char *encryptkey) {
+        uint8_t *encryptkey, size_t encryptlen, openli_liid_format_t liidfmt) {
     added_liid_t *found = NULL;
 
     pthread_mutex_lock(&(config->mutex));
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         free(found->agencyid);
-        found->agencyid = strdup(agencyid);
-        if (found->encryptkey) {
-            free(found->encryptkey);
-        }
-        if (encryptkey) {
-            found->encryptkey = strdup(encryptkey);
-        } else {
-            found->encryptkey = NULL;
-        }
-        found->encrypt = encmethod;
     } else {
         found = calloc(1, sizeof(added_liid_t));
         found->liid = strdup(liid);
-        found->agencyid = strdup(agencyid);
-        if (encryptkey) {
-            found->encryptkey = strdup(encryptkey);
-        } else {
-            found->encryptkey = NULL;
-        }
-        found->encrypt = encmethod;
-
         HASH_ADD_KEYPTR(hh, config->liid_to_agency_map, found->liid,
                 strlen(found->liid), found);
     }
+    found->agencyid = strdup(agencyid);
+    found->encryptkey_len = encryptlen;
+    found->liid_format = liidfmt;
+    memcpy(found->encryptkey, encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
+    found->encrypt = encmethod;
 
     pthread_mutex_unlock(&(config->mutex));
 }
@@ -211,10 +197,13 @@ void add_liid_mapping_collector_config(mediator_collector_config_t *config,
  *
  *  @param config       The global config for the collector threads
  *  @param liid         The LIID to search for
+ *  @param[out] liidfmt Updated to contain the required encoding format for
+ *                      this LIID
  *  @return             The agency that this LIID is destined for.
  */
 static char *lookup_agencyid_for_liid_collector_config(
-        mediator_collector_config_t *config, char *liid) {
+        mediator_collector_config_t *config, char *liid,
+        openli_liid_format_t *liidfmt) {
 
     added_liid_t *found = NULL;
     char *agencyid = NULL;
@@ -222,6 +211,7 @@ static char *lookup_agencyid_for_liid_collector_config(
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         agencyid = strdup(found->agencyid);
+        *liidfmt = found->liid_format;
     }
     pthread_mutex_unlock(&(config->mutex));
     return agencyid;
@@ -242,9 +232,6 @@ void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
     HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
     if (found) {
         HASH_DELETE(hh, config->liid_to_agency_map, found);
-        if (found->encryptkey) {
-            free(found->encryptkey);
-        }
         free(found->agencyid);
         free(found->liid);
         free(found);
@@ -268,9 +255,6 @@ void remove_liid_mapping_by_agency_collector_config(
     HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
         if (strcasecmp(iter->agencyid, agencyid) == 0) {
             HASH_DELETE(hh, config->liid_to_agency_map, iter);
-            if (iter->encryptkey) {
-                free(iter->encryptkey);
-            }
             free(iter->agencyid);
             free(iter->liid);
             free(iter);
@@ -628,12 +612,13 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 }
 
 static void preencode_etsi_for_known_liid(coll_recv_t *col,
-        col_known_liid_t *found) {
+        col_known_liid_t *found, openli_liid_format_t liid_format) {
 
     etsili_intercept_details_t intdetails;
     char netelemid[128];
 
     intdetails.liid = found->liid;
+    intdetails.liid_format = liid_format;
     if (found->digest_config->config->agencycc) {
         intdetails.authcc = found->digest_config->config->agencycc;
         intdetails.delivcc = found->digest_config->config->agencycc;
@@ -706,6 +691,7 @@ static void check_agency_digest_config(coll_recv_t *col,
     char *agencyid = NULL;
     agency_digest_config_t *agdigest = NULL;
     uint8_t reencode_needed = 0;
+    openli_liid_format_t liid_format = OPENLI_LIID_FORMAT_ASCII;
 
     if (found->lastseen-found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
         return;
@@ -714,7 +700,7 @@ static void check_agency_digest_config(coll_recv_t *col,
     /* Look up the integrity check configuration for the recipient of
      * this intercept */
     agencyid = lookup_agencyid_for_liid_collector_config(col->parentconfig,
-            found->liid);
+            found->liid, &liid_format);
     found->last_agency_check = found->lastseen;
 
     if (agencyid == NULL) {
@@ -743,8 +729,9 @@ static void check_agency_digest_config(coll_recv_t *col,
         }
     }
 
+    found->liid_format = liid_format;
     if (reencode_needed) {
-        preencode_etsi_for_known_liid(col, found);
+        preencode_etsi_for_known_liid(col, found, liid_format);
     }
     if (agencyid) {
         free(agencyid);
@@ -760,7 +747,8 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
     int r = 0;
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
-    char *enckey = NULL;
+    uint8_t enckey[OPENLI_MAX_ENCRYPTKEY_LEN];
+    size_t enckeylen = 0;
     payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
     /* The queue that this record must be published to is derived from
@@ -812,24 +800,21 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI || msgtype == OPENLI_PROTO_ETSI_CC) {
         encmethod = check_encryption_requirements(col->parentconfig,
-                found->liid, &enckey);
+                found->liid, enckey, &enckeylen);
     }
 
     if (encmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-
-        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
-                col->etsidecoder, msgbody, msglen, enckey) == NULL) {
-
-            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
-            if (enckey) {
-                free(enckey);
-            }
+        if (enckeylen != OPENLI_AES192_KEY_LEN) {
+            logger(LOG_INFO, "OpenLI Mediator: unable to encrypt ETSI record for LIID %s in collector thread %s -- the encryption key provided is not a valid length", found->liid, col->ipaddr);
             return -1;
         }
-    }
 
-    if (enckey) {
-        free(enckey);
+        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
+                col->etsidecoder, msgbody, msglen, enckey, enckeylen) == NULL) {
+
+            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
+            return -1;
+        }
     }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */

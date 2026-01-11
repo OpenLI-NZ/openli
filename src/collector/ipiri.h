@@ -154,5 +154,7 @@ int create_ipiri_job_from_packet(collector_sync_t *sync,
 int create_ipiri_job_from_session(collector_sync_t *sync,
         access_session_t *sess, ipintercept_t *ipint, uint8_t special);
 
+int create_ipiri_job_from_vendor(collector_sync_t *sync,
+        ipintercept_t *ipint, uint32_t cin, uint8_t iritype);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

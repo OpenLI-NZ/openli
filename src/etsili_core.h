@@ -42,10 +42,6 @@
 #define END_ENCODED_SEQUENCE(enc, x) \
         wandder_encode_endseq_repeat(enc, x);
 
-#define ETSI_DIR_FROM_TARGET 0
-#define ETSI_DIR_TO_TARGET 1
-#define ETSI_DIR_INDETERMINATE 2
-
 typedef struct etsili_generic etsili_generic_t;
 typedef struct etsili_generic_freelist etsili_generic_freelist_t;
 
@@ -73,6 +69,7 @@ typedef struct etsili_intercept_details {
     char *intpointid;
     char *operatorid;
     char *networkelemid;
+    openli_liid_format_t liid_format;
 } etsili_intercept_details_t;
 
 typedef struct etsili_ipaddress {
@@ -224,6 +221,7 @@ typedef struct wandder_etsipshdr_data {
     char *intpointid;
     int intpointid_len;
 
+    openli_liid_format_t liid_format;
 } wandder_etsipshdr_data_t;
 
 typedef struct encoded_header_template {

@@ -311,19 +311,21 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
             continue;
         }
 
-        if (tv.tv_sec - rd->last_packet < 300) {
+        if (tv.tv_sec - rd->last_packet < 120) {
             /* 5 minutes is more than long enough to wait */
             JSLN(pval, sipworker->redir_data.redirections, callid);
             continue;
         }
 
         JSLD(rc, sipworker->redir_data.redirections, callid);
-        for (i = 0; i < sipworker->sipworker_threads; i++) {
-            if (i == sipworker->workerid) {
-                continue;
+        if (rd->receive_status == 0) {
+            for (i = 0; i < sipworker->sipworker_threads; i++) {
+                if (i == sipworker->workerid) {
+                    continue;
+                }
+                send_sip_redirect_instruction(sipworker, REDIRECTED_SIP_PURGE,
+                        rd->callid, i);
             }
-            send_sip_redirect_instruction(sipworker, REDIRECTED_SIP_PURGE,
-                    rd->callid, i);
         }
         free(rd->callid);
         free(rd);

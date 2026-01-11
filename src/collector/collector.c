@@ -177,8 +177,158 @@ static void log_collector_stats(collector_global_t *glob) {
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
 }
 
+static void free_coreserver_fast_filters(colthread_local_t *loc) {
+    coreserver_fast_filter_v4_t *fast, *tmp;
+
+    HASH_ITER(hh, loc->cs_v4_fast_filter, fast, tmp) {
+        HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+        free(fast);
+    }
+
+}
+
+static int fast_coreserver_check(colthread_local_t *loc, packet_info_t *pinfo) {
+    coreserver_fast_filter_v4_t *fast;
+
+    if (pinfo->family == AF_INET) {
+        struct sockaddr_in *sa;
+        sa = (struct sockaddr_in *)(&(pinfo->destip));
+
+        HASH_FIND(hh, loc->cs_v4_fast_filter, &(sa->sin_addr.s_addr),
+                sizeof(uint32_t), fast);
+        if (fast) {
+            return 1;
+        }
+        sa = (struct sockaddr_in *)(&(pinfo->srcip));
+
+        HASH_FIND(hh, loc->cs_v4_fast_filter, &(sa->sin_addr.s_addr),
+                sizeof(uint32_t), fast);
+        if (fast) {
+            return 1;
+        }
+    }
+
+    return 0;
+
+}
+
+int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
+        uint8_t ismirror) {
+    coreserver_fast_filter_v4_t *fast;
+
+    if (cs->info == NULL) {
+        if (prepare_coreserver(cs) < 0) {
+            return -1;
+        }
+    }
+    if (cs->info->ai_family == AF_INET) {
+        HASH_FIND(hh, loc->cs_v4_fast_filter,
+                &(CS_TO_V4(cs)->sin_addr.s_addr), sizeof(uint32_t), fast);
+        if (fast) {
+            fast->refcount ++;
+            if (ismirror) {
+                fast->mirrorrefs ++;
+            }
+            return 0;
+        }
+        fast = calloc(1, sizeof(coreserver_fast_filter_v4_t));
+        fast->server_ipv4 = CS_TO_V4(cs)->sin_addr.s_addr;
+        fast->refcount = 1;
+        if (ismirror) {
+            fast->mirrorrefs = 1;
+        } else {
+            fast->mirrorrefs = 0;
+        }
+
+        HASH_ADD_KEYPTR(hh, loc->cs_v4_fast_filter, &(fast->server_ipv4),
+                sizeof(uint32_t), fast);
+    }
+    return 0;
+}
+
+void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
+        uint8_t ismirror) {
+    coreserver_fast_filter_v4_t *fast;
+
+    if (cs->info == NULL) {
+        return;
+    }
+
+    if (cs->info->ai_family == AF_INET) {
+        HASH_FIND(hh, loc->cs_v4_fast_filter,
+                &(CS_TO_V4(cs)->sin_addr.s_addr), sizeof(uint32_t), fast);
+        if (!fast) {
+            /* shouldn't happen? */
+            return;
+        }
+
+        if (ismirror) {
+            fast->mirrorrefs --;
+        }
+        fast->refcount --;
+        if (fast->refcount == 0) {
+            HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+            free(fast);
+        }
+    }
+    return ;
+}
+
+static void populate_coreserver_fast_filters_from_global(colthread_local_t *loc,
+        collector_global_t *glob) {
+
+    coreserver_t *cs, *tmp;
+
+    HASH_ITER(hh, glob->alumirrors, cs, tmp) {
+        if (update_coreserver_fast_filter(loc, cs, 1) < 0) {
+            HASH_DELETE(hh, glob->alumirrors, cs);
+        }
+    }
+
+    HASH_ITER(hh, glob->jmirrors, cs, tmp) {
+        if (update_coreserver_fast_filter(loc, cs, 1) < 0) {
+            HASH_DELETE(hh, glob->jmirrors, cs);
+        }
+    }
+
+    HASH_ITER(hh, glob->ciscomirrors, cs, tmp) {
+        if (update_coreserver_fast_filter(loc, cs, 1) < 0) {
+            HASH_DELETE(hh, glob->ciscomirrors, cs);
+        }
+    }
+}
+
+static void remove_mirrors_from_coreserver_fast_filters(colthread_local_t *loc)
+{
+    coreserver_fast_filter_v4_t *fast, *tmp;
+
+    HASH_ITER(hh, loc->cs_v4_fast_filter, fast, tmp) {
+        if (fast->mirrorrefs > fast->refcount) {
+            HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+            free(fast);
+            continue;
+        }
+        fast->refcount -= fast->mirrorrefs;
+        fast->mirrorrefs = 0;
+
+        if (fast->refcount == 0) {
+            HASH_DELETE(hh, loc->cs_v4_fast_filter, fast);
+            free(fast);
+        }
+    }
+
+}
+
 static void process_incoming_messages(colthread_local_t *loc,
-        openli_pushed_t *syncpush) {
+        openli_pushed_t *syncpush, collector_global_t *glob) {
+
+    if (syncpush->type == OPENLI_PUSH_HUP_RELOAD) {
+        remove_mirrors_from_coreserver_fast_filters(loc);
+        pthread_rwlock_rdlock(&(glob->config_mutex));
+        populate_coreserver_fast_filters_from_global(loc, glob);
+        pthread_rwlock_unlock(&(glob->config_mutex));
+
+    }
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
         handle_push_ipintercept(loc, syncpush->data.ipsess);
@@ -244,7 +394,8 @@ static void process_incoming_messages(colthread_local_t *loc,
 
 #define PACKETS_PER_READ_THRESH 100
 
-static void check_for_messages(colthread_local_t *loc) {
+static void check_for_messages(colthread_local_t *loc,
+        collector_global_t *glob) {
     openli_pushed_t syncpush;
     int i;
 
@@ -252,14 +403,14 @@ static void check_for_messages(colthread_local_t *loc) {
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-        process_incoming_messages(loc, &syncpush);
+        process_incoming_messages(loc, &syncpush, glob);
     }
 
     for (i = 0; i < loc->gtpq_count; i++) {
         while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
     }
 
@@ -267,7 +418,7 @@ static void check_for_messages(colthread_local_t *loc) {
         while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
     }
     loc->pkts_since_msg_read = 0;
@@ -281,7 +432,12 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_stat_t *stats;
     struct timeval tv;
 
-    check_for_messages(loc);
+    check_for_messages(loc, glob);
+    loc->tick_counter ++;
+    if (loc->tick_counter < 100) {
+        return;
+    }
+    loc->tick_counter = 0;
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
@@ -344,6 +500,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->smtpservers = NULL;
     loc->imapservers = NULL;
     loc->pop3servers = NULL;
+    loc->cs_v4_fast_filter = NULL;
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
@@ -353,6 +510,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->accepted = 0;
     loc->dropped = 0;
     loc->pkts_since_msg_read = 0;
+    loc->tick_counter = 0;
 
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
@@ -462,6 +620,8 @@ static void *start_processing_thread(libtrace_t *trace,
         init_collocal(loc, glob);
     }
 
+    populate_coreserver_fast_filters_from_global(loc, glob);
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     register_sync_queues(&(glob->syncip), loc->tosyncq_ip,
@@ -534,7 +694,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-        process_incoming_messages(loc, &syncpush);
+        process_incoming_messages(loc, &syncpush, glob);
     }
 
     deregister_sync_queues(&(glob->syncip), t);
@@ -563,7 +723,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
 
         while (libtrace_message_queue_try_get(&(loc->fromgtp_queues[i]),
                     (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
         pthread_mutex_lock(&(worker->col_queue_mutex));
         sendq_hash = (sync_sendq_t *)(worker->collector_queues);
@@ -588,7 +748,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         zmq_close(loc->sip_worker_queues[i]);
         while (libtrace_message_queue_try_get(&(loc->fromsip_queues[i]),
                     (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
-            process_incoming_messages(loc, &syncpush);
+            process_incoming_messages(loc, &syncpush, glob);
         }
         pthread_mutex_lock(&(sipworker->col_queue_mutex));
         sendq_hash = (sync_sendq_t *)(sipworker->collector_queues);
@@ -647,6 +807,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     free_coreserver_list(loc->smtpservers);
     free_coreserver_list(loc->imapservers);
     free_coreserver_list(loc->pop3servers);
+    free_coreserver_fast_filters(loc);
 
     destroy_ipfrag_reassembler(loc->fragreass);
 
@@ -933,9 +1094,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     packet_info_t pinfo;
 
-	check_for_messages(loc);
+	//check_for_messages(loc, glob);
 
-    loc->pkts_since_msg_read ++;
+    //loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
@@ -1020,6 +1181,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = 0;
         proto = 0;
         pinfo.family = 0;
+    }
+
+    if (fast_coreserver_check(loc, &pinfo) == 0) {
+        goto skipcoreservers;
     }
 
     /* All these special packets are UDP, so we can avoid a whole bunch
@@ -1173,7 +1338,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         }
     }
 
-
+skipcoreservers:
     if (ethertype == TRACE_ETHERTYPE_IP) {
         /* Is this an IP packet? -- if yes, possible IP CC */
         if ((ret = ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
@@ -1388,7 +1553,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     }
 
-    trace_set_tick_interval(inp->trace, 1000);
+    trace_set_tick_interval(inp->trace, 10);
 
     if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
@@ -1402,6 +1567,40 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
             inp->uri, inp->threadcount);
     inp->running = 1;
     return 1;
+}
+
+static void reload_udpsinks(collector_global_t *glob,
+        collector_global_t *newstate) {
+
+    colsync_udp_sink_t *oldsink, *newsink, *tmp;
+
+    pthread_mutex_lock(&(glob->syncip.mutex));
+    HASH_ITER(hh, glob->syncip.udpsinks, oldsink, tmp) {
+        HASH_FIND(hh, newstate->syncip.udpsinks, oldsink->key,
+                strlen(oldsink->key), newsink);
+        if (newsink) {
+            newsink->running = 1;
+            oldsink->running = 1;
+        } else {
+            // this sink has been removed, flag it
+            oldsink->running = 0;
+        }
+    }
+
+    HASH_ITER(hh, newstate->syncip.udpsinks, newsink, tmp) {
+        if (newsink->running) {
+            continue;
+        }
+        HASH_DELETE(hh, newstate->syncip.udpsinks, newsink);
+        HASH_ADD_KEYPTR(hh, glob->syncip.udpsinks, newsink->key,
+                strlen(newsink->key), newsink);
+        newsink->running = 1;
+        // the sync thread will handle activating the sink if there is
+        // already an intercept configured for it
+
+    }
+
+    pthread_mutex_unlock(&(glob->syncip.mutex));
 }
 
 static void reload_x2x3_inputs(collector_global_t *glob,
@@ -1602,6 +1801,7 @@ static inline void init_sync_thread_data(collector_global_t *glob,
 
 static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	pthread_mutex_destroy(&(sup->mutex));
+
 	if (sup->epoll_fd != -1) {
 		close(sup->epoll_fd);
 	}
@@ -1701,11 +1901,17 @@ static void destroy_collector_state(collector_global_t *glob) {
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
     x_input_t *xinp, *xtmp;
+    colsync_udp_sink_t *sink, *sinktmp;
 
     HASH_ITER(hh, glob->inputs, inp, tmp) {
         HASH_DELETE(hh, glob->inputs, inp);
         clear_input(inp);
         free(inp);
+    }
+
+    HASH_ITER(hh, glob->syncip.udpsinks, sink, sinktmp) {
+        HASH_DELETE(hh, glob->syncip.udpsinks, sink);
+        destroy_colsync_udp_sink(sink);
     }
 
     HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
@@ -1934,6 +2140,11 @@ static void init_collector_global(collector_global_t *glob) {
     glob->emailsockfd = -1;
     glob->email_ingestor = NULL;
 
+    /* The rest of syncip gets initialized later, but this is going to
+     * populated when we parse the config file.
+     */
+    glob->syncip.udpsinks = NULL;
+
     /* TODO add config options to change these values
      *      also make sure changes are actions post config-reload */
     glob->email_timeouts.smtp = 5;
@@ -2141,7 +2352,7 @@ static int reload_collector_config(collector_global_t *glob,
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
     reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
-
+    reload_udpsinks(glob, &newstate);
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
      * flow-on effects to a change.
@@ -2642,7 +2853,6 @@ int main(int argc, char *argv[]) {
 
         glob->encoders[i].encrypt.byte_counter = 0;
         glob->encoders[i].encrypt.byte_startts = 0;
-        glob->encoders[i].encrypt.evp_ctx = NULL;
         glob->encoders[i].encrypt.saved_encryption_templates = NULL;
         glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;

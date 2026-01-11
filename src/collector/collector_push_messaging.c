@@ -28,6 +28,7 @@
 #include <assert.h>
 #include <uthash.h>
 #include <arpa/inet.h>
+#include <string.h>
 
 #include "logger.h"
 #include "collector.h"
@@ -54,13 +55,20 @@ static inline void update_intercept_common(intercept_common_t *found,
     found->tomediate = replace->tomediate;
     found->encrypt = replace->encrypt;
 
-    tmp = found->encryptkey;
-    found->encryptkey = replace->encryptkey;
-    replace->encryptkey = tmp;
-
     tmp = found->targetagency;
     found->targetagency = replace->targetagency;
     replace->targetagency = tmp;
+
+    /* copy binary key + set length; clear when encryption is NONE */
+    if (replace->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        replace->encryptkey_len > 0) {
+        found->encryptkey_len = openli_copy_encryptkey(
+            found->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+            replace->encryptkey, replace->encryptkey_len);
+    } else {
+        openli_clear_encryptkey(found->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+                                &found->encryptkey_len);
+    }
 }
 
 static int remove_rtp_stream(colthread_local_t *loc, char *rtpstreamkey) {
@@ -562,10 +570,17 @@ void handle_push_coreserver(colthread_local_t *loc, coreserver_t *cs) {
                     cs->servertype);
             return;
     }
+
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (!found) {
+        if (update_coreserver_fast_filter(loc, cs, 0) < 0) {
+            free_single_coreserver(cs);
+            return;
+        }
+
         HASH_ADD_KEYPTR(hh, *servlist, cs->serverkey, strlen(cs->serverkey),
                 cs);
+
     } else {
         free_single_coreserver(cs);
     }
@@ -602,6 +617,7 @@ void handle_remove_coreserver(colthread_local_t *loc, coreserver_t *cs) {
     }
     HASH_FIND(hh, *servlist, cs->serverkey, strlen(cs->serverkey), found);
     if (found) {
+        remove_coreserver_fast_filter(loc, found, 0);
         HASH_DELETE(hh, *servlist, found);
         free_single_coreserver(found);
     }

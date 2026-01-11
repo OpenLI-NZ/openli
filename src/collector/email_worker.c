@@ -707,10 +707,21 @@ static void start_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.delivcc = strdup(em->common.delivcc);
         expmsg->data.cept.seqtrackerid = em->common.seqtrackerid;
         expmsg->data.cept.encryptmethod = em->common.encrypt;
-        if (em->common.encryptkey) {
-            expmsg->data.cept.encryptkey = strdup(em->common.encryptkey);
+        expmsg->data.cept.timefmt = em->common.time_fmt;
+        expmsg->data.cept.liid_format = em->common.liid_format;
+
+        if (em->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+            em->common.encryptkey_len > 0) {
+            expmsg->data.cept.encryptkey_len = em->common.encryptkey_len;
+            expmsg->data.cept.encryptkey =
+                openli_dup_encryptkey_ptr(em->common.encryptkey,
+                                          em->common.encryptkey_len);
+            if (!expmsg->data.cept.encryptkey) {
+                expmsg->data.cept.encryptkey_len = 0;  /* OOM -> treat as no key */
+            }
         } else {
             expmsg->data.cept.encryptkey = NULL;
+            expmsg->data.cept.encryptkey_len = 0;
         }
 
         publish_openli_msg(state->zmq_pubsocks[em->common.seqtrackerid],

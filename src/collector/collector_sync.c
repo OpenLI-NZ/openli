@@ -63,6 +63,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
     sync->defaultradiususers = NULL;
+    sync->unavailable_udpsinks = NULL;
     sync->instruct_fd = -1;
     sync->instruct_fail = 0;
     sync->instruct_log = 1;
@@ -140,6 +141,45 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     } \
     pthread_mutex_unlock(&(haltinfo.mutex));
 
+void destroy_colsync_udp_sink(colsync_udp_sink_t *sink) {
+    if (sink->zmq_control) {
+        zmq_close(sink->zmq_control);
+    }
+    if (sink->identifier) {
+        free(sink->identifier);
+    }
+    if (sink->listenaddr) {
+        free(sink->listenaddr);
+    }
+    if (sink->listenport) {
+        free(sink->listenport);
+    }
+    if (sink->attached_liid) {
+        free(sink->attached_liid);
+    }
+    if (sink->key) {
+        free(sink->key);
+    }
+    if (sink->sourcehost) {
+        free(sink->sourcehost);
+    }
+    if (sink->sourceport) {
+        free(sink->sourceport);
+    }
+    free(sink);
+}
+
+static void purge_unused_udpsink_mappings(collector_sync_t *sync) {
+
+    saved_udpsink_mapping_t *remmap, *tmp;
+    HASH_ITER(hh, sync->unavailable_udpsinks, remmap, tmp) {
+        HASH_DELETE(hh, sync->unavailable_udpsinks, remmap);
+        clean_intercept_udp_sink(remmap->config);
+        free(remmap->config);
+        free(remmap->key);
+        free(remmap);
+    }
+}
 
 void clean_sync_data(collector_sync_t *sync) {
 
@@ -149,6 +189,7 @@ void clean_sync_data(collector_sync_t *sync) {
     default_radius_user_t *raditer, *radtmp;
     halt_info_t haltinfo;
     x_input_sync_t *xpush, *xtmp;
+    colsync_udp_sink_t *sink, *tmpsink;
 
     if (sync->instruct_fd != -1) {
 	    close(sync->instruct_fd);
@@ -197,6 +238,8 @@ void clean_sync_data(collector_sync_t *sync) {
         SSL_free(sync->ssl);
     }
 
+    purge_unused_udpsink_mappings(sync);
+
     sync->allusers = NULL;
     sync->ipintercepts = NULL;
     sync->knownvoips = NULL;
@@ -237,6 +280,22 @@ void clean_sync_data(collector_sync_t *sync) {
             sync->zmq_colsock = NULL;
         }
 
+        pthread_mutex_lock(&(sync->glob->mutex));
+        HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+            if (sink->tid != 0) {
+                // send a HALT message to the thread and wait for exit
+                openli_export_recv_t *msg;
+                msg = calloc(1, sizeof(openli_export_recv_t));
+                msg->type = OPENLI_EXPORT_HALT;
+                msg->data.haltinfo = NULL;
+                publish_openli_msg(sink->zmq_control, msg);
+            }
+            HASH_DELETE(hh, sync->glob->udpsinks, sink);
+            destroy_colsync_udp_sink(sink);
+        }
+        pthread_mutex_unlock(&(sync->glob->mutex));
+
+
         HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
             if (xpush->zmq_socket) {
                 HALT_THREADS(&(xpush->zmq_socket), 1);
@@ -272,6 +331,161 @@ void clean_sync_data(collector_sync_t *sync) {
     free(sync->zmq_pubsocks);
     free(sync->zmq_fwdctrlsocks);
 
+}
+
+static void create_unused_udpsink_mapping_from_sink(collector_sync_t *sync,
+        colsync_udp_sink_t *sink) {
+
+    intercept_udp_sink_t *config;
+    saved_udpsink_mapping_t *map;
+
+    if (sink == NULL) {
+        return;
+    }
+
+    HASH_FIND(hh, sync->unavailable_udpsinks, sink->key, strlen(sink->key),
+            map);
+    if (map) {
+        // shouldn't happen, maybe something left over?
+        HASH_DELETE(hh, sync->unavailable_udpsinks, map);
+        clean_intercept_udp_sink(map->config);
+        free(map->config);
+        free(map->key);
+        free(map);
+    }
+
+    config = calloc(1, sizeof(intercept_udp_sink_t));
+    config->collectorid = strdup(sink->identifier);
+    config->key = strdup(sink->key);
+    config->listenaddr = strdup(sink->listenaddr);
+    config->listenport = strdup(sink->listenport);
+    config->sourcehost = strdup(sink->sourcehost);
+    config->sourceport = strdup(sink->sourceport);
+    config->direction = sink->direction;
+    config->encapfmt = sink->encapfmt;
+    config->cin = sink->cin;
+    config->liid = strdup(sink->attached_liid);
+
+    map = calloc(1, sizeof(saved_udpsink_mapping_t));
+    map->config = config;
+    map->key = strdup(config->key);
+    HASH_ADD_KEYPTR(hh, sync->unavailable_udpsinks, map->key, strlen(map->key),
+            map);
+
+}
+
+static void halt_udp_sink_thread(colsync_udp_sink_t *sink) {
+
+    openli_export_recv_t *msg;
+
+    if (!sink) {
+        return;
+    }
+    if (sink->attached_liid == NULL) {
+        return;
+    }
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_INTERCEPT_OVER;
+    msg->data.cept.liid = strdup(sink->attached_liid);
+    msg->data.cept.cepttype = OPENLI_INTERCEPT_TYPE_IP;
+    publish_openli_msg(sink->zmq_control, msg);
+
+    free(sink->attached_liid);
+    sink->attached_liid = NULL;
+
+    zmq_close(sink->zmq_control);
+    sink->zmq_control = NULL;
+    sink->tid = 0;
+}
+
+static int create_udp_sink_thread(collector_sync_t *sync,
+        colsync_udp_sink_t *sink, intercept_udp_sink_t *config) {
+
+    ipintercept_t *ipint;
+    udp_sink_worker_args_t *args;
+    char sockname[1024];
+    int hwm = 1000, timeout=1000;
+    struct timeval tv;
+    openli_export_recv_t *msg;
+
+    HASH_FIND(hh_liid, sync->ipintercepts, config->liid, strlen(config->liid),
+            ipint);
+    if (!ipint) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received UDP sink configuration for LIID %s, but this LIID is unknown?", config->liid);
+        }
+        return -1;
+    }
+
+    snprintf(sockname, 1024, "inproc://openliudpsink_sync-%s", sink->key);
+    sink->zmq_control = zmq_socket(sync->glob->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_setsockopt(sink->zmq_control, ZMQ_SNDHWM, &hwm, sizeof(hwm)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for UDP sink %s: %s",
+                sink->key, strerror(errno));
+        return -1;
+    }
+    if (zmq_setsockopt(sink->zmq_control, ZMQ_SNDTIMEO, &timeout,
+                sizeof(timeout)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while configuring control ZMQ for UDP sink %s: %s",
+                sink->key, strerror(errno));
+        return -1;
+    }
+
+    if (zmq_bind(sink->zmq_control, sockname) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: error when connecting to control ZMQ for UDP sink %s: %s",
+                sink->key, strerror(errno));
+        return -1;
+    }
+
+    sink->attached_liid = strdup(config->liid);
+    sink->cin = config->cin;
+    sink->encapfmt = config->encapfmt;
+    sink->direction = config->direction;
+    sink->sourcehost = config->sourcehost;
+    config->sourcehost = NULL;
+    sink->sourceport = config->sourceport;
+    config->sourceport = NULL;
+
+    args = calloc(1, sizeof(udp_sink_worker_args_t));
+
+    args->key = strdup(sink->key);
+    args->listenport = strdup(sink->listenport);
+    args->listenaddr = strdup(sink->listenaddr);
+    args->liid = strdup(sink->attached_liid);
+    args->zmq_ctxt = sync->glob->zmq_ctxt;
+    args->trackerid = ipint->common.seqtrackerid;
+    args->direction = sink->direction;
+    args->encapfmt = sink->encapfmt;
+    args->cin = sink->cin;
+    if (sink->sourcehost) {
+        args->sourcehost = strdup(sink->sourcehost);
+    }
+    if (sink->sourceport) {
+        args->sourceport = strdup(sink->sourceport);
+    }
+
+    pthread_create(&(sink->tid), NULL, start_udp_sink_worker, (void *)args);
+    pthread_detach(sink->tid);
+
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec >= ipint->common.tostart_time &&
+            (ipint->common.toend_time == 0 ||
+                tv.tv_sec < ipint->common.toend_time)) {
+        // IRI begin
+        create_ipiri_job_from_vendor(sync, ipint, sink->cin,
+                OPENLI_IPIRI_STARTWHILEACTIVE);
+        // send a copy of cept to the newly started worker thread
+        msg = create_intercept_details_msg(&(ipint->common),
+                OPENLI_INTERCEPT_TYPE_IP);
+        msg->data.cept.username = strdup(ipint->username);
+        msg->data.cept.accesstype = ipint->accesstype;
+        publish_openli_msg(sink->zmq_control, msg);
+    }
+
+    return 0;
 }
 
 static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
@@ -351,10 +565,70 @@ static inline void push_coreserver_msg(collector_sync_t *sync,
     pthread_mutex_unlock(&(sync->glob->mutex));
 }
 
+static inline void push_hup_reload_to_collectors(libtrace_message_queue_t *q) {
+    openli_pushed_t msg;
+
+    memset(&msg, 0, sizeof(openli_pushed_t));
+    msg.type = OPENLI_PUSH_HUP_RELOAD;
+    libtrace_message_queue_put(q, (void *)(&msg));
+}
+
 void sync_thread_publish_reload(collector_sync_t *sync) {
 
     size_t i;
     openli_export_recv_t *expmsg;
+    colsync_udp_sink_t *sink, *tmp;
+    saved_udpsink_mapping_t *map;
+    ipintercept_t *ipint;
+    sync_sendq_t *qtmp, *sendq;
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_ITER(hh, sync->glob->udpsinks, sink, tmp) {
+        /* Stop any UDP sinks that have been removed from our configuration */
+        if (sink->running == 0) {
+            if (sink->attached_liid) {
+                // put this intercept back into the unused set, just in case
+                // it gets reconfigured later on
+                create_unused_udpsink_mapping_from_sink(sync, sink);
+
+                HASH_FIND(hh_liid, sync->ipintercepts, sink->attached_liid,
+                        strlen(sink->attached_liid), ipint);
+                if (ipint) {
+                    create_ipiri_job_from_vendor(sync, ipint, sink->cin,
+                           OPENLI_IPIRI_ENDWHILEACTIVE);
+                }
+                halt_udp_sink_thread(sink);
+            }
+            HASH_DELETE(hh, sync->glob->udpsinks, sink);
+            destroy_colsync_udp_sink(sink);
+            continue;
+        }
+
+        if (sink->attached_liid) {
+            continue;
+        }
+
+        /* Start any UDP sinks that have been added to our configuration, and
+         * correspond to a previously announced intercept->UDPsink mapping.
+         */
+        HASH_FIND(hh, sync->unavailable_udpsinks, sink->key, strlen(sink->key),
+                map);
+        if (!map) {
+            continue;
+        }
+        if (create_udp_sink_thread(sync, sink, map->config) >= 0) {
+            HASH_DELETE(hh, sync->unavailable_udpsinks, map);
+            clean_intercept_udp_sink(map->config);
+            free(map->config);
+            free(map->key);
+            free(map);
+        }
+    }
+    pthread_mutex_unlock(&(sync->glob->mutex));
+
+    HASH_ITER(hh, (sync_sendq_t *)sync->glob->collector_queues, sendq, qtmp) {
+        push_hup_reload_to_collectors(sendq->q);
+    }
 
     for (i = 0; i < sync->pubsockcount; i++) {
         expmsg = (openli_export_recv_t *)calloc(1,
@@ -468,6 +742,8 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
     internet_user_t *user;
+    colsync_udp_sink_t *sink, *sinktmp;
+    openli_export_recv_t *msg;
 
     if (ipint->common.toend_time <= tstamp && ipint->common.toend_time != 0) {
         irirequired = OPENLI_IPIRI_ENDWHILEACTIVE;
@@ -482,6 +758,48 @@ static void generate_startend_ipiris(collector_sync_t *sync,
         create_ipiri_job_from_iprange(sync, ipr, ipint, irirequired);
     }
 
+    /* If we're relying on UDP sinks, send an IRI BEGIN WHILE ACTIVE and
+     * tell the sink about the intercept now
+     */
+    pthread_mutex_lock(&(sync->glob->mutex));
+    if (irirequired == OPENLI_IPIRI_STARTWHILEACTIVE && sync->glob->udpsinks) {
+        // send one IRI per sink, but we are trusting that the seqtracker
+        // will de-duplicate any that are using the same session ID
+        // (e.g. one sink is "from", the other is "to" the target)
+        HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+            if (sink->attached_liid == NULL || strcmp(sink->attached_liid,
+                    ipint->common.liid) != 0) {
+                continue;
+            }
+            create_ipiri_job_from_vendor(sync, ipint, sink->cin, irirequired);
+
+            msg = create_intercept_details_msg(&(ipint->common),
+                    OPENLI_INTERCEPT_TYPE_IP);
+            msg->data.cept.username = strdup(ipint->username);
+            msg->data.cept.accesstype = ipint->accesstype;
+            publish_openli_msg(sink->zmq_control, msg);
+        }
+    }
+
+    if (irirequired == OPENLI_IPIRI_ENDWHILEACTIVE && sync->glob->udpsinks) {
+
+        /* make sure we tell any UDP sinks to halt */
+        HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+            /* Put an END WHILE ACTIVE IRI on the queue */
+            if (sink->attached_liid == NULL || strcmp(sink->attached_liid,
+                    ipint->common.liid) != 0) {
+                continue;
+            }
+            create_ipiri_job_from_vendor(sync, ipint, sink->cin, irirequired);
+
+            if (sink->attached_liid && strcmp(sink->attached_liid,
+                    ipint->common.liid) == 0) {
+                halt_udp_sink_thread(sink);
+            }
+        }
+    }
+    pthread_mutex_unlock(&(sync->glob->mutex));
+
     user = lookup_user_by_intercept(sync->allusers, ipint);
 
     if (user == NULL) {
@@ -492,8 +810,8 @@ static void generate_startend_ipiris(collector_sync_t *sync,
     HASH_ITER(hh, user->sessions, sess, tmp2) {
         create_iri_from_session(sync, sess, ipint, irirequired);
     }
-}
 
+}
 
 static inline void push_static_iprange_to_collectors(
         libtrace_message_queue_t *q, ipintercept_t *ipint,
@@ -615,6 +933,259 @@ static int send_to_provisioner(collector_sync_t *sync) {
     }
 
     return 1;
+}
+
+static void save_unused_udpsink_mapping(collector_sync_t *sync,
+        intercept_udp_sink_t *config) {
+
+    saved_udpsink_mapping_t *newmap;
+
+    if (!config) {
+        return;
+    }
+
+    HASH_FIND(hh, sync->unavailable_udpsinks, config->key, strlen(config->key),
+            newmap);
+    if (newmap) {
+        clean_intercept_udp_sink(newmap->config);
+        free(newmap->config);
+        newmap->config = config;
+        return;
+    }
+
+    newmap = calloc(1, sizeof(saved_udpsink_mapping_t));
+    newmap->key = strdup(config->key);
+    newmap->config = config;
+    HASH_ADD_KEYPTR(hh, sync->unavailable_udpsinks, newmap->key,
+            strlen(newmap->key), newmap);
+
+}
+
+static void remove_unused_udpsink_mapping(collector_sync_t *sync, char *key) {
+
+    saved_udpsink_mapping_t *remmap;
+
+    if (!key) {
+        return;
+    }
+
+    HASH_FIND(hh, sync->unavailable_udpsinks, key, strlen(key), remmap);
+    if (!remmap) {
+        return;
+    }
+
+    HASH_DELETE(hh, sync->unavailable_udpsinks, remmap);
+    clean_intercept_udp_sink(remmap->config);
+    free(remmap->config);
+    free(remmap->key);
+    free(remmap);
+}
+
+static int sync_remove_intercept_udpsink(collector_sync_t *sync,
+        uint8_t *intmsg, uint16_t msglen) {
+
+    intercept_udp_sink_t config;
+    colsync_udp_sink_t *sink;
+    openli_export_recv_t *msg;
+
+    if (decode_intercept_udpsink_removal(intmsg, msglen, &config) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid UDP sink configuration from provisioner for removal.");
+            clean_intercept_udp_sink(&config);
+            return -1;
+        }
+    }
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_FIND(hh, sync->glob->udpsinks, config.key, strlen(config.key), sink);
+    if (!sink) {
+        remove_unused_udpsink_mapping(sync, config.key);
+        clean_intercept_udp_sink(&config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return 0;
+    }
+    if (sink->attached_liid == NULL) {
+        clean_intercept_udp_sink(&config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return 0;
+    }
+    if (strcmp(sink->attached_liid, config.liid) != 0) {
+        clean_intercept_udp_sink(&config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return 0;
+    }
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_HALT;
+    msg->data.haltinfo = NULL;
+    publish_openli_msg(sink->zmq_control, msg);
+
+    free(sink->attached_liid);
+    sink->attached_liid = NULL;
+
+    zmq_close(sink->zmq_control);
+    sink->zmq_control = NULL;
+    sink->tid = 0;
+    clean_intercept_udp_sink(&config);
+    pthread_mutex_unlock(&(sync->glob->mutex));
+    return 1;
+}
+
+static void sync_update_existing_intercept_udpsink(colsync_udp_sink_t *sink,
+        intercept_udp_sink_t *config) {
+
+    openli_export_recv_t *msg;
+
+    sink->cin = config->cin;
+    sink->encapfmt = config->encapfmt;
+    sink->direction = config->direction;
+
+    if (sink->sourcehost && !config->sourcehost) {
+        free(sink->sourcehost);
+        sink->sourcehost = NULL;
+    } else if (!sink->sourcehost && config->sourcehost) {
+        sink->sourcehost = config->sourcehost;
+        config->sourcehost = NULL;
+    } else if (sink->sourcehost && config->sourcehost &&
+            strcmp(sink->sourcehost, config->sourcehost) != 0) {
+        free(sink->sourcehost);
+        sink->sourcehost = config->sourcehost;
+        config->sourcehost = NULL;
+    }
+
+    if (sink->sourceport && !config->sourceport) {
+        free(sink->sourceport);
+        sink->sourceport = NULL;
+    } else if (!sink->sourceport && config->sourceport) {
+        sink->sourceport = config->sourceport;
+        config->sourceport = NULL;
+    } else if (sink->sourceport && config->sourceport &&
+            strcmp(sink->sourceport, config->sourceport) != 0) {
+        free(sink->sourceport);
+        sink->sourceport = config->sourceport;
+        config->sourceport = NULL;
+    }
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_UDP_SINK_ARGS;
+    /* Only these parameters are affected by a modification */
+    msg->data.udpargs.direction = config->direction;
+    msg->data.udpargs.encapfmt = config->encapfmt;
+    msg->data.udpargs.cin = config->cin;
+    if (sink->sourceport) {
+        msg->data.udpargs.sourceport = strdup(sink->sourceport);
+    }
+    if (sink->sourcehost) {
+        msg->data.udpargs.sourcehost = strdup(sink->sourcehost);
+    }
+
+    publish_openli_msg(sink->zmq_control, msg);
+}
+
+static int sync_modify_intercept_udpsink(collector_sync_t *sync,
+        uint8_t *intmsg, uint16_t msglen) {
+
+    intercept_udp_sink_t *config;
+    colsync_udp_sink_t *sink;
+
+    config = calloc(1, sizeof(intercept_udp_sink_t));
+    if (decode_intercept_udpsink_modify(intmsg, msglen, config) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received invalid UDP sink configuration from provisioner for modifying.");
+        }
+        clean_intercept_udp_sink(config);
+        free(config);
+        return -1;
+    }
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_FIND(hh, sync->glob->udpsinks, config->key, strlen(config->key), sink);
+    if (!sink) {
+        save_unused_udpsink_mapping(sync, config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return 0;
+    }
+    if (sink->attached_liid == NULL) {
+        clean_intercept_udp_sink(config);
+        free(config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return 0;
+    }
+    if (strcmp(sink->attached_liid, config->liid) != 0) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received modification request for UDP sink %s, but the LIIDs do not match? (%s vs %s)",
+                    sink->key, sink->attached_liid, config->liid);
+        }
+        clean_intercept_udp_sink(config);
+        free(config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return -1;
+    }
+    sync_update_existing_intercept_udpsink(sink, config);
+    pthread_mutex_unlock(&(sync->glob->mutex));
+    clean_intercept_udp_sink(config);
+    free(config);
+
+    return 1;
+}
+
+static int sync_new_intercept_udpsink(collector_sync_t *sync, uint8_t *intmsg,
+        uint16_t msglen) {
+
+    intercept_udp_sink_t *config;
+    colsync_udp_sink_t *sink;
+    int ret = -1;
+
+    config = calloc(1, sizeof(intercept_udp_sink_t));
+    if (decode_intercept_udpsink_announcement(intmsg, msglen, config) == -1) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received invalid UDP sink configuration from provisioner.");
+        }
+        clean_intercept_udp_sink(config);
+        free(config);
+        return -1;
+    }
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_FIND(hh, sync->glob->udpsinks, config->key, strlen(config->key),
+            sink);
+    if (!sink) {
+        /* we don't operate this sink, so we don't need to start a thread
+         * now but let's remember the details in case the sink config gets
+         * added later on and we get HUPped */
+        save_unused_udpsink_mapping(sync, config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        return 0;
+    }
+    if (sink->attached_liid) {
+        if (strcmp(sink->attached_liid, config->liid) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: UDP sink %s is already in use by LIID %s, so cannot assign LIID %s to it as well", sink->key, sink->attached_liid, config->liid);
+            clean_intercept_udp_sink(config);
+            free(config);
+            pthread_mutex_unlock(&(sync->glob->mutex));
+            return -1;
+        }
+        /* This must just be some sort of re-announcement? */
+        sync_update_existing_intercept_udpsink(sink, config);
+        pthread_mutex_unlock(&(sync->glob->mutex));
+        clean_intercept_udp_sink(config);
+        free(config);
+        return 0;
+    }
+
+    if (create_udp_sink_thread(sync, sink, config) < 0) {
+        ret = -1;
+    } else {
+        ret = 1;
+    }
+
+    pthread_mutex_unlock(&(sync->glob->mutex));
+    clean_intercept_udp_sink(config);
+    free(config);
+    return ret;
 }
 
 static int new_staticiprange(collector_sync_t *sync, uint8_t *intmsg,
@@ -1193,6 +1764,12 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
 
     openli_export_recv_t *expmsg;
 
+    if (sync->pubsockcount <= 1) {
+        cept->common.seqtrackerid = 0;
+    } else {
+        cept->common.seqtrackerid = hash_liid(cept->common.liid) % sync->pubsockcount;
+    }
+
     if (cept->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
 
         /* Don't need to wait for a session to start an ALU intercept.
@@ -1213,12 +1790,6 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
                 "OpenLI: received IP intercept from provisioner (LIID %s, authCC %s, start time %lu, end time %lu)",
                 cept->common.liid, cept->common.authcc,
                 cept->common.tostart_time, cept->common.toend_time);
-    }
-
-    if (sync->pubsockcount <= 1) {
-        cept->common.seqtrackerid = 0;
-    } else {
-        cept->common.seqtrackerid = hash_liid(cept->common.liid) % sync->pubsockcount;
     }
 
     HASH_ADD_KEYPTR(hh_liid, sync->ipintercepts, cept->common.liid,
@@ -1266,6 +1837,7 @@ static inline void remove_vendormirror_id(collector_sync_t *sync,
 static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
 
     openli_export_recv_t *expmsg;
+    colsync_udp_sink_t *sink, *tmpsink;
     size_t i;
 
     if (!ipint) {
@@ -1298,6 +1870,21 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         remove_vendormirror_id(sync, ipint);
     }
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+        if (sink->attached_liid == NULL) {
+            continue;
+        }
+        if (strcmp(sink->attached_liid, ipint->common.liid) == 0) {
+            // send an IRI END
+            create_ipiri_job_from_vendor(sync, ipint, sink->cin,
+                   OPENLI_IPIRI_ENDWHILEACTIVE);
+            halt_udp_sink_thread(sink);
+        }
+    }
+    pthread_mutex_unlock(&(sync->glob->mutex));
+
     withdraw_xid(sync, ipint);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     for (i = 0; i < sync->forwardcount; i++) {
@@ -1378,7 +1965,22 @@ static int update_modified_intercept(collector_sync_t *sync,
     }
 
     if (changed) {
+        colsync_udp_sink_t *sink, *tmpsink;
         push_ipintercept_update_to_threads(sync, ipint, modified);
+        pthread_mutex_lock(&(sync->glob->mutex));
+        HASH_ITER(hh, sync->glob->udpsinks, sink, tmpsink) {
+            if (sink->attached_liid &&
+                    strcmp(ipint->common.liid, sink->attached_liid) == 0) {
+                expmsg = create_intercept_details_msg(&(modified->common),
+                        OPENLI_INTERCEPT_TYPE_IP);
+                expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
+                expmsg->data.cept.username = strdup(ipint->username);
+                expmsg->data.cept.accesstype = ipint->accesstype;
+
+                publish_openli_msg(sink->zmq_control, expmsg);
+            }
+        }
+        pthread_mutex_unlock(&(sync->glob->mutex));
     }
 
     free_single_ipintercept(modified);
@@ -1591,6 +2193,7 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         /* Only affects IRIs so don't need to modify collector threads */
             x->accesstype = cept->accesstype;
         }
+
         x->awaitingconfirm = 0;
         return update_modified_intercept(sync, x, cept);
     }
@@ -1689,6 +2292,24 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
                         sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ADD_UDPSINK:
+                ret = sync_new_intercept_udpsink(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_REMOVE_UDPSINK:
+                ret = sync_remove_intercept_udpsink(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_MODIFY_UDPSINK:
+                ret = sync_modify_intercept_udpsink(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
@@ -2598,6 +3219,7 @@ int sync_thread_main(collector_sync_t *sync) {
 
             if ((tv.tv_sec % 10) == 0) {
                 x_input_sync_t *xpush, *xtmp;
+                colsync_udp_sink_t *sink, *sinktmp;
                 HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
 
                     if (xpush->listenaddr == NULL ||
@@ -2610,6 +3232,19 @@ int sync_thread_main(collector_sync_t *sync) {
                         logger(LOG_INFO,"OpenLI: collector is unable to queue X2/X3 listener update message (%s) for provisioner.", xpush->identifier);
                     }
                 }
+                pthread_mutex_lock(&(sync->glob->mutex));
+                HASH_ITER(hh, sync->glob->udpsinks, sink, sinktmp) {
+                    if (sink->listenaddr == NULL || sink->identifier == NULL ||
+                            sink->listenport == NULL) {
+                        continue;
+                    }
+                    if (push_udp_sink_onto_net_buffer(sync->outgoing,
+                            sink->listenaddr, sink->listenport,
+                            sink->identifier, (uint64_t)tv.tv_sec) < 0) {
+                        logger(LOG_INFO,"OpenLI: collector is unable to queue UDP sink update message (%s) for provisioner.", sink->key);
+                    }
+                }
+                pthread_mutex_unlock(&(sync->glob->mutex));
                 sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
             }
             do {

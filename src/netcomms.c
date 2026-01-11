@@ -252,6 +252,50 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
             sizeof(ii_header_t));
 }
 
+#define UDP_SINK_BODY_LEN(addr, port, identifier) \
+    (strlen(addr) + strlen(port) + strlen(identifier) + sizeof(uint64_t) + \
+    (4 * 4))
+
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
+        char *identifier, uint64_t ts) {
+
+
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = UDP_SINK_BODY_LEN(addr, port, identifier);
+    // another sneaky re-use of an existing message type...
+    populate_header(&hdr, OPENLI_PROTO_ADD_UDPSINK, totallen, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    /* may as well re-use these field types */
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
+            strlen(addr)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
+            strlen(port)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
+            (uint8_t *)identifier, strlen(identifier)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+
+    return (int)totallen;
+}
+
 #define X2X3_BODY_LEN(addr, port) \
     (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
 
@@ -288,17 +332,19 @@ int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
     return (int)totallen;
 }
 
-#define LIIDMAP_BODY_LEN(agency, liid, key) \
+#define LIIDMAP_BODY_LEN(agency, liid, enclen) \
     (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
-    ( key ? strlen(key) + 4 : 0) + (3 * 4))
+    sizeof(openli_liid_format_t) + \
+    ( enclen > 0 ? enclen + 4 : 0) + (4 * 4))
 
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid, char *encryptkey, payload_encryption_method_t method) {
+        char *liid, uint8_t *encryptkey, size_t encryptlen,
+        payload_encryption_method_t method, openli_liid_format_t liidformat) {
 
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptkey);
+    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptlen);
     populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -316,14 +362,19 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         return -1;
     }
 
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID_FORMAT,
+            (uint8_t *)(&liidformat), sizeof(liidformat)) == -1) {
+        return -1;
+    }
+
     if (push_tlv(nb, OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
             (uint8_t *)(&method), sizeof(method)) == -1) {
         return -1;
     }
 
-    if (encryptkey) {
+    if (encryptlen > 0) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
-                (uint8_t *)encryptkey, strlen(encryptkey)) == -1) {
+                encryptkey, encryptlen) == -1) {
             return -1;
         }
     }
@@ -513,20 +564,19 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          sizeof(common.toend_time) + sizeof(common.tomediate) + \
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
-         sizeof(common.time_fmt) + \
+         sizeof(common.time_fmt) + sizeof(common.liid_format) + \
          (36 * common.xid_count) + \
-         ((10 + common.xid_count) * 4))
+         ((11 + common.xid_count) * 4))
 
-#define VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
+#define IPINTERCEPT_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + sizeof(ipint->vendmirrorid) + \
-         sizeof(ipint->mobileident) + (5 * 4))
+         ipint->username_len + sizeof(ipint->options) + \
+         sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + \
+         (4 * 4))
 
-#define IPINTERCEPT_MODIFY_BODY_LEN(ipint) \
-         (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->accesstype) + \
-         sizeof(ipint->options) + sizeof(ipint->mobileident) + (4 * 4))
+#define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
+        (IPINTERCEPT_BODY_LEN(ipint) + sizeof(ipint->vendmirrorid) + 4)
+
 
 static int _push_intercept_common_fields(net_buffer_t *nb,
         intercept_common_t *common) {
@@ -534,6 +584,12 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
                 strlen(common->liid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID_FORMAT,
+            (uint8_t *)&(common->liid_format),
+            sizeof(common->liid_format)) == -1) {
         return -1;
     }
 
@@ -588,17 +644,6 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
         return -1;
     }
 
-    /** Collectors do not need to know the encryption key any more */
-    /*
-    if (common->encryptkey) {
-        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
-                (uint8_t *)(common->encryptkey),
-                strlen(common->encryptkey)) == -1) {
-            return -1;
-        }
-    }
-    */
-
     for (i = 0; i < common->xid_count; i++) {
         char uuid[64];
         if (uuid_is_null(common->xids[i])) {
@@ -627,9 +672,9 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
     /* Pre-compute our body length so we can write it in the header */
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
-        totallen = VENDMIRROR_IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+        totallen = VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint);
     } else {
-        totallen = IPINTERCEPT_MODIFY_BODY_LEN(ipint);
+        totallen = IPINTERCEPT_BODY_LEN(ipint);
     }
 
     /* Push on header */
@@ -674,7 +719,6 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
             goto pushmodfail;
         }
     }
-
 
     return (int)totallen;
 
@@ -1075,6 +1119,98 @@ int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_EMAIL_TARGET);
 }
 
+#define UDPSINK_BODY_LEN(liid, sink) \
+    (strlen(sink->key) + sizeof(sink->direction) + sizeof(sink->encapfmt) + \
+     strlen(liid) + sizeof(sink->cin) + (5 * 4) + \
+     (sink->sourcehost ? strlen(sink->sourcehost) + 4 : 0) + \
+     (sink->sourceport ? strlen(sink->sourceport) + 4 : 0))
+
+static int push_intercept_udpsink_generic(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink,
+        openli_proto_msgtype_t msgtype) {
+
+    ii_header_t hdr;
+    int totallen;
+    int ret;
+
+    if (sink == NULL) {
+        return 0;
+    }
+
+    totallen = UDPSINK_BODY_LEN(common->liid, sink);
+    populate_header(&hdr, msgtype, totallen, 0);
+
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+                    sizeof(ii_header_t))) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
+            common->liid_len)) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
+            (uint8_t *)sink->key, strlen(sink->key))) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if (sink->sourcehost && strlen(sink->sourcehost) > 0) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACL_IPADDR,
+                (uint8_t *)sink->sourcehost, strlen(sink->sourcehost))) == -1) {
+            goto pushudpsinkfail;
+        }
+    }
+
+    if (sink->sourceport && strlen(sink->sourceport) > 0) {
+        if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ACL_PORT,
+                (uint8_t *)sink->sourceport, strlen(sink->sourceport))) == -1) {
+            goto pushudpsinkfail;
+        }
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
+            (uint8_t *)&(sink->encapfmt), sizeof(sink->encapfmt))) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_DIRECTION,
+            (uint8_t *)&(sink->direction), sizeof(sink->direction))) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_CIN, (uint8_t *)&(sink->cin),
+                sizeof(sink->cin)) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    return 0;
+
+pushudpsinkfail:
+    logger(LOG_INFO,
+            "OpenLI: unable to push UDP sink for IP intercept to collector %d.",
+            nb->fd);
+    return -1;
+}
+
+int push_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+    return push_intercept_udpsink_generic(nb, common, sink,
+            OPENLI_PROTO_ADD_UDPSINK);
+}
+
+int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+    return push_intercept_udpsink_generic(nb, common, sink,
+            OPENLI_PROTO_MODIFY_UDPSINK);
+}
+
+int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+    return push_intercept_udpsink_generic(nb, common, sink,
+            OPENLI_PROTO_REMOVE_UDPSINK);
+}
+
 #define STATICIP_RANGE_BODY_LEN(ipint, ipr) \
         (strlen(ipr->rangestr) + sizeof(ipr->cin) + \
         ipint->common.liid_len + (3 * 4))
@@ -1143,17 +1279,6 @@ int push_static_ipranges_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_ADD_STATICIPS);
 }
 
-#define IPINTERCEPT_BODY_LEN(ipint) \
-        (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->options) + \
-         sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + (4 * 4))
-
-#define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
-        (INTERCEPT_COMMON_LEN(ipint->common) + \
-         ipint->username_len + sizeof(ipint->vendmirrorid) + \
-         sizeof(ipint->options) + sizeof(ipint->accesstype) + \
-         sizeof(ipint->mobileident) + (5 * 4))
-
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
 
     /* Pre-compute our body length so we can write it in the header */
@@ -1162,6 +1287,7 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     int ret;
     ipintercept_t *ipint = (ipintercept_t *)data;
     static_ipranges_t *ipr, *tmpr;
+    intercept_udp_sink_t *sink, *tmpsink;
 
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         totallen = VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint);
@@ -1217,6 +1343,13 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
                 (uint8_t *)(&ipint->vendmirrorid),
                 sizeof(ipint->vendmirrorid))) == -1) {
             goto pushipintfail;
+        }
+    }
+
+    HASH_ITER(hh, ipint->udp_sinks, sink, tmpsink) {
+        if (push_intercept_udp_sink_onto_net_buffer(nb, &(ipint->common),
+                sink) < 0) {
+            return -1;
         }
     }
 
@@ -1414,7 +1547,7 @@ int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
     (sizeof(ndata->notify_type) + sizeof(ndata->seqno) + sizeof(ndata->ts_sec) \
     + sizeof(ndata->ts_usec) + strlen(ndata->liid) + strlen(ndata->authcc) + \
     strlen(ndata->delivcc) + strlen(ndata->agencyid) + \
-    target_info_len + (field_count * 4))
+    sizeof(ndata->liid_format) + target_info_len + (field_count * 4))
 
 int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
         hi1_notify_data_t *ndata) {
@@ -1426,10 +1559,10 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
     int target_info_len;
 
     if (ndata->target_info == NULL) {
-        field_count = 8;
+        field_count = 9;
         target_info_len = 0;
     } else {
-        field_count = 9;
+        field_count = 10;
         target_info_len = strlen(ndata->target_info);
     }
 
@@ -1475,6 +1608,12 @@ int push_hi1_notification_onto_net_buffer(net_buffer_t *nb,
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_TS_USEC,
             (uint8_t *)&(ndata->ts_usec), sizeof(ndata->ts_usec))) == -1) {
+        return -1;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID_FORMAT,
+            (uint8_t *)&(ndata->liid_format),
+            sizeof(ndata->liid_format))) == -1) {
         return -1;
     }
 
@@ -1798,11 +1937,10 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
     }
 
     if (start + *l > end) {
-        logger(LOG_INFO, "OpenLI: truncated TLV -- value is %u bytes, length field says %u\n",
-                end - start, *l);
+        logger(LOG_INFO, "OpenLI: truncated TLV %u -- value is %u bytes, length field says %u\n",
+                *t, end - start, *l);
         return -1;
     }
-
     *v = start;
     return 0;
 }
@@ -1820,6 +1958,7 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->delivcc = NULL;
     common->destid = 0;
     common->targetagency = NULL;
+    common->liid_format = OPENLI_LIID_FORMAT_ASCII;
     common->liid_len = 0;
     common->authcc_len = 0;
     common->delivcc_len = 0;
@@ -1827,7 +1966,8 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->toend_time = 0;
     common->tomediate = 0;
     common->encrypt = 0;
-    common->encryptkey = NULL;
+    memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+    common->encryptkey_len = 0;
     common->seqtrackerid = 0;
     common->xids = NULL;
     common->xid_count = 0;
@@ -1858,6 +1998,9 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             DECODE_STRING_FIELD(common->delivcc, valptr, vallen);
             common->delivcc_len = vallen;
             break;
+        case OPENLI_PROTO_FIELD_LIID_FORMAT:
+            common->liid_format = *((openli_liid_format_t *)valptr);
+            break;
         case OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT:
             common->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
             break;
@@ -1875,7 +2018,15 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
             // shouldn't see this any more, but doesn't hurt to decode anyway
-            DECODE_STRING_FIELD(common->encryptkey, valptr, vallen);
+			if (vallen > OPENLI_MAX_ENCRYPTKEY_LEN) {
+				logger(LOG_INFO, "OpenLI: encryption key too long for buffer (%u)", vallen);
+				return -1;
+			}
+			memcpy(common->encryptkey, valptr, vallen);
+			if (vallen < OPENLI_MAX_ENCRYPTKEY_LEN) {
+				memset(common->encryptkey + vallen, 0, OPENLI_MAX_ENCRYPTKEY_LEN - vallen);
+			}
+			common->encryptkey_len = vallen;
             break;
         case OPENLI_PROTO_FIELD_XID:
             DECODE_STRING_FIELD(uuid, valptr, vallen);
@@ -2031,6 +2182,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->username_len = 0;
     ipint->awaitingconfirm = 0;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sinks = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
     ipint->options = 0;
@@ -2473,6 +2625,112 @@ int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
     return decode_default_radius_announcement(msgbody, len, defuser);
 }
 
+int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
+        intercept_udp_sink_t *sink) {
+
+    uint8_t *msgend = msgbody + len;
+    char *ptr;
+    char *keycopy;
+    sink->key = NULL;
+    sink->collectorid = NULL;
+    sink->listenaddr = NULL;
+    sink->listenport = NULL;
+    sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+    sink->direction = ETSI_DIR_INDETERMINATE;
+    sink->liid = NULL;
+    sink->cin = 1;
+    sink->sourceport = NULL;
+    sink->sourcehost = NULL;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_DIRECTION) {
+            sink->direction = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_UDP_ENCAPSULATION) {
+            sink->encapfmt = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER) {
+            DECODE_STRING_FIELD(sink->key, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_LIID) {
+            DECODE_STRING_FIELD(sink->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ACL_IPADDR) {
+            DECODE_STRING_FIELD(sink->sourcehost, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_ACL_PORT) {
+            DECODE_STRING_FIELD(sink->sourceport, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CIN) {
+            sink->cin = *((uint32_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received UDP sink announcement: %d.", f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    if (!sink->key) {
+        logger(LOG_INFO,
+                "OpenLI: invalid UDP sink announcement -- no key provided");
+        return -1;
+    }
+
+    keycopy = strdup(sink->key);
+    ptr = strtok(keycopy, ",");
+    if (ptr) {
+        sink->collectorid = strdup(ptr);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+        free(keycopy);
+        return -1;
+    }
+
+    ptr = strtok(NULL, ",");
+    if (ptr) {
+        sink->listenaddr = strdup(ptr);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+        free(keycopy);
+        return -1;
+    }
+
+    ptr = strtok(NULL, ",");
+    if (ptr) {
+        sink->listenport = strdup(ptr);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+        free(keycopy);
+        return -1;
+    }
+
+    if (strtok(NULL, ",") != NULL) {
+        logger(LOG_INFO,
+                "OpenLI: invalid UDP sink announcement -- bad key format -- got %s, expected <id>,<addr>,<port>", sink->key);
+        free(keycopy);
+        return -1;
+    }
+
+    free(keycopy);
+    return 0;
+}
+
+int decode_intercept_udpsink_modify(uint8_t *msgbody, uint16_t len,
+        intercept_udp_sink_t *sink) {
+    return decode_intercept_udpsink_announcement(msgbody, len, sink);
+}
+
+int decode_intercept_udpsink_removal(uint8_t *msgbody, uint16_t len,
+        intercept_udp_sink_t *sink) {
+    return decode_intercept_udpsink_announcement(msgbody, len, sink);
+}
+
 int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr) {
 
@@ -2499,7 +2757,7 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
-                "OpenLI: invalid field in received LEA announcement: %d.",
+                "OpenLI: invalid field in received static IP range announcement: %d.",
                 f);
             return -1;
         }
@@ -2554,6 +2812,8 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
             ndata->ts_sec = *((uint64_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TS_USEC) {
             ndata->ts_usec = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_LIID_FORMAT) {
+            ndata->liid_format = *((openli_liid_format_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -2676,6 +2936,41 @@ int decode_default_email_compression_announcement(uint8_t *msgbody,
     return 0;
 }
 
+int decode_udp_sink(uint8_t *msgbody, uint16_t len, char **addr,
+        char **port, char **identifier, uint64_t *ts) {
+
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_CORESERVER_IP) {
+            DECODE_STRING_FIELD(*addr, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_CORESERVER_PORT) {
+            DECODE_STRING_FIELD(*port, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER) {
+            DECODE_STRING_FIELD(*identifier, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
+            (*ts) = *((uint64_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received UDP sink announcement: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+    return 0;
+
+}
+
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, uint64_t *ts) {
 
@@ -2710,12 +3005,14 @@ int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
 
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid, char **encryptkey, payload_encryption_method_t *method) {
+        char **liid, uint8_t *encryptkey, size_t *encryptlen,
+        payload_encryption_method_t *method, openli_liid_format_t *liidformat) {
 
     uint8_t *msgend = msgbody + len;
 
-    *encryptkey = NULL;
+    *encryptlen = 0;
     *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
+    *liidformat = OPENLI_LIID_FORMAT_ASCII;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2731,9 +3028,22 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agency, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
-            DECODE_STRING_FIELD(*encryptkey, valptr, vallen);
+			if (vallen > OPENLI_MAX_ENCRYPTKEY_LEN) {
+				logger(LOG_INFO, "OpenLI: encryption key too long for buffer (%u)", vallen);
+				return -1;
+			}
+            // encryptkey MUST point to a buffer containing at least
+            // OPENLI_MAX_ENCRYPTKEY_LEN bytes!
+			memcpy(encryptkey, valptr, vallen);
+			if (vallen < OPENLI_MAX_ENCRYPTKEY_LEN) {
+				memset(encryptkey + vallen, 0,
+                        OPENLI_MAX_ENCRYPTKEY_LEN - vallen);
+			}
+			*encryptlen = vallen;
         } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
             (*method) = *((payload_encryption_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_LIID_FORMAT) {
+            (*liidformat) = *((openli_liid_format_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

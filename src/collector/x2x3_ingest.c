@@ -233,12 +233,24 @@ static inline void update_intercept_common(published_intercept_msg_t *src,
 
     UPDATE_STRING_FIELD(dst->authcc, src->authcc, dst->authcc_len)
     UPDATE_STRING_FIELD(dst->delivcc, src->delivcc, dst->delivcc_len)
-    UPDATE_STRING_FIELD(dst->encryptkey, src->encryptkey, unused)
     UPDATE_STRING_FIELD(dst->targetagency, src->targetagency, unused)
+
+	/* binary key: copy bytes or clear */
+    if (src->encryptkey && src->encryptkey_len > 0 &&
+        dst->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        dst->encryptkey_len = openli_copy_encryptkey(
+            dst->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+            src->encryptkey, src->encryptkey_len);
+    } else {
+        openli_clear_encryptkey(dst->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+                                &dst->encryptkey_len);
+    }
 
     dst->destid = destid;
     dst->seqtrackerid = src->seqtrackerid;
     dst->encrypt = src->encryptmethod;
+    dst->time_fmt = src->timefmt;
+    dst->liid_format = src->liid_format;
 
     free(dst->xids);
     dst->xids = src->xids;
@@ -257,9 +269,10 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     dst->targetagency = src->targetagency;
     dst->seqtrackerid = src->seqtrackerid;
     dst->encrypt = src->encryptmethod;
-    dst->encryptkey = src->encryptkey;
     dst->xid_count = src->xid_count;
     dst->xids = src->xids;
+    dst->time_fmt = src->timefmt;
+    dst->liid_format = src->liid_format;
 
     if (dst->liid) {
         dst->liid_len = strlen(dst->liid);
@@ -271,12 +284,25 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
         dst->delivcc_len = strlen(dst->delivcc);
     }
 
+    /* move binary key from published msg into inline buffer */
+    if (src->encryptkey && src->encryptkey_len > 0 &&
+        dst->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        dst->encryptkey_len = openli_move_encryptkey(
+            dst->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
+            &src->encryptkey, src->encryptkey_len);
+        src->encryptkey_len = 0;
+    } else {
+        dst->encryptkey_len = 0;
+    }
+
     src->liid = NULL;
     src->authcc = NULL;
     src->delivcc = NULL;
-    src->encryptkey = NULL;
     src->targetagency = NULL;
     src->xids = NULL;
+    /* already NULLed by move; just ensure len is 0 */
+    src->encryptkey = NULL;
+    src->encryptkey_len = 0;
 }
 
 static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {

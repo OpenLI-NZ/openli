@@ -47,6 +47,7 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
     uint32_t hashalgo = 0;
 
     gettimeofday(&tv, NULL);
+    ENC_USEQUENCE(encoder);
     encode_etsili_pshdr(encoder, hdrdata, cin, self_seqno, &tv, timefmt);
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
@@ -98,6 +99,7 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
     struct timeval tv;
 
     gettimeofday(&tv, NULL);
+    ENC_USEQUENCE(encoder);
     encode_etsili_pshdr(encoder, hdrdata, 0, seqno, &tv, timefmt);
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload

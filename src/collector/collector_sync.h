@@ -42,6 +42,12 @@
 #include "timed_intercept.h"
 #include "x2x3_ingest.h"
 
+typedef struct saved_udpsink_mapping {
+    char *key;
+    intercept_udp_sink_t *config;
+    UT_hash_handle hh;
+} saved_udpsink_mapping_t;
+
 typedef struct colsync_data {
 
     sync_thread_global_t *glob;
@@ -68,6 +74,8 @@ typedef struct colsync_data {
     user_intercept_list_t *userintercepts;
     voipintercept_t *knownvoips;
     default_radius_user_t *defaultradiususers;
+
+    saved_udpsink_mapping_t *unavailable_udpsinks;
 
     Pvoid_t upcoming_intercept_events;
     int upcomingtimerfd;

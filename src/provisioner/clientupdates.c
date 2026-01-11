@@ -278,6 +278,45 @@ int withdraw_default_radius_username(provision_state_t *state,
     return 0;
 }
 
+void add_new_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_intercept_udp_sink_onto_net_buffer(sock->outgoing,
+                common, sink) < 0) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
+void modify_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_modify_intercept_udp_sink_onto_net_buffer(sock->outgoing,
+                common, sink) < 0) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
+void remove_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_remove_intercept_udp_sink_onto_net_buffer(sock->outgoing,
+                common, sink) < 0) {
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
 void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr) {
 
@@ -443,6 +482,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
     ndata.ts_sec = tv.tv_sec;
     ndata.ts_usec = tv.tv_usec;
     ndata.target_info = target_id;
+    ndata.liid_format = intcomm->liid_format;
 
     SEND_ALL_MEDIATORS_BEGIN
         if (push_hi1_notification_onto_net_buffer(sock->outgoing, &ndata) == -1)
@@ -508,7 +548,8 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
 
     SEND_ALL_MEDIATORS_BEGIN
         if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
-                liidmap->liid, liidmap->encryptkey, liidmap->encryptmethod)
+                liidmap->liid, liidmap->encryptkey, liidmap->encryptkey_len,
+                liidmap->encryptmethod, liidmap->liid_format)
                 == -1) {
             logger(LOG_INFO,
                     "OpenLI provisioner: unable to send mapping for LIID %s to mediator %u.",
@@ -732,8 +773,10 @@ liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         h->liid = common->liid;
         HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
     }
+    h->liid_format = common->liid_format;
     h->agency = common->targetagency;
-    h->encryptkey = common->encryptkey;
+    memcpy(h->encryptkey, common->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
+    h->encryptkey_len = common->encryptkey_len;
     h->encryptmethod = common->encrypt;
     h->need_announce = 1;
 
@@ -758,12 +801,13 @@ static inline int replace_intercept_encryption_config(
         return 0;
     }
     common->encrypt = agency->encrypt;
-    if (common->encryptkey) {
-        free(common->encryptkey);
-        common->encryptkey = NULL;
-    }
-    if (agency->encryptkey) {
-        common->encryptkey = strdup(agency->encryptkey);
+    common->encryptkey_len = agency->encryptkey_len;
+
+    if (agency->encryptkey_len > 0) {
+        memcpy(common->encryptkey, agency->encryptkey,
+                OPENLI_MAX_ENCRYPTKEY_LEN);
+    } else {
+        memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     }
     return 1;
 }
@@ -822,9 +866,11 @@ void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
         common->encrypt_inherited = 0;
     }
 
-    if (common->encryptkey == NULL && found->ag->encryptkey &&
+    if (common->encryptkey_len == 0 && found->ag->encryptkey_len > 0 &&
             common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        common->encryptkey = strdup(found->ag->encryptkey);
+        common->encryptkey_len = found->ag->encryptkey_len;
+        memcpy(common->encryptkey, found->ag->encryptkey,
+                OPENLI_MAX_ENCRYPTKEY_LEN);
     }
 }
 

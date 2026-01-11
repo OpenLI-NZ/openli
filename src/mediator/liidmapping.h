@@ -38,11 +38,16 @@ typedef struct liidmapping liid_map_entry_t;
 typedef struct added_liid {
     /** The LIID */
     char *liid;
+    /** Whether the LIID should be encoded as ASCII or binary octets */
+    openli_liid_format_t liid_format;
+
     /** The ID of the agency that the LIID is associated with */
     char *agencyid;
 
     /** The key to use to encrypt ETSI payload, if encryption is required */
-    char *encryptkey;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+
+    size_t encryptkey_len;
 
     /** The encryption algorithm to use, if any */
     payload_encryption_method_t encrypt;
@@ -78,10 +83,14 @@ struct liidmapping {
     uint8_t iriqueue_deleted;
 
     /** The key to use to encrypt ETSI payload, if encryption is required */
-    char *encryptkey;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+
+    size_t encryptkey_len;
 
     /** The encryption algorithm to use, if any */
     payload_encryption_method_t encrypt;
+
+    openli_liid_format_t liid_format;
 };
 
 /** The map used to track which LIIDs should be sent to which agencies */

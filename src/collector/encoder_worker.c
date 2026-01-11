@@ -40,6 +40,7 @@
 #include "logger.h"
 #include "etsili_core.h"
 #include "encoder_worker.h"
+#include "intercept.h"
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
@@ -138,23 +139,6 @@ static int init_worker(openli_encoder_t *enc) {
 
 }
 
-static void free_encoded_header_templates(Pvoid_t headers) {
-    PWord_t pval;
-    Word_t index = 0;
-
-    JLF(pval, headers, index);
-    while (pval) {
-        encoded_header_template_t *tplate;
-
-        tplate = (encoded_header_template_t *)(*pval);
-        if (tplate->header) {
-            free(tplate->header);
-        }
-        free(tplate);
-        JLN(pval, headers, index);
-    }
-}
-
 static void free_mobileiri_parameters(etsili_generic_t *params) {
 
     etsili_generic_t *oldp, *tmp;
@@ -167,7 +151,7 @@ static void free_mobileiri_parameters(etsili_generic_t *params) {
 }
 
 void destroy_encoder_worker(openli_encoder_t *enc) {
-    int x, i, rcint;
+    int x, i;
     openli_encoding_job_t job;
     uint32_t drained = 0;
     PWord_t pval;
@@ -184,8 +168,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         if (t_set->key) {
             free(t_set->key);
         }
-        free_encoded_header_templates(t_set->headers);
-        JLFA(rcint, t_set->headers);
+        free_encoded_header_templates(&(t_set->headers));
 
         assert(t_set->ccpayloads == NULL);
         assert(t_set->iripayloads == NULL);
@@ -229,10 +212,6 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
         } while (x > 0);
         zmq_close(enc->zmq_recvjobs[i]);
-    }
-
-    if (enc->encrypt.evp_ctx) {
-        EVP_CIPHER_CTX_free(enc->encrypt.evp_ctx);
     }
 
     if (enc->zmq_control) {
@@ -318,7 +297,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             free_ipiri_parameters(params);
             return -1;
@@ -364,7 +343,7 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -422,7 +401,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
 
     body = encode_epscc_body(enc->encoder, job->preencoded, job->liid,
             job->cin, epsccjob->gtpseqno, epsccjob->dir, job->origreq->ts,
-            epsccjob->icetype, epsccjob->ipclen);
+            epsccjob->icetype, epsccjob->ipclen, job->liid_format);
 
     if (body == NULL ||  body->len == 0 || body->encoded == NULL) {
         logger(LOG_INFO, "OpenLI: failed to encode ETSI EPSCC body");
@@ -443,7 +422,8 @@ static int encode_templated_epscc(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, epsccjob->ipcontent, epsccjob->ipclen, job) < 0) {
+                body->len, epsccjob->ipcontent, epsccjob->ipclen,
+                job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -494,7 +474,7 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -545,7 +525,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -601,7 +581,8 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
                 umtscc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
+                (uint8_t *)ccjob->ipcontent, ccjob->ipclen,
+                job->origreq->type, job->liid) < 0) {
             return -1;
         }
     }
@@ -680,7 +661,8 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
                 (uint8_t *)emailccjob->cc_content,
-                emailccjob->cc_content_len, job) < 0) {
+                emailccjob->cc_content_len, job->origreq->type,
+                job->liid) < 0) {
             return -1;
         }
     }
@@ -734,7 +716,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
                 (uint8_t *)ipccjob->ipcontent,
-                ipccjob->ipclen, job) < 0) {
+                ipccjob->ipclen, job->origreq->type, job->liid) < 0) {
             return -1;
         }
     }
@@ -742,59 +724,6 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     /* Success */
     return 1;
 
-}
-
-static encoded_header_template_t *encode_templated_psheader(
-        wandder_encoder_t *encoder, saved_encoding_templates_t *t_set,
-        openli_encoding_job_t *job) {
-
-    uint8_t seqlen, tvsec_len, tvusec_len;
-    uint32_t key = 0;
-    PWord_t pval;
-    encoded_header_template_t *tplate = NULL;
-
-    if (job->origreq->ts.tv_sec == 0) {
-        gettimeofday(&(job->origreq->ts), NULL);
-    }
-    seqlen = DERIVE_INTEGER_LENGTH(job->seqno);
-
-    if (job->timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
-        tvsec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_sec);
-        tvusec_len = DERIVE_INTEGER_LENGTH(job->origreq->ts.tv_usec);
-
-        key = (job->cept_version << 24) + (seqlen << 16) +
-                (tvsec_len << 8) + tvusec_len;
-    } else if (job->timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
-        // all libwandder generalized timestamps are encoded with the
-        // same length
-        key = (job->cept_version << 24) + (seqlen << 16);
-    } else {
-        return NULL;
-    }
-
-    JLI(pval, t_set->headers, key);
-    if (*pval == 0) {
-        tplate = calloc(1, sizeof(encoded_header_template_t));
-
-        if (etsili_create_header_template(encoder, job->preencoded,
-                (int64_t)job->cin, (int64_t)job->seqno, &(job->origreq->ts),
-                tplate, job->timefmt) < 0) {
-            free(tplate);
-            return NULL;
-        }
-
-        *pval = (Word_t)tplate;
-
-    } else {
-        tplate = (encoded_header_template_t *)(*pval);
-
-        if (etsili_update_header_template(tplate, (int64_t)job->seqno,
-                &(job->origreq->ts), job->timefmt) < 0) {
-            return NULL;
-        }
-    }
-
-    return tplate;
 }
 
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
@@ -817,7 +746,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         (*pval) = (Word_t)t_set;
     }
 
-    hdr_tplate = encode_templated_psheader(enc->encoder, t_set, job);
+    hdr_tplate = encode_templated_psheader(enc->encoder, &(t_set->headers),
+            job->preencoded, job->seqno, &(job->origreq->ts), job->cin,
+            job->cept_version, job->timefmt);
 
     switch (job->origreq->type) {
         case OPENLI_EXPORT_IPCC:

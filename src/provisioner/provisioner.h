@@ -89,6 +89,15 @@ typedef struct x2x3_listener {
     time_t lastseen;
 } x2x3_listener_t;
 
+/** Describes a single UDP sink that is available on a collector
+ */
+typedef struct col_udp_sink {
+    char *ipaddr;
+    char *port;
+    char *identifier;
+    time_t lastseen;
+} collector_udp_sink_t;
+
 /** Represents an event that has been added to the epoll event set */
 typedef struct prov_epoll_ev {
     /** The event type -- one of the PROV_EPOLL_* values listed below */
@@ -163,11 +172,16 @@ typedef struct liid_hash {
     /** The LIID for the intercept */
     char *liid;
 
+    /** Whether the LIID is ascii-text or binary octets */
+    openli_liid_format_t liid_format;
+
     /** The encryption method to use if/when encrypting intercept payload */
     payload_encryption_method_t encryptmethod;
 
     /** The encryption key to use if/when encrypting intercept payload */
-    char *encryptkey;
+    uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
+
+    size_t encryptkey_len;
 
     /** Flag to indicate if any of the configuration in this mapping has
      *  changed and therefore needs to be announced to the mediators
@@ -253,6 +267,13 @@ typedef struct prov_mediator {
     UT_hash_handle hh;
 } prov_mediator_t;
 
+typedef struct udp_sink_intercept_mapping {
+    char *udpsink;
+    char *liid;
+
+    UT_hash_handle hh;
+} udp_sink_intercept_mapping_t;
+
 typedef struct prov_intercept_conf {
     /** The set of known RADIUS servers that will be provided to collectors */
     coreserver_t *radiusservers;
@@ -278,6 +299,11 @@ typedef struct prov_intercept_conf {
     liid_hash_t *liid_map;
     /** A set of default RADIUS user names */
     default_radius_user_t *defradusers;
+
+    /** A map that ensures each UDP sink only is responsible for a single
+     *  intercept.
+     */
+    udp_sink_intercept_mapping_t *udp_sink_intercept_mappings;
 
     /** The default approach for delivering compressed email CCs to the
      *  agencies (i.e. in their original compressed form, or decompressed).
@@ -472,6 +498,12 @@ void modify_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 void remove_existing_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
+void add_new_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
+void modify_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
+void remove_intercept_udp_sink(provision_state_t *state,
+        intercept_common_t *common, intercept_udp_sink_t *sink);
 int halt_existing_intercept(provision_state_t *state,
         void *cept, openli_proto_msgtype_t wdtype);
 int modify_existing_intercept_options(provision_state_t *state,
@@ -514,6 +546,9 @@ void update_intercept_timeformats(provision_state_t *state,
 int reload_provisioner_config(provision_state_t *state);
 int check_for_duplicate_xids(prov_intercept_conf_t *intconf,
         size_t xid_count, uuid_t *xids, char *xid_liid);
+void remove_udp_sink_mapping(provision_state_t *state,
+        char *liid, char *sinkid);
+int add_udp_sink_mapping(provision_state_t *state, char *liid, char *sinkkey);
 
 /* Implemented in clientdb.c */
 int init_clientdb(provision_state_t *state);
@@ -521,6 +556,9 @@ void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
+int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
+       char *listenaddr, char *listenport, char *identifier,
+       uint64_t timestamp);
 int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
        char *listenaddr, char *listenport, uint64_t timestamp);
 void update_all_client_rows(provision_state_t *state);
@@ -530,6 +568,8 @@ known_client_t *fetch_all_mediator_clients(provision_state_t *state,
         size_t *clientcount);
 x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         size_t *listenercount, const char *collectorid);
+collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
+        size_t *sinkcount, const char *collectorid);
 int remove_collector_from_clientdb(provision_state_t *state, const char *idstr);
 #endif
 

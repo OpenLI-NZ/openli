@@ -44,6 +44,23 @@ typedef struct yaml_mem_buf {
     size_t used;
 } yaml_buffer_t;
 
+
+#define YAML_EMIT_STRING(event, label, strval) \
+    if (strval != NULL) {                                               \
+        yaml_scalar_event_initialize(&event, NULL,                      \
+                (yaml_char_t *)YAML_STR_TAG,                            \
+                (yaml_char_t *)label, strlen(label), 1, 0,              \
+                YAML_PLAIN_SCALAR_STYLE);                               \
+        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
+                                                                        \
+        yaml_scalar_event_initialize(&event, NULL,                      \
+                (yaml_char_t *)YAML_STR_TAG,                            \
+                (yaml_char_t *)strval, strlen(strval),                  \
+                        1, 0, YAML_PLAIN_SCALAR_STYLE);                 \
+        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
+    }
+
+
 static const char *access_type_to_string(internet_access_method_t method) {
 
     switch(method) {
@@ -88,6 +105,41 @@ static const char *agency_integrity_hash_method_to_string(
             return "sha-512";
     }
     return "undefined";
+}
+
+static inline int emit_encryption_key(yaml_emitter_t *emitter,
+        uint8_t *key, size_t keylen) {
+
+    /* Emit encryption key as 0x + hex, using the binary key length */
+    yaml_event_t event;
+
+    if (keylen == 0) {
+        return 0;
+    }
+
+    /* field name */
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"encryptionkey", (int)strlen("encryptionkey"),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    yaml_emitter_emit(emitter, &event);
+
+    /* value: 0x + 2 hex chars per byte */
+    char hexbuf[2 + OPENLI_MAX_ENCRYPTKEY_LEN * 2 + 1];
+    size_t n = keylen;
+    char *p = hexbuf;
+    static const char hexd[] = "0123456789abcdef";
+    *p++ = '0'; *p++ = 'x';
+    for (size_t i = 0; i < n; ++i) {
+        *p++ = hexd[key[i] >> 4];
+        *p++ = hexd[key[i] & 0x0F];
+    }
+    *p = '\0';
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)hexbuf, (int)(2 + n * 2),
+            1, 0, YAML_PLAIN_SCALAR_STYLE);
+    yaml_emitter_emit(emitter, &event);
+    return 1;
 }
 
 static int emit_default_radius_usernames(default_radius_user_t *radusers,
@@ -488,18 +540,9 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
-        if (ag->ag->encryptkey && strlen(ag->ag->encryptkey) > 0) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"encryptionkey", strlen("encryptionkey"),
-                    1, 0, YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)ag->ag->encryptkey,
-                    strlen(ag->ag->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        if (emit_encryption_key(emitter, ag->ag->encryptkey,
+                ag->ag->encryptkey_len) < 0) {
+            return -1;
         }
 
         if (emit_agency_integrity_config(emitter, ag->ag) < 0) {
@@ -513,6 +556,43 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
 
     yaml_sequence_end_event_initialize(&event);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
+    return 0;
+}
+
+static int emit_intercept_udpsinks(intercept_udp_sink_t *sinks,
+        yaml_emitter_t *emitter) {
+    intercept_udp_sink_t *sink, *tmp;
+    yaml_event_t event;
+    const char *dirstring;
+    const char *encapstring;
+    char buffer[256];
+
+    HASH_ITER(hh, sinks, sink, tmp) {
+
+        yaml_mapping_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        YAML_EMIT_STRING(event, "collectorid", sink->collectorid);
+        YAML_EMIT_STRING(event, "listenaddr", sink->listenaddr);
+        YAML_EMIT_STRING(event, "listenport", sink->listenport);
+
+        if (sink->cin != 0xFFFFFFFF) {
+            snprintf(buffer, 64, "%u", sink->cin);
+            YAML_EMIT_STRING(event, "sessionid", buffer);
+        }
+
+        dirstring = get_etsi_direction_string(sink->direction);
+        encapstring = get_udp_encap_format_string(sink->encapfmt);
+
+        YAML_EMIT_STRING(event, "direction", dirstring);
+        YAML_EMIT_STRING(event, "encapsulation", encapstring);
+        YAML_EMIT_STRING(event, "sourcehost", sink->sourcehost);
+        YAML_EMIT_STRING(event, "sourceport", sink->sourceport);
+
+        yaml_mapping_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
     return 0;
 }
 
@@ -620,9 +700,16 @@ static int emit_intercept_common(intercept_common_t *intcom,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-            (yaml_char_t *)intcom->liid, strlen(intcom->liid), 1, 0,
-            YAML_PLAIN_SCALAR_STYLE);
+    if (intcom->liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        snprintf(buffer, 64, "0x%s", intcom->liid);
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)buffer, strlen(buffer), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    } else {
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)intcom->liid, strlen(intcom->liid), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+    }
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
@@ -720,17 +807,11 @@ static int emit_intercept_common(intercept_common_t *intcom,
         if (!yaml_emitter_emit(emitter, &event)) return -1;
     }
 
-    if (!intcom->encrypt_inherited && intcom->encryptkey &&
-            strlen(intcom->encryptkey) > 0) {
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"encryptionkey", strlen("encryptionkey"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)intcom->encryptkey,
-                strlen(intcom->encryptkey), 1, 0, YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    if (!intcom->encrypt_inherited) {
+        if (emit_encryption_key(emitter, intcom->encryptkey,
+                intcom->encryptkey_len) < 0) {
+            return -1;
+        }
     }
 
     if (intcom->xid_count != 0) {
@@ -936,6 +1017,27 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
                     YAML_PLAIN_SCALAR_STYLE);
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
+
+
+        if (ipint->udp_sinks) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"udpsinks", strlen("udpsinks"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_sequence_start_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            if (emit_intercept_udpsinks(ipint->udp_sinks, emitter) < 0) {
+                return -1;
+            }
+
+            yaml_sequence_end_event_initialize(&event);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
 
         if (ipint->statics != NULL) {
             yaml_scalar_event_initialize(&event, NULL,

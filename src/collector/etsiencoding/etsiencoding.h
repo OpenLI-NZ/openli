@@ -127,7 +127,6 @@ enum {
 typedef struct encrypt_encode_state {
     uint32_t byte_counter;
     uint32_t byte_startts;
-    EVP_CIPHER_CTX *evp_ctx;
     Pvoid_t saved_encryption_templates;
 } encrypt_encode_state_t;
 
@@ -141,6 +140,7 @@ typedef struct encoder_job {
     uint8_t cept_version;
     payload_encryption_method_t encryptmethod;
     openli_timestamp_encoding_fmt_t timefmt;
+    openli_liid_format_t liid_format;
 } PACKED openli_encoding_job_t;
 
 void encode_ipaddress(wandder_encoder_t *encoder,
@@ -157,8 +157,7 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
 int create_etsi_encoded_result(openli_encoded_result_t *res,
         encoded_header_template_t *hdr_tplate,
         uint8_t *body_content, uint16_t bodylen,
-        uint8_t *trailing, uint16_t traillen,
-        openli_encoding_job_t *job);
+        uint8_t *trailing, uint16_t traillen, uint8_t exptype, char *liid);
 
 void etsili_destroy_encrypted_templates(Pvoid_t templates);
 
@@ -172,14 +171,23 @@ int encode_templated_ipmmcc(wandder_encoder_t *encoder,
         openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res, Pvoid_t *saved_templates);
 
-encoded_global_template_t *lookup_global_template(Pvoid_t *saved_templates,
-        uint32_t key, uint8_t *is_new);
-void clear_global_templates(Pvoid_t *saved_templates);
-
 void encode_etsili_pshdr(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t cin,
         int64_t seqno, struct timeval *tv,
         openli_timestamp_encoding_fmt_t timefmt);
+
+/* defined in templating.c */
+
+void free_encoded_header_templates(Pvoid_t *headers);
+encoded_header_template_t *encode_templated_psheader(
+        wandder_encoder_t *encoder, Pvoid_t *headermap,
+        wandder_encode_job_t *preencoded, uint32_t seqno,
+        struct timeval *tv, int64_t cin, uint32_t cept_version,
+        openli_timestamp_encoding_fmt_t timefmt);
+
+encoded_global_template_t *lookup_global_template(Pvoid_t *saved_templates,
+        uint32_t key, uint8_t *is_new);
+void clear_global_templates(Pvoid_t *saved_templates);
 
 /* defined in tripayload.c */
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
@@ -196,15 +204,27 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
         openli_timestamp_encoding_fmt_t timefmt);
 
 /* defined in hi1notification.c */
-wandder_encoded_result_t *encode_etsi_hi1_notification(
+openli_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,
         char *operatorid, char *shortopid,
-        openli_timestamp_encoding_fmt_t timefmt);
+        openli_timestamp_encoding_fmt_t timefmt,
+        encrypt_encode_state_t *encryptstate,
+        payload_encryption_method_t encryptmethod,
+        uint8_t *encryptkey, uint32_t enckeylen);
 
 /* defined in encryptcontainer.c */
 int encrypt_aes_192_cbc(EVP_CIPHER_CTX *ctx, uint8_t *buf, uint16_t buflen,
         uint8_t *dest, uint16_t destlen, uint32_t seqno,
-        char *encryptkey);
+        const uint8_t *encryptkey);
+
+uint8_t *wrap_etsili_preencryption(encrypt_encode_state_t *encrypt,
+        payload_encryption_method_t encryptmethod, uint32_t header_len,
+        uint8_t *payloadbody, uint16_t bodylen,
+        uint8_t *ipcontents, uint16_t ipclen, uint32_t *enclen);
+
+uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
+        wandder_etsispec_t *etsidecoder, uint8_t *fullrec, uint16_t reclen,
+        uint8_t *enckey, size_t enckeylen);
 
 #endif
 

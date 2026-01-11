@@ -174,6 +174,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->liid_map = NULL;
     state->leas = NULL;
     state->defradusers = NULL;
+    state->udp_sink_intercept_mappings = NULL;
     state->destroy_pending = 0;
     state->was_encrypted = 0;
     state->default_email_deliver_compress =
@@ -466,7 +467,8 @@ static int add_collector_to_hashmap(provision_state_t *state,
         col->client = client;
         HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
                 strlen(col->client->ipaddress), col);
-    } else {
+    } else if (col->client != client) {
+        HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
                 col->client->identifier);
         if (col->identifier) {
@@ -474,6 +476,10 @@ static int add_collector_to_hashmap(provision_state_t *state,
         }
         col->identifier = colname;
         col->client = client;
+        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
+                strlen(col->client->ipaddress), col);
+    } else {
+        free(colname);
     }
 
     cs->parent = (void *)col;
@@ -657,6 +663,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     liid_hash_t *h, *tmp;
     prov_agency_t *h2, *tmp2;
     default_radius_user_t *h3, *tmp3;
+    udp_sink_intercept_mapping_t *h4, *tmp4;
 
     pthread_mutex_lock(&(conf->safelock));
     conf->destroy_pending = 1;
@@ -679,6 +686,17 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
         HASH_DEL(conf->leas, h2);
         free_liagency(h2->ag);
         free(h2);
+    }
+
+    HASH_ITER(hh, conf->udp_sink_intercept_mappings, h4, tmp4) {
+        HASH_DEL(conf->udp_sink_intercept_mappings, h4);
+        if (h4->udpsink) {
+            free(h4->udpsink);
+        }
+        if (h4->liid) {
+            free(h4->liid);
+        }
+        free(h4);
     }
 
     free_all_ipintercepts(&(conf->ipintercepts));
@@ -1156,7 +1174,8 @@ static int respond_mediator_auth(provision_state_t *state,
     h = state->interceptconf.liid_map;
     while (h != NULL) {
         if (push_liid_mapping_onto_net_buffer(outgoing, h->agency, h->liid,
-                h->encryptkey, h->encryptmethod) == -1) {
+                h->encryptkey, h->encryptkey_len, h->encryptmethod,
+                h->liid_format) == -1) {
             logger(LOG_INFO,
                     "OpenLI: error while buffering LIID mappings to send to mediator.");
             pthread_mutex_unlock(&(state->interceptconf.safelock));
@@ -1177,6 +1196,43 @@ static int respond_mediator_auth(provision_state_t *state,
     return 0;
 }
 
+static int process_udp_sink_announcement(provision_state_t *state,
+        prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
+
+    char *listenport = NULL;
+    char *listenaddr = NULL;
+    char *identifier = NULL;
+    uint64_t ts = 0;
+
+    if (decode_udp_sink(msgbody, msglen, &listenaddr, &listenport,
+            &identifier, &ts) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: error decoding UDP sink announcement from collector %s -- ignoring", col->identifier);
+        return -1;
+    }
+
+    if (listenport != NULL && listenaddr != NULL && ts != 0 &&
+            identifier != NULL) {
+
+        if (update_udp_sink_row(state, col, listenaddr, listenport, identifier,
+                ts) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while updating UDP sink information for collector %s in client DB -- ignoring", col->identifier);
+            return -1;
+        }
+    }
+
+    if (listenport) {
+        free(listenport);
+    }
+    if (listenaddr) {
+        free(listenaddr);
+    }
+    if (identifier) {
+        free(identifier);
+    }
+
+    return 0;
+}
+
 static int process_x2x3_listener_announcement(provision_state_t *state,
         prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
 
@@ -1190,17 +1246,19 @@ static int process_x2x3_listener_announcement(provision_state_t *state,
         return -1;
     }
 
-    if (listenport == NULL || listenaddr == NULL || ts == 0) {
-        return 0;
+    if (listenport != NULL && listenaddr != NULL && ts != 0) {
+        if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
+            return -1;
+        }
     }
 
-    if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
-        logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
-        return -1;
+    if (listenport) {
+        free(listenport);
     }
-
-    free(listenport);
-    free(listenaddr);
+    if (listenaddr) {
+        free(listenaddr);
+    }
 
     return 0;
 }
@@ -1233,6 +1291,10 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 break;
             case OPENLI_PROTO_X2X3_LISTENER:
                 process_x2x3_listener_announcement(state,
+                        (prov_collector_t *)(cs->parent), msgbody, msglen);
+                break;
+            case OPENLI_PROTO_ADD_UDPSINK:
+                process_udp_sink_announcement(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
             case OPENLI_PROTO_COLLECTOR_AUTH:

@@ -354,6 +354,39 @@ static inline openli_export_recv_t *_create_ipiri_job_basic(
     return irimsg;
 }
 
+int create_ipiri_job_from_vendor(collector_sync_t *sync,
+        ipintercept_t *ipint, uint32_t cin, uint8_t iritype) {
+
+    openli_export_recv_t *irimsg;
+
+    irimsg = _create_ipiri_job_basic(ipint, ipint->username, cin);
+    if (iritype == OPENLI_IPIRI_ENDWHILEACTIVE) {
+        irimsg->data.ipiri.iritype = ETSILI_IRI_END;
+    } else if (iritype == OPENLI_IPIRI_STARTWHILEACTIVE) {
+        irimsg->data.ipiri.iritype = ETSILI_IRI_REPORT;
+    }
+    irimsg->data.ipiri.customparams = NULL;
+    irimsg->data.ipiri.special = iritype;
+
+    /* We generally have no idea when the session would have started. */
+    irimsg->data.ipiri.sessionstartts.tv_sec = 0;
+    irimsg->data.ipiri.sessionstartts.tv_usec = 0;
+
+    /* We don't know the IPs for the target/session either since we're just
+     * ingesting mirrored traffic with next to no context
+     */
+    irimsg->data.ipiri.assignedips = NULL;
+    irimsg->data.ipiri.ipcount = 0;
+    irimsg->data.ipiri.ipversioning = 0;
+    // probably??
+    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_UNKNOWN;
+
+    pthread_mutex_lock(sync->glob->stats_mutex);
+    sync->glob->stats->ipiri_created ++;
+    pthread_mutex_unlock(sync->glob->stats_mutex);
+    publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], irimsg);
+    return 0;
+}
 
 int create_ipiri_job_from_iprange(collector_sync_t *sync,
         static_ipranges_t *staticsess, ipintercept_t *ipint, uint8_t special) {

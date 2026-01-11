@@ -36,6 +36,7 @@
 #include "logger.h"
 #include "util.h"
 #include "intercept_timers.h"
+#include "configparser_common.h"
 
 struct json_agency {
     struct json_object *hi3addr;
@@ -75,6 +76,7 @@ struct json_intercept {
     struct json_object *delivercompressed;
     struct json_object *xids;
     struct json_object *xid;
+    struct json_object *udpsinks;
 };
 
 struct json_prov_options {
@@ -233,6 +235,7 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "encryptionkey", &(ipjson->encryptkey));
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
+    json_object_object_get_ex(parsed, "udpsinks", &(ipjson->udpsinks));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
     json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
     json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
@@ -350,14 +353,20 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
     int parseerr = 0;
     char *encryptmethodstring = NULL;
+    char *encstr = NULL;  /* JSON-sourced encryption key string */
+    char *liidstr = NULL;
     char *uuidstring = NULL;
     struct timeval tv;
     prov_intercept_data_t *timers = NULL;
 
-    if (is_new) {
+	/* init binary key state */
+	memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
+	common->encryptkey_len = 0;
+
+	if (is_new) {
         common->tostart_time = 0;
         common->toend_time = 0;
-        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+        common->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
         timers = calloc(1, sizeof(prov_intercept_data_t));
         timers->start_timer = NULL;
         timers->end_timer = NULL;
@@ -377,7 +386,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
 
     if (common->liid == NULL) {
         EXTRACT_JSON_STRING_PARAM("liid", cepttype, jsonp->liid,
-                common->liid, &parseerr, true);
+                liidstr, &parseerr, true);
     }
 
     EXTRACT_JSON_STRING_PARAM("authcc", cepttype, jsonp->authcc,
@@ -396,14 +405,40 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
             common->toend_time, &parseerr, 0, 0xFFFFFFFF, false);
     EXTRACT_JSON_STRING_PARAM("payloadencryption", cepttype,
             jsonp->encryption, encryptmethodstring, &parseerr, false);
+    /* extract textual key into temporary string; we will decode to bytes below */
     EXTRACT_JSON_STRING_PARAM("encryptionkey", cepttype,
-            jsonp->encryptkey, common->encryptkey, &parseerr, false);
+            jsonp->encryptkey, encstr, &parseerr, false);
+
     EXTRACT_JSON_STRING_PARAM("xid", cepttype, jsonp->xid, uuidstring,
             &parseerr, false);
 
     if (encryptmethodstring) {
         common->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    /* If client supplied an encryption key string, normalize it to 24 bytes */
+    if (encstr && common->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (openli_parse_encryption_key_string(encstr, common->encryptkey,
+                &(common->encryptkey_len), cinfo->answerstring, 4096) < 0) {
+            free(encstr);
+            if (liidstr) {
+                free(liidstr);
+            }
+            return -1;
+        }
+        free(encstr);
+        encstr = NULL;
+    }
+
+    if (liidstr) {
+        if (openli_parse_liid_string(liidstr, &(common->liid),
+                &(common->liid_format), cinfo->answerstring, 4096) < 0) {
+            free(liidstr);
+            return -1;
+        }
+        free(liidstr);
+        liidstr = NULL;
     }
 
     if (uuidstring) {
@@ -437,15 +472,15 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->liid_len = strlen(common->liid);
     }
 
-    if (is_new) {
-        if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+	if (is_new) {
+		if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
                 common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-            if (common->encryptkey == NULL || strlen(common->encryptkey) == 0) {
-                snprintf(cinfo->answerstring, 4096,
-                        "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
-                return -1;
-            }
-        }
+			if (common->encryptkey_len != OPENLI_AES192_KEY_LEN) {
+				snprintf(cinfo->answerstring, 4096,
+						"'encryptionkey' parameter (0x + 48 hex or 24 ASCII) is required for AES-192");
+				return -1;
+			}
+		}
 
         /* If we are new, we can just go ahead and add any timers that
          * we need for this intercept.
@@ -503,11 +538,12 @@ static int update_intercept_common(intercept_common_t *parsed,
         enc = parsed->encrypt;
     }
 
-    if (enc != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
-            enc != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-        if (parsed->encryptkey == NULL || strlen(parsed->encryptkey) == 0) {
+    if (enc > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        /* For modify: accept either an existing valid key, or a new valid key */
+        if (parsed->encryptkey_len != OPENLI_AES192_KEY_LEN &&
+                existing->encryptkey_len != OPENLI_AES192_KEY_LEN) {
             snprintf(cinfo->answerstring, 4096,
-                    "'encryptionkey' parameter must be set if 'payloadencryption' is set to anything other than 'none'");
+                    "'encryptionkey' (0x + 48 hex or 24 ASCII) is required for AES-192");
             return -1;
         }
     }
@@ -548,8 +584,15 @@ static int update_intercept_common(intercept_common_t *parsed,
             existing->encrypt = parsed->encrypt;
             encryptchanged = 1;
             existing->encrypt_inherited = 0;
-            MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey,
-                    &encryptchanged);
+            existing->encryptkey_len = parsed->encryptkey_len;
+            if (parsed->encryptkey_len > 0) {
+                memcpy(existing->encryptkey, parsed->encryptkey,
+                        parsed->encryptkey_len);
+                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
+                }
+            }
         } else if (*agencychanged) {
             apply_intercept_encryption_settings(&(state->interceptconf),
                     existing);
@@ -561,8 +604,21 @@ static int update_intercept_common(intercept_common_t *parsed,
             existing->encrypt = parsed->encrypt;
         }
 
-        MODIFY_STRING_MEMBER(parsed->encryptkey, existing->encryptkey,
-                &encryptchanged);
+        /* If a new key was provided (len==24) and it differs, copy it in */
+        if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+            if (existing->encryptkey_len != parsed->encryptkey_len ||
+                    memcmp(existing->encryptkey, parsed->encryptkey,
+                            parsed->encryptkey_len) != 0) {
+                memcpy(existing->encryptkey, parsed->encryptkey,
+                        parsed->encryptkey_len);
+                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
+                }
+                existing->encryptkey_len = parsed->encryptkey_len;
+                encryptchanged = 1;
+            }
+        }
     }
 
     if (*agencychanged || encryptchanged) {
@@ -648,23 +704,29 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
 
     HASH_FIND(hh_liid, state->interceptconf.ipintercepts, idstr,
             strlen(idstr), found);
-
-    if (found) {
-        HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
-        halt_existing_intercept(state, (void *)found,
-                OPENLI_PROTO_HALT_IPINTERCEPT);
-        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-                0);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                found->username, HI1_LI_DEACTIVATED);
-        free_prov_intercept_data(&(found->common), state->epoll_fd);
-        free_single_ipintercept(found);
-        logger(LOG_INFO,
-                "OpenLI: removed IP intercept '%s' via update socket.",
-                idstr);
-        return 1;
+    if (!found) {
+        return 0;
     }
-    return 0;
+
+    if (found->udp_sinks) {
+        intercept_udp_sink_t *sink, *tmp;
+        HASH_ITER(hh, found->udp_sinks, sink, tmp) {
+            remove_udp_sink_mapping(state, found->common.liid, sink->key);
+        }
+    }
+    HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
+    halt_existing_intercept(state, (void *)found,
+            OPENLI_PROTO_HALT_IPINTERCEPT);
+    remove_liid_mapping(state, found->common.liid, found->common.liid_len,
+            0);
+    announce_hi1_notification_to_mediators(state, &(found->common),
+            found->username, HI1_LI_DEACTIVATED);
+    free_prov_intercept_data(&(found->common), state->epoll_fd);
+    free_single_ipintercept(found);
+    logger(LOG_INFO,
+            "OpenLI: removed IP intercept '%s' via update socket.",
+            idstr);
+    return 1;
 }
 
 int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
@@ -1197,8 +1259,131 @@ integrityerr:
     return -1;
 }
 
-static int parse_ipintercept_staticips(provision_state_t *state,
-        ipintercept_t *ipint, struct json_object *jsonips, update_con_info_t *cinfo) {
+static int parse_ipintercept_udpsinks(ipintercept_t *ipint,
+        struct json_object *jsonsinks, update_con_info_t *cinfo) {
+
+    intercept_udp_sink_t *newsink = NULL, *existing = NULL;
+    struct json_object *sinkobj;
+    struct json_object *colid, *addr, *port, *encap, *dir, *cin, *srcport;
+    struct json_object *srchost;
+    int parseerr = 0;
+    size_t i;
+    char *dirstring = NULL;
+    char *encapstring = NULL;
+    char keybuf[1024];
+
+    if (json_object_get_type(jsonsinks) != json_type_array) {
+        logger(LOG_INFO, "OpenLI update socket: 'udpsinks' for an IP intercept must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096, "%s <p>The 'udpsinks' member for an IP intercept must be expressed as a JSON array. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto sinkerr;
+    }
+
+    for (i = 0; i < (size_t)json_object_array_length(jsonsinks); i++) {
+        sinkobj = json_object_array_get_idx(jsonsinks, i);
+
+        json_object_object_get_ex(sinkobj, "collectorid", &(colid));
+        json_object_object_get_ex(sinkobj, "listenaddr", &(addr));
+        json_object_object_get_ex(sinkobj, "listenport", &(port));
+        json_object_object_get_ex(sinkobj, "encapsulation", &(encap));
+        json_object_object_get_ex(sinkobj, "direction", &(dir));
+        json_object_object_get_ex(sinkobj, "sessionid", &(cin));
+        json_object_object_get_ex(sinkobj, "sourcehost", &(srchost));
+        json_object_object_get_ex(sinkobj, "sourceport", &(srcport));
+
+        newsink = calloc(1, sizeof(intercept_udp_sink_t));
+        newsink->awaitingconfirm = 1;
+        newsink->enabled = 1;
+        newsink->direction = 0xff;
+        newsink->encapfmt = 0xff;
+        newsink->cin = 0xFFFFFFFF;
+
+        EXTRACT_JSON_STRING_PARAM("collectorid", "Collector ID", colid,
+                newsink->collectorid, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("listenaddr", "Listening Address", addr,
+                newsink->listenaddr, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("listenport", "Listening Port", port,
+                newsink->listenport, &parseerr, true);
+        EXTRACT_JSON_STRING_PARAM("sourcehost", "Source Host", srchost,
+                newsink->sourcehost, &parseerr, false);
+        EXTRACT_JSON_STRING_PARAM("sourceport", "Source Port", srcport,
+                newsink->sourceport, &parseerr, false);
+        EXTRACT_JSON_STRING_PARAM("direction", "Direction", dir,
+                dirstring, &parseerr, false);
+        EXTRACT_JSON_STRING_PARAM("encapsulation", "Encapsulation", encap,
+                encapstring, &parseerr, false);
+        EXTRACT_JSON_INT_PARAM("sessionid", "CIN", cin, newsink->cin,
+                &parseerr, 0, 0xFFFFFFFE, false);
+
+        if (strchr(newsink->collectorid, ',') != NULL) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>The 'collectorid' member of an IP intercept UDP sink must not contain a comma character %s",
+                    update_failure_page_start, update_failure_page_end);
+            parseerr = 1;
+        }
+
+        if (strchr(newsink->listenaddr, ',') != NULL) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>The 'listenaddr' member of an IP intercept UDP sink must not contain a comma character %s",
+                    update_failure_page_start, update_failure_page_end);
+            parseerr = 1;
+        }
+
+        if (strchr(newsink->listenport, ',') != NULL) {
+            snprintf(cinfo->answerstring, 4096, "%s <p>The 'listenport' member of an IP intercept UDP sink must not contain a comma character %s",
+                    update_failure_page_start, update_failure_page_end);
+            parseerr = 1;
+        }
+
+        if (parseerr) {
+            if (dirstring) {
+                free(dirstring);
+                dirstring = NULL;
+            }
+            if (encapstring) {
+                free(encapstring);
+                encapstring = NULL;
+            }
+            goto sinkerr;
+        }
+
+        if (dirstring) {
+            newsink->direction = map_etsi_direction_string(dirstring);
+            free(dirstring);
+            dirstring = NULL;
+        }
+        if (encapstring) {
+            newsink->encapfmt = map_udp_encap_format_string(encapstring);
+            free(encapstring);
+            encapstring = NULL;
+        }
+
+        snprintf(keybuf, 1024, "%s,%s,%s", newsink->collectorid,
+                newsink->listenaddr, newsink->listenport);
+        newsink->key = strdup(keybuf);
+
+
+        HASH_FIND(hh, ipint->udp_sinks, newsink->key, strlen(newsink->key),
+                existing);
+        if (existing == NULL) {
+            HASH_ADD_KEYPTR(hh, ipint->udp_sinks, newsink->key,
+                    strlen(newsink->key), newsink);
+        } else {
+            clean_intercept_udp_sink(newsink);
+            free(newsink);
+        }
+    }
+    return 0;
+
+sinkerr:
+    // free newsink if exists
+    if (newsink) {
+        clean_intercept_udp_sink(newsink);
+        free(newsink);
+    }
+    return -1;
+}
+
+static int parse_ipintercept_staticips(ipintercept_t *ipint,
+        struct json_object *jsonips, update_con_info_t *cinfo) {
 
     static_ipranges_t *newr = NULL;
     static_ipranges_t *existing = NULL;
@@ -1265,9 +1450,6 @@ static int parse_ipintercept_staticips(provision_state_t *state,
         if (!existing) {
             HASH_ADD_KEYPTR(hh, ipint->statics, newr->rangestr,
                     strlen(newr->rangestr), newr);
-            if (!ipint->awaitingconfirm) {
-                add_new_staticip_range(state, ipint, newr);
-            }
         } else {
             free(newr->rangestr);
             free(newr);
@@ -1578,6 +1760,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sinks = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
     ipint->options = 0;
@@ -1621,8 +1804,14 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (ipjson.staticips != NULL) {
-        if (parse_ipintercept_staticips(state, ipint, ipjson.staticips,
-                cinfo) < 0) {
+        if (parse_ipintercept_staticips(ipint, ipjson.staticips, cinfo) < 0) {
+            goto cepterr;
+        }
+    }
+
+    if (ipjson.udpsinks != NULL) {
+        if (parse_ipintercept_udpsinks(ipint, ipjson.udpsinks, cinfo)
+                < 0) {
             goto cepterr;
         }
     }
@@ -1797,7 +1986,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
 
-    char *liidstr = NULL;
+    char *liidstr = NULL, *parsedliid = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -1806,12 +1995,18 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("liid", "Email intercept", emailjson.liid,
             liidstr, &parseerr, true);
 
-    if (parseerr) {
+    if (!liidstr || parseerr) {
         goto cepterr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, liidstr,
-            strlen(liidstr), found);
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        parsedliid = liidstr + 2;
+    } else {
+        parsedliid = liidstr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, parsedliid,
+            strlen(parsedliid), found);
 
     if (!found) {
         json_object_put(parsed);
@@ -1824,9 +2019,10 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     mailint = calloc(1, sizeof(emailintercept_t));
     mailint->awaitingconfirm = 1;
-    mailint->common.liid = liidstr;
+    mailint->common.liid = strdup(parsedliid);
     mailint->targets = NULL;
 
+    free(liidstr);
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
@@ -1952,7 +2148,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int changedtargets = 0;
     libtrace_list_t *tmp;
 
-    char *liidstr = NULL, *target_info;
+    char *liidstr = NULL, *target_info, *parsedliid = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
 
@@ -1962,12 +2158,18 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("liid", "VOIP intercept", voipjson.liid,
             liidstr, &parseerr, true);
 
-    if (parseerr) {
+    if (parseerr || liidstr == NULL) {
         goto cepterr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, liidstr,
-            strlen(liidstr), found);
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        parsedliid = liidstr + 2;
+    } else {
+        parsedliid = liidstr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, parsedliid,
+            strlen(parsedliid), found);
 
     if (!found) {
         json_object_put(parsed);
@@ -1980,8 +2182,10 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     vint = calloc(1, sizeof(voipintercept_t));
     vint->awaitingconfirm = 1;
-    vint->common.liid = liidstr;
+    vint->common.liid = strdup(parsedliid);
 	vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
+
+    free(liidstr);
 
     if (parse_intercept_common_json(&voipjson, &(vint->common),
             "VOIP intercept", cinfo, false, state->epoll_fd) < 0) {
@@ -2088,7 +2292,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipintercept_t *found = NULL;
     ipintercept_t *ipint = NULL;
 
-    char *liidstr = NULL;
+    char *liidstr = NULL, *parsedliid = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     char *mobileidentstring = NULL;
@@ -2101,12 +2305,18 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("liid", "IP intercept", ipjson.liid,
             liidstr, &parseerr, true);
 
-    if (parseerr) {
+    if (parseerr || liidstr == NULL) {
         goto cepterr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, liidstr,
-            strlen(liidstr), found);
+    if (STRING_EXPRESSED_IN_HEX(liidstr)) {
+        parsedliid = liidstr + 2;
+    } else {
+        parsedliid = liidstr;
+    }
+
+    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, parsedliid,
+            strlen(parsedliid), found);
 
     if (!found) {
         json_object_put(parsed);
@@ -2120,8 +2330,10 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipint = calloc(1, sizeof(ipintercept_t));
     ipint->awaitingconfirm = 1;
     ipint->vendmirrorid = OPENLI_VENDOR_MIRROR_NONE;
+    ipint->udp_sinks = NULL;
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
-    ipint->common.liid = liidstr;
+    ipint->common.liid = strdup(parsedliid);
+    free(liidstr);
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
             "IP intercept", cinfo, false, state->epoll_fd) < 0) {
@@ -2163,11 +2375,79 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (ipjson.udpsinks != NULL) {
+        intercept_udp_sink_t *sink, *tmp, *inmod;
+        if (parse_ipintercept_udpsinks(ipint, ipjson.udpsinks, cinfo)
+                < 0) {
+            goto cepterr;
+        }
+
+        // compare with existing sink configuration
+        HASH_ITER(hh, found->udp_sinks, sink, tmp) {
+            HASH_FIND(hh, ipint->udp_sinks, sink->key, strlen(sink->key),
+                    inmod);
+            if (inmod) {
+                uint8_t modrequired = 0;
+                if (inmod->encapfmt != 0xff &&
+                        inmod->encapfmt != sink->encapfmt) {
+                    sink->encapfmt = inmod->encapfmt;
+                    modrequired = 1;
+                } else if (inmod->encapfmt == 0xff) {
+                    inmod->encapfmt = sink->encapfmt;
+                }
+                if (inmod->direction != 0xff &&
+                        inmod->direction != sink->direction) {
+                    sink->direction = inmod->direction;
+                    modrequired = 1;
+                } else if (inmod->direction == 0xff) {
+                    inmod->direction = sink->direction;
+                }
+                if (inmod->cin != 0xFFFFFFFF &&
+                        inmod->cin != sink->cin) {
+                    sink->cin = inmod->cin;
+                    modrequired = 1;
+                }
+                MODIFY_STRING_MEMBER(inmod->sourcehost, sink->sourcehost,
+                        &modrequired);
+                MODIFY_STRING_MEMBER(inmod->sourceport, sink->sourceport,
+                        &modrequired);
+                if (modrequired) {
+                    modify_intercept_udp_sink(state, &(ipint->common), sink);
+                }
+                inmod->awaitingconfirm = 0;
+            } else {
+                HASH_DELETE(hh, found->udp_sinks, sink);
+                remove_intercept_udp_sink(state, &(ipint->common), sink);
+                remove_udp_sink_mapping(state, ipint->common.liid,
+                        sink->key);
+                clean_intercept_udp_sink(sink);
+                free(sink);
+            }
+        }
+
+        HASH_ITER(hh, ipint->udp_sinks, sink, tmp) {
+            if (sink->awaitingconfirm) {
+                add_new_intercept_udp_sink(state, &(ipint->common), sink);
+                if (add_udp_sink_mapping(state, ipint->common.liid,
+                        sink->key) < 0) {
+                    snprintf(cinfo->answerstring, 4096,
+                            "%s <p>UDP Sink '%s' is already being used by another IP intercept (%s). Either choose another UDP Sink, or move the existing intercept to another available Sink. %s",
+                            update_failure_page_start, sink->key,
+                            ipint->common.liid, update_failure_page_end);
+                    goto cepterr;
+                }
+                HASH_DELETE(hh, ipint->udp_sinks, sink);
+                HASH_ADD_KEYPTR(hh, found->udp_sinks, sink->key,
+                        strlen(sink->key), sink);
+                sink->awaitingconfirm = 0;
+            }
+        }
+    }
+
     if (ipjson.staticips != NULL) {
         static_ipranges_t *range, *tmp, *inmod;
 
-        if (parse_ipintercept_staticips(state, ipint, ipjson.staticips,
-                cinfo) < 0) {
+        if (parse_ipintercept_staticips(ipint, ipjson.staticips, cinfo) < 0) {
             goto cepterr;
         }
 
@@ -2244,7 +2524,8 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         found->options = ipint->options;
     }
 
-    if (ipint->vendmirrorid != found->vendmirrorid) {
+    if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE &&
+            ipint->vendmirrorid != found->vendmirrorid) {
         changed = 1;
         found->vendmirrorid = ipint->vendmirrorid;
     }
@@ -2315,6 +2596,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     const char *idstr;
     const char *verb;
     char *encryptmethodstring = NULL;
+    char *encstr = NULL;
     char *timefmtstring = NULL;
     struct json_object *parsed = NULL;
     struct json_tokener *tknr;
@@ -2337,7 +2619,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
     nag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
     nag->digest_required = 0;
-    nag->encryptkey = NULL;
+    nag->encryptkey_len = 0;
+    memset(nag->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     nag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
 
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -2364,7 +2647,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
-            agjson.encryptkey, nag->encryptkey, &parseerr, false);
+            agjson.encryptkey, encstr, &parseerr, false);
 
     if (parseerr) {
         goto agencyerr;
@@ -2373,6 +2656,17 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (encryptmethodstring) {
         nag->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    /* If client supplied an encryption key string, normalize it to 24 bytes */
+    if (encstr) {
+        if (openli_parse_encryption_key_string(encstr, nag->encryptkey,
+                &(nag->encryptkey_len), cinfo->answerstring, 4096) < 0) {
+            free(encstr);
+            return -1;
+        }
+        free(encstr);
+        encstr = NULL;
     }
 
     if (timefmtstring) {
@@ -2440,6 +2734,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int changed = 0;
     int medchanged = 0;
     int encryptchanged = 0;
+    char *encstr = NULL;
 
     memset(&modified, 0, sizeof(modified));
     INIT_JSON_AGENCY_PARSING
@@ -2465,6 +2760,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.digest_sign_timeout = 0xffffffff;
     modified.digest_sign_hashlimit = 0xffffffff;
     modified.encrypt = 0xff;
+    modified.encryptkey_len = 0xffffffff;
     modified.time_fmt = 0xff;
 
     extract_agency_json_objects(&agjson, parsed);
@@ -2492,7 +2788,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     EXTRACT_JSON_STRING_PARAM("payloadencryption", "agency",
             agjson.encryptmethod, encryptmethodstring, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("encryptionkey", "agency",
-            agjson.encryptkey, modified.encryptkey, &parseerr, false);
+            agjson.encryptkey, encstr, &parseerr, false);
 
     if (parseerr) {
         goto agencyerr;
@@ -2503,9 +2799,18 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         free(encryptmethodstring);
     }
 
+    if (encstr) {
+        if (openli_parse_encryption_key_string(encstr, modified.encryptkey,
+                &(modified.encryptkey_len), cinfo->answerstring, 4096) < 0) {
+            free(encstr);
+            return -1;
+        }
+        free(encstr);
+        encstr = NULL;
+    }
+
     if (timefmtstring) {
         modified.time_fmt = map_timestamp_format_string(timefmtstring);
-        printf("%s\n", timefmtstring);
         free(timefmtstring);
     }
 
@@ -2516,7 +2821,31 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    MODIFY_STRING_MEMBER(modified.encryptkey, found->ag->encryptkey, &changed);
+    if (modified.encryptkey_len != 0xffffffff) {
+        if (modified.encryptkey_len != found->ag->encryptkey_len) {
+            changed = 1;
+            encryptchanged = 1;
+            if (modified.encryptkey_len > 0) {
+                memcpy(found->ag->encryptkey, modified.encryptkey,
+                        modified.encryptkey_len);
+            }
+            if (modified.encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                memset(found->ag->encryptkey + modified.encryptkey_len, 0,
+                       OPENLI_MAX_ENCRYPTKEY_LEN - modified.encryptkey_len);
+            }
+            found->ag->encryptkey_len = modified.encryptkey_len;
+        } else if (found->ag->encryptkey_len > 0 &&
+                modified.encryptkey_len > 0 &&
+                memcmp(found->ag->encryptkey, modified.encryptkey,
+                        modified.encryptkey_len)) {
+            // new key, same length as before but different bytes
+            changed = 1;
+            encryptchanged = 1;
+            memcpy(found->ag->encryptkey, modified.encryptkey,
+                    modified.encryptkey_len);
+        }
+    }
+
     // check for change in encryption key first, so we can set the
     // encryptchanged flag based on the fact that "changed" has been set
     if (changed) {

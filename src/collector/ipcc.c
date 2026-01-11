@@ -155,7 +155,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         dir);
                 }
 
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                publish_openli_msg(
+                        loc->zmq_pubsocks[matchsess->common.seqtrackerid], msg);
             }
         }
         pnode = pnode->parent;
@@ -223,7 +224,9 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                                 sess->common.destid, pkt, 0);
                     }
                     if (msg != NULL) {
-                        publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                        publish_openli_msg(
+                                loc->zmq_pubsocks[sess->common.seqtrackerid],
+                                msg);
                     }
                 }
             }
@@ -312,7 +315,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                         sess->common.destid, pkt, 0);
             }
             if (msg != NULL) {
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                publish_openli_msg(
+                    loc->zmq_pubsocks[sess->common.seqtrackerid], msg);
             }
         }
     }
@@ -348,7 +352,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                         sess->common.destid, pkt, 1);
             }
             if (msg != NULL) {
-                publish_openli_msg(loc->zmq_pubsocks[0], msg);  //FIXME
+                publish_openli_msg( 
+                    loc->zmq_pubsocks[sess->common.seqtrackerid], msg);
             }
         }
     }
@@ -367,4 +372,34 @@ ipv4ccdone:
     return matched;
 
 }
+
+openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
+        uint16_t iplen, char *liid, uint32_t cin, uint8_t dir,
+        uint32_t destid) {
+
+    size_t liidlen = strlen(liid);
+    openli_export_recv_t *msg = NULL;
+    struct timeval tv;
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    if (msg == NULL) {
+        return msg;
+    }
+
+    gettimeofday(&tv, NULL);
+    msg->type = OPENLI_EXPORT_IPCC;
+    msg->destid = destid;
+    msg->ts = tv;
+
+    msg->data.ipcc.liid = strdup(liid);
+    msg->data.ipcc.liidalloc = liidlen + 1;
+    msg->data.ipcc.cin = cin;
+    msg->data.ipcc.dir = dir;
+    msg->data.ipcc.ipcontent = malloc(iplen);
+    msg->data.ipcc.ipclen = iplen;
+
+    memcpy(msg->data.ipcc.ipcontent, ipcontent, iplen);
+    return msg;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

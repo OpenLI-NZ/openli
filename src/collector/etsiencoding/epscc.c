@@ -25,6 +25,7 @@
  */
 
 #include <libwandder_etsili.h>
+#include <assert.h>
 #include "etsiencoding.h"
 #include "logger.h"
 #include "intercept.h"
@@ -61,7 +62,7 @@ openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
 wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
         wandder_encode_job_t *precomputed, const char *liid, uint32_t cin,
         uint16_t gtpseqno, uint8_t dir, struct timeval tv, uint8_t icetype,
-        uint32_t ipclen) {
+        uint32_t ipclen, openli_liid_format_t liid_format) {
 
     wandder_encode_job_t *jobarray[8];
     char correlation[32];
@@ -86,8 +87,25 @@ wandder_encoded_result_t *encode_epscc_body(wandder_encoder_t *encoder,
     jobarray[7] = &(precomputed[OPENLI_PREENCODE_EPSCCOID]);    // hi3DomainID
     wandder_encode_next_preencoded(encoder, jobarray, 8);
 
-    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
-            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, (void *)liid, strlen(liid));
+    /* convert LIID to binary if it is currently in a hex string format */
+    if (liid_format == OPENLI_LIID_FORMAT_BINARY_OCTETS) {
+        uint8_t liidbuf[OPENLI_LIID_MAXSIZE];
+        size_t liidsize = 0;
+        liidsize = openli_convert_hexstring_to_binary(liid, liidbuf,
+                OPENLI_LIID_MAXSIZE);
+        if (liidsize > 0) {
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, liidbuf, liidsize);
+        } else {
+            wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, "unknown",
+                    strlen("unknown"));
+        }
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, (void *)liid,
+                strlen(liid));
+    }
 
     snprintf(correlation, 32, "%u", cin);
     wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,

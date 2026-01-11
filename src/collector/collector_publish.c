@@ -36,6 +36,7 @@
 #include "collector_publish.h"
 #include "emailiri.h"
 #include "export_buffer.h"
+#include "intercept.h"
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
@@ -72,6 +73,7 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     expmsg->data.cept.cepttype = cepttype;
     expmsg->data.cept.targetagency = strdup(common->targetagency);
     expmsg->data.cept.timefmt = common->time_fmt;
+    expmsg->data.cept.liid_format = common->liid_format;
 
     if (common->xid_count > 0) {
         expmsg->data.cept.xids = calloc(common->xid_count, sizeof(uuid_t));
@@ -82,11 +84,20 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     }
     expmsg->data.cept.xid_count = common->xid_count;
 
-    if (common->encryptkey) {
-        expmsg->data.cept.encryptkey = strdup(common->encryptkey);
-    } else {
+    if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        common->encryptkey_len > 0) {
+		expmsg->data.cept.encryptkey_len = common->encryptkey_len;
+		expmsg->data.cept.encryptkey =
+			openli_dup_encryptkey_ptr(common->encryptkey, common->encryptkey_len);
+		if (!expmsg->data.cept.encryptkey) {
+			/* treat as no key or bail out; pick one policy */
+			expmsg->data.cept.encryptkey_len = 0;
+		}
+	} else {
         expmsg->data.cept.encryptkey = NULL;
+        expmsg->data.cept.encryptkey_len = 0;
     }
+
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
 
     // set the optional fields to suitable "null" values
@@ -112,7 +123,9 @@ void free_published_message(openli_export_recv_t *msg) {
             free(msg->data.cept.delivcc);
         }
         if (msg->data.cept.encryptkey) {
-            free(msg->data.cept.encryptkey);
+            openli_free_encryptkey_ptr(&msg->data.cept.encryptkey,
+                                       msg->data.cept.encryptkey_len);
+            msg->data.cept.encryptkey_len = 0;
         }
         if (msg->data.cept.username) {
             free(msg->data.cept.username);
@@ -193,6 +206,13 @@ void free_published_message(openli_export_recv_t *msg) {
         }
         if (msg->data.rawip.ipcontent) {
             free(msg->data.rawip.ipcontent);
+        }
+    } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
+        if (msg->data.udpargs.sourceport) {
+            free(msg->data.udpargs.sourceport);
+        }
+        if (msg->data.udpargs.sourcehost) {
+            free(msg->data.udpargs.sourcehost);
         }
     }
 
@@ -488,24 +508,8 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
     msg->type = OPENLI_EXPORT_IPCC;
     msg->destid = destid;
     msg->ts = trace_get_timeval(pkt);
-
-    if (liidlen + 1 > msg->data.ipcc.liidalloc) {
-        if (liidlen + 1 < 32) {
-            x = 32;
-        } else {
-            x = liidlen + 1;
-        }
-        msg->data.ipcc.liid = realloc(msg->data.ipcc.liid, x);
-        msg->data.ipcc.liidalloc = x;
-    }
-    if (msg->data.ipcc.liid == NULL) {
-        msg->data.ipcc.liidalloc = 0;
-        free(msg);
-        return NULL;
-    }
-
-    memcpy(msg->data.ipcc.liid, liid, liidlen);
-    msg->data.ipcc.liid[liidlen] = '\0';
+    msg->data.ipcc.liid = strdup(liid);
+    msg->data.ipcc.liidalloc = liidlen + 1;
 
     if (rem > msg->data.ipcc.ipcalloc) {
         if (rem < 512) {

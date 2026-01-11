@@ -318,7 +318,8 @@ int encode_templated_ipmmcc(wandder_encoder_t *encoder,
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate,
                 ipmmcc_tplate->cc_content.cc_wrap,
-                ipmmcc_tplate->cc_content.cc_wrap_len, NULL, 0, job) < 0) {
+                ipmmcc_tplate->cc_content.cc_wrap_len, NULL, 0,
+                job->origreq->type, job->liid) < 0) {
             return -1;
         }
     }

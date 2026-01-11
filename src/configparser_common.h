@@ -27,13 +27,15 @@
 #ifndef OPENLI_CONFIGPARSER_COMMON_H_
 #define OPENLI_CONFIGPARSER_COMMON_H_
 
+#include <string.h>
+#include <stdint.h>
+#include <yaml.h>
+
 #include "util.h"
 #include "logger.h"
 #include "agency.h"
 #include "coreserver.h"
 
-#include <string.h>
-#include <yaml.h>
 
 #define AES_ENCRYPT_ITERATIONS 10000
 
@@ -49,5 +51,8 @@ int config_yaml_parser(char *configfile, void *arg,
 int config_check_onoff(char *value);
 int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs);
+
+int openli_is_valid_aes192_hex_key(const char *key_str);     // 0x + 48 hex?
+int openli_hex_to_bytes_24(const char *key_str, uint8_t out[24]);
 
 #endif
