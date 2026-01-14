@@ -72,7 +72,9 @@ deployment in useful ways:
    can ingest pcaps containing the intercept records produced by OpenLI and perform
    deep analysis of the media from intercepted calls. Very useful for both validating
    your OpenLI install by comparing the intercepted call audio with the original, or
-   to form the basis of a LEA system to receive and process intercepts.
+   to form the basis of a LEA system to receive and process intercepts. mediaMin can
+   also be used to prepare intercepted audio for ingestion into speech-to-text and
+   LLM cloud models.
  * [OpenLI Web Provisioner](https://github.com/OpenLI-NZ/openli-provisioner-web) is a
    web-based GUI that allows you to configure intercepts, agencies and other core
    OpenLI configuration through your web browser.
