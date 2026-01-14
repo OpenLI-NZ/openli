@@ -1,3 +1,10 @@
+openli (1.1.17-1) unstable; urgency=medium
+
+  * Fix interception of email communication content when the message
+    includes a large attachment.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 15 Jan 2026 09:59:13 +1300
+
 openli (1.1.16-1) unstable; urgency=medium
 
   * Collectors may now act as an explicit destination for a vendor mirror that
