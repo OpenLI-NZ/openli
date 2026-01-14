@@ -754,7 +754,7 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &(seqno),
             sizeof(int64_t));
 
-    if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+    if (tv && timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
         wandder_encode_next(encoder, WANDDER_TAG_GENERALTIME,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, tv,
                 sizeof(struct timeval));
@@ -765,7 +765,7 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
         wandder_encode_next_preencoded(encoder, jobarray, 1);
     }
 
-    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+    if (tv && timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
         jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_7]);
         wandder_encode_next_preencoded(encoder, jobarray, 1);
         wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
@@ -777,8 +777,10 @@ static inline void encode_etsili_pshdr_pc(wandder_encoder_t *encoder,
         END_ENCODED_SEQUENCE(encoder, 1)
     }
 
-    jobarray[0] = &(precomputed[OPENLI_PREENCODE_TVCLASS]);
-    wandder_encode_next_preencoded(encoder, jobarray, 1);
+    if (tv) {
+        jobarray[0] = &(precomputed[OPENLI_PREENCODE_TVCLASS]);
+        wandder_encode_next_preencoded(encoder, jobarray, 1);
+    }
     END_ENCODED_SEQUENCE(encoder, 1)
 
 }
@@ -1379,8 +1381,16 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         int64_t seqno, struct timeval *tv,
         openli_timestamp_encoding_fmt_t timefmt) {
     int i;
-    time_t tvsec = tv->tv_sec;
-    time_t tvusec = tv->tv_usec;
+    time_t tvsec;
+    time_t tvusec;
+
+    if (tv) {
+        tvsec = tv->tv_sec;
+        tvusec = tv->tv_usec;
+    } else {
+        tvsec = 0;
+        tvusec = 0;
+    }
 
     /* Assume that we've been provided the right template with sufficient
      * space to fit the sequence number and timestamps -- ideally we would
@@ -1394,7 +1404,8 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         seqno = seqno >> 8;
     }
 
-    if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+    if (tv && tplate->tssec_ptr &&
+            timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
         for (i = tplate->tssec_size - 1; i >= 0; i--) {
             *(tplate->tssec_ptr + i) = (tvsec & 0xff);
             tvsec = tvsec >> 8;
@@ -1406,7 +1417,8 @@ int etsili_update_header_template(encoded_header_template_t *tplate,
         }
     }
 
-    if (timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+    if (tv && tplate->gents_ptr &&
+            timefmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
         char gents_str[1024];
         int len;
         if ((len = wandder_timeval_to_generalizedts(tv, gents_str, 1024))

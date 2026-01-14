@@ -79,6 +79,7 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/etsiencoding/ipmmiri.c \
                 collector/etsiencoding/ipmmcc.c \
                 collector/etsiencoding/templating.c \
+                collector/etsiencoding/tripayload.c \
                 collector/etsiencoding/epsiri.c collector/epsiri.h \
                 collector/etsiencoding/epscc.c collector/epscc.h \
                 collector/sip_worker.c collector/sip_worker.h \

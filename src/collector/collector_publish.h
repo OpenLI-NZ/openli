@@ -85,6 +85,8 @@ enum {
     OPENLI_EXPORT_EPSCC = 25,
     OPENLI_EXPORT_EPSIRI = 26,
     OPENLI_EXPORT_UDP_SINK_ARGS = 27,
+    OPENLI_EXPORT_FIRST_SEGMENT_FLAG = 28,
+    OPENLI_EXPORT_LAST_SEGMENT_FLAG = 29,
 };
 
 typedef struct openli_ipcc_job {
@@ -134,6 +136,7 @@ typedef struct openli_emailcc_job {
     uint8_t dir;
     uint8_t *cc_content;
     int cc_content_len;
+    uint8_t segflag;
 } openli_emailcc_job_t;
 
 typedef struct openli_ipmmiri_job {

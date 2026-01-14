@@ -35,6 +35,8 @@
 #include "collector_publish.h"
 #include "intercept.h"
 
+#define MAX_CONTENT_PER_JOB 64000
+
 static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->liid) {
         free(msg->liid);
@@ -357,6 +359,100 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     return 1;
 }
 
+static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
+        openli_export_recv_t *recvd, exporter_intercept_state_t *intstate,
+        cin_seqno_t *cinseq, char *liid, uint32_t *seqno) {
+
+    openli_encoding_job_t job;
+    int ret = 1;
+
+    job.seqno = *seqno;
+	job.preencoded = intstate->preencoded;
+	job.origreq = recvd;
+	job.liid = strdup(liid);
+    job.cinstr = strdup(cinseq->cin_string);
+    job.cin = (int64_t)cinseq->cin;
+    job.cept_version = intstate->version;
+    job.encryptmethod = intstate->details.encryptmethod;
+    job.timefmt = intstate->details.timefmt;
+    job.liid_format = intstate->details.liid_format;
+
+    (*seqno)++;
+
+    while (1) {
+        if ((ret = zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
+                sizeof(openli_encoding_job_t), 0)) < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "Error while pushing encoding job to worker threads: %s",
+                    strerror(errno));
+            return -1;
+        }
+        break;
+    }
+
+    return ret;
+}
+
+static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
+        openli_export_recv_t *recvd, exporter_intercept_state_t *intstate,
+        cin_seqno_t *cinseq, char *liid) {
+
+    openli_export_recv_t *replace;
+    openli_emailcc_job_t *req;
+    uint32_t cc_rem;
+    uint8_t *cc_ptr;
+    int res = 0;
+
+    req = &(recvd->data.emailcc);
+    if (req->cc_content_len < MAX_CONTENT_PER_JOB) {
+        return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
+                &cinseq->cc_seqno);
+    }
+
+    cc_rem = (uint32_t)req->cc_content_len;
+    cc_ptr = req->cc_content;
+
+    while (cc_rem > 0) {
+        uint32_t tocopy = cc_rem < MAX_CONTENT_PER_JOB ? cc_rem : MAX_CONTENT_PER_JOB;
+        replace = calloc(1, sizeof(openli_export_recv_t));
+        replace->type = recvd->type;
+        replace->destid = recvd->destid;
+        replace->ts = recvd->ts;
+        replace->data.emailcc.liid = strdup(liid);
+        replace->data.emailcc.cin = cinseq->cin;
+        replace->data.emailcc.format = req->format;
+        replace->data.emailcc.dir = req->dir;
+        replace->data.emailcc.cc_content = calloc(1, tocopy);
+        memcpy(replace->data.emailcc.cc_content, cc_ptr, tocopy);
+        replace->data.emailcc.cc_content_len = (int)tocopy;
+
+        if (cc_rem == (uint32_t)req->cc_content_len) {
+            /* generate FirstSegmentFlag TRI */
+            replace->data.emailcc.segflag = OPENLI_EXPORT_FIRST_SEGMENT_FLAG;
+        } else if (cc_rem == tocopy) {
+            /* generate LastSegmentFlag TRI */
+            replace->data.emailcc.segflag = OPENLI_EXPORT_LAST_SEGMENT_FLAG;
+        } else {
+            replace->data.emailcc.segflag = 0;
+        }
+
+        cc_ptr += tocopy;
+        cc_rem -= tocopy;
+
+        res = generate_encoding_job(seqdata, replace, intstate, cinseq, liid,
+                &cinseq->cc_seqno);
+        if (res < 0) {
+            return -1;
+        }
+    }
+
+    free_published_message(recvd);
+    return res;
+}
+
 static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd) {
 
@@ -365,8 +461,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
     etsili_iri_type_t iritype = ETSILI_IRI_NONE;
-    int ret = 1;
     openli_encoding_job_t job;
+    uint32_t *seqno;
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
@@ -406,14 +502,19 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                 sizeof(cin), cinseq);
     }
 
+    switch(recvd->type) {
+        case OPENLI_EXPORT_EMAILCC:
+            return handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid);
+    }
+
+
 	if (recvd->type == OPENLI_EXPORT_IPMMCC ||
 			recvd->type == OPENLI_EXPORT_IPCC ||
             recvd->type == OPENLI_EXPORT_UMTSCC ||
             recvd->type == OPENLI_EXPORT_EMAILCC ||
             recvd->type == OPENLI_EXPORT_RAW_CC ||
             recvd->type == OPENLI_EXPORT_EPSCC ) {
-	    job.seqno = cinseq->cc_seqno;
-        cinseq->cc_seqno ++;
+        seqno = &(cinseq->cc_seqno);
 
 	} else {
         if (iritype == ETSILI_IRI_BEGIN) {
@@ -431,36 +532,12 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             }
             cinseq->iri_end = 1;
         }
-
-		job.seqno = cinseq->iri_seqno;
-        cinseq->iri_seqno ++;
+        seqno = &(cinseq->iri_seqno);
 	}
 
-	job.preencoded = intstate->preencoded;
-	job.origreq = recvd;
-	job.liid = strdup(liid);
-    job.cinstr = strdup(cinseq->cin_string);
-    job.cin = (int64_t)cin;
-    job.cept_version = intstate->version;
-    job.encryptmethod = intstate->details.encryptmethod;
-    job.timefmt = intstate->details.timefmt;
-    job.liid_format = intstate->details.liid_format;
+    return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
+            seqno);
 
-    while (1) {
-        if ((ret = zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
-                sizeof(openli_encoding_job_t), 0)) < 0) {
-            if (errno == EAGAIN) {
-                continue;
-            }
-            logger(LOG_INFO,
-                    "Error while pushing encoding job to worker threads: %s",
-                    strerror(errno));
-            return -1;
-        }
-        break;
-    }
-
-    return ret;
 }
 
 

@@ -444,6 +444,54 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
     return 1;
 }
 
+static inline int check_for_first_segment_flag(forwarding_thread_data_t *fwd,
+        export_dest_t *med, int_reorderer_t *reord, uint32_t seqno) {
+
+    PWord_t pval;
+    int rcint;
+    openli_encoded_result_t *stored;
+
+    JLG(pval, reord->pending_first_segflags, seqno);
+    if (pval) {
+        stored = (openli_encoded_result_t *)(*pval);
+        JLD(rcint, reord->pending_first_segflags, seqno);
+        if (append_message_to_buffer(&(med->buffer), stored, 0) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: forwarding thread %d was forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
+                    fwd->forwardid, med->mediatorid);
+            remove_destination(fwd, med);
+            return -1;
+        }
+        free_encoded_result(stored);
+        free(stored);
+    }
+    return 0;
+}
+
+static inline int check_for_last_segment_flag(forwarding_thread_data_t *fwd,
+        export_dest_t *med, int_reorderer_t *reord, uint32_t seqno) {
+
+    PWord_t pval;
+    int rcint;
+    openli_encoded_result_t *stored;
+
+    JLG(pval, reord->pending_last_segflags, seqno);
+    if (pval) {
+        stored = (openli_encoded_result_t *)(*pval);
+        JLD(rcint, reord->pending_last_segflags, seqno);
+        if (append_message_to_buffer(&(med->buffer), stored, 0) == 0) {
+            logger(LOG_INFO,
+                    "OpenLI: forwarding thread %d was forced to drop mediator %u because we cannot buffer any more records for it -- please investigate asap!",
+                    fwd->forwardid, med->mediatorid);
+            remove_destination(fwd, med);
+            return -1;
+        }
+        free_encoded_result(stored);
+        free(stored);
+    }
+    return 0;
+}
+
 static int session_begin_again(int_reorderer_t *reord,
         openli_encoded_result_t *res) {
 
@@ -468,7 +516,7 @@ static int session_begin_again(int_reorderer_t *reord,
      * problem...
      */
 
-    if (res->origreq->type == OPENLI_EXPORT_IPIRI) {
+    if (res->restype == OPENLI_EXPORT_IPIRI) {
         openli_ipiri_job_t *job = &(res->origreq->data.ipiri);
         if (job->iritype == ETSILI_IRI_REPORT &&
                 job->special == OPENLI_IPIRI_STARTWHILEACTIVE) {
@@ -479,20 +527,20 @@ static int session_begin_again(int_reorderer_t *reord,
         }
     }
 
-    if (res->origreq->type == OPENLI_EXPORT_IPMMIRI) {
+    if (res->restype == OPENLI_EXPORT_IPMMIRI) {
         if (res->origreq->data.ipmmiri.iritype == ETSILI_IRI_BEGIN) {
             return 1;
         }
     }
 
-    if (res->origreq->type == OPENLI_EXPORT_EMAILIRI) {
+    if (res->restype == OPENLI_EXPORT_EMAILIRI) {
         if (res->origreq->data.emailiri.iritype == ETSILI_IRI_BEGIN) {
             return 1;
         }
     }
 
-    if (res->origreq->type == OPENLI_EXPORT_UMTSIRI ||
-            res->origreq->type == OPENLI_EXPORT_EPSIRI) {
+    if (res->restype == OPENLI_EXPORT_UMTSIRI ||
+            res->restype == OPENLI_EXPORT_EPSIRI) {
         if (res->origreq->data.mobiri.iritype == ETSILI_IRI_BEGIN) {
             return 1;
         }
@@ -510,12 +558,14 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
     openli_encoded_result_t *stored;
     int rcint;
 
-    if (res->origreq->type == OPENLI_EXPORT_IPCC ||
-            res->origreq->type == OPENLI_EXPORT_IPMMCC ||
-            res->origreq->type == OPENLI_EXPORT_UMTSCC ||
-            res->origreq->type == OPENLI_EXPORT_EMAILCC ||
-            res->origreq->type == OPENLI_EXPORT_RAW_CC ||
-            res->origreq->type == OPENLI_EXPORT_EPSCC) {
+    if (res->restype == OPENLI_EXPORT_IPCC ||
+            res->restype == OPENLI_EXPORT_IPMMCC ||
+            res->restype == OPENLI_EXPORT_UMTSCC ||
+            res->restype == OPENLI_EXPORT_EMAILCC ||
+            res->restype == OPENLI_EXPORT_RAW_CC ||
+            res->restype == OPENLI_EXPORT_EPSCC ||
+            res->restype == OPENLI_EXPORT_FIRST_SEGMENT_FLAG ||
+            res->restype == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
 
         reorderer = &(fwd->intreorderer_cc);
     } else {
@@ -569,12 +619,33 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         }
     }
 
+    if (res->seqno <= reord->expectedseqno &&
+            res->restype == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
+        /* Probably a segment flag that refers to a segment that we've
+         * already sent to the mediator, pass it through asap */
+        goto bypass_reorder;
+    }
+
+    if (res->seqno < reord->expectedseqno &&
+            res->restype == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+        /* Probably a segment flag that refers to a segment that we've
+         * already sent to the mediator, pass it through asap */
+        goto bypass_reorder;
+    }
+
     if (res->seqno != reord->expectedseqno) {
         openli_encoded_result_t *tosave = calloc(1,
                 sizeof(openli_encoded_result_t));
         memcpy(tosave, res, sizeof(openli_encoded_result_t));
 
-        JLI(pval, reord->pending, res->seqno);
+        if (res->restype == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
+            JLI(pval, reord->pending_first_segflags, res->seqno);
+        } else if (res->restype == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+            JLI(pval, reord->pending_last_segflags, res->seqno);
+        } else {
+            JLI(pval, reord->pending, res->seqno);
+        }
+
         if (pval == NULL) {
             logger(LOG_INFO, "OpenLI: forwarding thread %d was unable to create stored intercept record due to lack of memory", fwd->forwardid);
             exit(-3);
@@ -582,6 +653,16 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
 
         *pval = (Word_t)tosave;
         return 0;
+    }
+
+    /* We've got the IRI/CC with the next expected sequence number for this
+     * particular CIN.
+     *
+     * First, check if we have a pending "first segment" flag for this
+     * sequence number. If so, we need to send it before the segment itself
+     */
+    if (check_for_first_segment_flag(fwd, med, reord, res->seqno) < 0) {
+        return -1;
     }
 
     if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
@@ -592,11 +673,26 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         return -1;
     }
 
-    reord->expectedseqno = res->seqno + 1;
+    /* Now check if there is a pending "last segment" flag as well -- we
+     * should send this after the segment itself.
+     */
 
+    reord->expectedseqno = res->seqno + 1;
+    if (check_for_last_segment_flag(fwd, med, reord, res->seqno) < 0) {
+        return -1;
+    }
+
+    /* Now handle any saved messages whose sequence numbers immediately follow
+     * the one we just got, including any first/last segment flags that we
+     * have also saved alongside them.
+     */
     JLG(pval, reord->pending, reord->expectedseqno);
     while (pval != NULL) {
         stored = (openli_encoded_result_t *)(*pval);
+
+        if (check_for_first_segment_flag(fwd, med, reord, stored->seqno) < 0) {
+            return -1;
+        }
 
         JLD(rcint, reord->pending, reord->expectedseqno);
 
@@ -609,11 +705,28 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         }
         reord->expectedseqno = stored->seqno + 1;
 
+        if (check_for_last_segment_flag(fwd, med, reord, stored->seqno) < 0) {
+            free_encoded_result(stored);
+            free(stored);
+            return -1;
+        }
+
         free_encoded_result(stored);
         free(stored);
+
         JLG(pval, reord->pending, reord->expectedseqno);
     }
 
+    return 1;
+
+bypass_reorder:
+    if (append_message_to_buffer(&(med->buffer), res, 0) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: forwarding thread %d was forced to drop mediator %u because we cannot buffer any more records for it -- please investigate now!",
+                fwd->forwardid, med->mediatorid);
+        remove_destination(fwd, med);
+        return -1;
+    }
     return 1;
 }
 
