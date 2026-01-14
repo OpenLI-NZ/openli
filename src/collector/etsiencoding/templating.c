@@ -59,17 +59,22 @@ encoded_header_template_t *encode_templated_psheader(
     PWord_t pval;
     encoded_header_template_t *tplate = NULL;
 
-    if (!tv || !encoder || !headermap) {
+    if (!encoder || !headermap) {
         return NULL;
     }
 
-    if (tv->tv_sec == 0) {
+    if (tv && tv->tv_sec == 0) {
         gettimeofday(tv, NULL);
     }
     seqlen = DERIVE_INTEGER_LENGTH(seqno);
     if (timefmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
-        tvsec_len = DERIVE_INTEGER_LENGTH(tv->tv_sec);
-        tvusec_len = DERIVE_INTEGER_LENGTH(tv->tv_usec);
+        if (tv == NULL) {
+            tvsec_len = 0;
+            tvusec_len = 0;
+        } else {
+            tvsec_len = DERIVE_INTEGER_LENGTH(tv->tv_sec);
+            tvusec_len = DERIVE_INTEGER_LENGTH(tv->tv_usec);
+        }
 
         key = (cept_version << 24) + (seqlen << 16) + (tvsec_len << 8) +
                 tvusec_len;

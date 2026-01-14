@@ -111,3 +111,24 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
 
     return wandder_encode_finish(encoder);
 }
+
+wandder_encoded_result_t *encode_etsi_segment_flag_body(
+        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
+        uint8_t is_first) {
+
+    wandder_encode_job_t *jobarray[2];
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // TRIPayload
+    wandder_encode_next_preencoded(encoder, jobarray, 2);
+
+    if (is_first) {
+        wandder_encode_next(encoder, WANDDER_TAG_NULL,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, NULL, 0);
+    } else {
+        wandder_encode_next(encoder, WANDDER_TAG_NULL,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, NULL, 0);
+    }
+    END_ENCODED_SEQUENCE(encoder, 3);
+    return wandder_encode_finish(encoder);
+}

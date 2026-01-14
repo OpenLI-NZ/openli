@@ -224,7 +224,20 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
 }
 
-static int encode_rawip(openli_encoding_job_t *job,
+static inline void finalize_encoded_result(openli_encoded_result_t *res,
+        openli_encoding_job_t *job, openli_encoder_t *enc, uint8_t type) {
+
+    res->cinstr = strdup(job->cinstr);
+    res->liid = strdup(job->liid);
+    res->seqno = job->seqno;
+    res->destid = job->origreq->destid;
+    res->origreq = job->origreq;
+    res->encodedby = enc->workerid;
+    res->restype = type;
+
+}
+
+static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
         openli_encoded_result_t *res, uint16_t rawtype) {
 
     uint16_t liidlen, l;
@@ -252,6 +265,8 @@ static int encode_rawip(openli_encoding_job_t *job,
     res->header.bodylen = htons(res->msgbody->len);
     res->header.intercepttype = htons(rawtype);
     res->header.internalid = 0;
+
+    finalize_encoded_result(res, job, enc, job->origreq->type);
 
     return 0;
 }
@@ -382,6 +397,46 @@ static inline void create_mobile_operator_identifier(openli_encoder_t *enc,
             (uint8_t *)opid);
     HASH_ADD_KEYPTR(hh, irijob->customparams,
             &(np->itemnum), sizeof(np->itemnum), np);
+
+}
+
+static int encode_templated_segflag(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res, uint8_t is_first) {
+
+    wandder_encoded_result_t *body = NULL;
+
+    reset_wandder_encoder(enc->encoder);
+
+    body = encode_etsi_segment_flag_body(enc->encoder, job->preencoded,
+            is_first);
+
+    if (body == NULL ||  body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI TRI Segment Flag body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+                res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    }
+
+    wandder_release_encoded_result(enc->encoder, body);
+    /* Success */
+    return 1;
 
 }
 
@@ -667,6 +722,9 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
         }
     }
 
+    if (emailccjob->segflag == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+
+    }
     /* Success */
     return 1;
 }
@@ -727,13 +785,16 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
 }
 
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
-        openli_encoded_result_t *res) {
+        openli_encoded_result_t *resarray, size_t *next) {
 
     int ret = -1;
+    int enccount = 1;
     char keystr[1000];
     PWord_t pval;
     saved_encoding_templates_t *t_set = NULL;
     encoded_header_template_t *hdr_tplate = NULL;
+    struct timeval *tsptr = NULL;
+    openli_encoded_result_t *res = &(resarray[(*next)]);
 
     snprintf(keystr, 1000, "%s-%s-%u", job->liid, job->cinstr,
             job->timefmt);
@@ -745,9 +806,15 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         t_set->key = strdup(keystr);
         (*pval) = (Word_t)t_set;
     }
+    if (job->origreq->type == OPENLI_EXPORT_FIRST_SEGMENT_FLAG ||
+            job->origreq->type == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+        tsptr = NULL;
+    } else {
+        tsptr = &(job->origreq->ts);
+    }
 
     hdr_tplate = encode_templated_psheader(enc->encoder, &(t_set->headers),
-            job->preencoded, job->seqno, &(job->origreq->ts), job->cin,
+            job->preencoded, job->seqno, tsptr, job->cin,
             job->cept_version, job->timefmt);
 
     switch (job->origreq->type) {
@@ -778,9 +845,39 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         case OPENLI_EXPORT_EMAILIRI:
             ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
             break;
-        case OPENLI_EXPORT_EMAILCC:
+        case OPENLI_EXPORT_EMAILCC: {
+            openli_emailcc_job_t *emailccjob;
+            emailccjob = (openli_emailcc_job_t *)&(job->origreq->data.emailcc);
+
+            if (emailccjob->segflag == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
+                ret = encode_templated_segflag(enc, job, hdr_tplate, res, 1);
+                if (ret < 0) {
+                    return ret;
+                }
+                finalize_encoded_result(res, job, enc,
+                        OPENLI_EXPORT_FIRST_SEGMENT_FLAG);
+                (*next)++;
+                res = &(resarray[*next]);
+                enccount = 2;
+            }
             ret = encode_templated_emailcc(enc, job, hdr_tplate, res);
+            if (ret < 0) {
+                return ret;
+            }
+            if (emailccjob->segflag == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+                finalize_encoded_result(res, job, enc, job->origreq->type);
+                (*next)++;
+                res = &(resarray[*next]);
+                ret = encode_templated_segflag(enc, job, hdr_tplate, res, 0);
+                finalize_encoded_result(res, job, enc,
+                        OPENLI_EXPORT_LAST_SEGMENT_FLAG);
+                // can fall through in every other case EXCEPT the one where
+                // we need to ensure the last segment TRI has the right
+                // 'restype' set.
+                return 2;
+            }
             break;
+        }
         case OPENLI_EXPORT_EPSCC:
             ret = encode_templated_epscc(enc, job, hdr_tplate, res);
             break;
@@ -788,7 +885,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             ret = 0;
     }
 
-    return ret;
+    finalize_encoded_result(res, job, enc, job->origreq->type);
+
+    if (ret < 0) {
+        return ret;
+    }
+    return enccount;
 }
 
 static int process_job(openli_encoder_t *enc, void *socket) {
@@ -801,7 +903,8 @@ static int process_job(openli_encoder_t *enc, void *socket) {
 
     for (i = 0; i < enc->forwarders; i++) {
         if (enc->result_array[i] == NULL) {
-            enc->result_array[i] = calloc(MAX_ENCODED_RESULT_BATCH,
+            /* +1 to leave room for a segmentFlag TRI if required */
+            enc->result_array[i] = calloc(MAX_ENCODED_RESULT_BATCH + 1,
                     sizeof(openli_encoded_result_t));
         }
         enc->result_batch[i] = 0;
@@ -836,13 +939,16 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         next = enc->result_batch[index];
 
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
-            encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_SYNC);
+            encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_SYNC);
+            x = 1;
         } else if (job.origreq->type == OPENLI_EXPORT_RAW_CC) {
-            encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_CC);
+            encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_CC);
+            x = 1;
         } else if (job.origreq->type == OPENLI_EXPORT_RAW_IRI) {
-            encode_rawip(&job, &(result[next]), OPENLI_PROTO_RAWIP_IRI);
+            encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_IRI);
+            x = 1;
         } else {
-            if ((x = encode_etsi(enc, &job, &(result[next]))) <= 0) {
+            if ((x = encode_etsi(enc, &job, result, &next)) <= 0) {
                 /* What do we do in the event of an error? */
                 if (x < 0) {
                     logger(LOG_INFO,
@@ -863,18 +969,17 @@ encodejoberror:
             }
         }
 
-        result[next].cinstr = job.cinstr;
-        result[next].liid = job.liid;
-        result[next].seqno = job.seqno;
-        result[next].destid = job.origreq->destid;
-        result[next].origreq = job.origreq;
-        result[next].encodedby = enc->workerid;
-
-        encoded_total ++;
-        enc->result_batch[index] ++;
+        encoded_total += x;
+        enc->result_batch[index] = next + 1;
 
         if (enc->result_batch[index] >= MAX_ENCODED_RESULT_BATCH) {
             fullbatch = 1;
+        }
+        if (job.cinstr) {
+            free(job.cinstr);
+        }
+        if (job.liid) {
+            free(job.liid);
         }
     }
 

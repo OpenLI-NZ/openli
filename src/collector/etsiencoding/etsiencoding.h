@@ -203,6 +203,10 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
         int64_t *inclseqnos, size_t numseqnos,
         openli_timestamp_encoding_fmt_t timefmt);
 
+wandder_encoded_result_t *encode_etsi_segment_flag_body(
+        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
+        uint8_t is_first);
+
 /* defined in hi1notification.c */
 openli_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,

@@ -244,6 +244,8 @@ typedef struct intercept_reorderer {
     char *key;
     uint32_t expectedseqno;
     Pvoid_t pending;
+    Pvoid_t pending_first_segflags;
+    Pvoid_t pending_last_segflags;
     time_t flagged_over;
 
 } int_reorderer_t;

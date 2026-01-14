@@ -51,6 +51,7 @@ typedef struct encoder_result {
     char *liid;
     char *cinstr;
     uint8_t encodedby;
+    uint8_t restype;
     openli_export_recv_t *origreq;
 } PACKED openli_encoded_result_t;
 
