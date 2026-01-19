@@ -211,13 +211,17 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
 }
 
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
-        char *name) {
+        char *name, char *uuidstr) {
 
     ii_header_t hdr;
     uint16_t len = 0;
 
     if (name) {
         len = strlen(name) + 4;
+    }
+
+    if (uuidstr) {
+        len += strlen(uuidstr) + 4;
     }
 
     if (msgtype == OPENLI_PROTO_COLLECTOR_AUTH) {
@@ -240,6 +244,14 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
             return -1;
         }
     }
+
+    if (uuidstr) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_UUID, (uint8_t *)uuidstr,
+                strlen(uuidstr)) < 0) {
+            return -1;
+        }
+    }
+
     return len;
 }
 
@@ -2240,11 +2252,13 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
 }
 
-int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name,
+        char **uuidstr) {
 
     uint8_t *msgend = msgbody + len;
 
     *name = NULL;
+    *uuidstr = NULL;
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;
@@ -2255,6 +2269,8 @@ int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
         }
         if (f == OPENLI_PROTO_FIELD_COMPONENT_NAME) {
             DECODE_STRING_FIELD(*name, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_UUID) {
+            DECODE_STRING_FIELD(*uuidstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

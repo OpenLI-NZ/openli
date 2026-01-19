@@ -2076,7 +2076,7 @@ static int prepare_collector_glob(collector_global_t *glob) {
 }
 
 static void init_collector_global(collector_global_t *glob) {
-    uuid_clear(glob->uuid);
+    uuid_clear(glob->sharedinfo.uuid);
 
     glob->zmq_ctxt = NULL;
     glob->inputs = NULL;
@@ -2177,8 +2177,8 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
-    if (uuid_is_null(glob->uuid)) {
-        uuid_generate(glob->uuid);
+    if (uuid_is_null(glob->sharedinfo.uuid)) {
+        uuid_generate(glob->sharedinfo.uuid);
         /* rewrite config file to contain new UUID */
         emit_collector_config(configfile, glob);
     }

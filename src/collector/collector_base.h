@@ -191,6 +191,8 @@ typedef struct upcoming_intercept_time {
 } upcoming_intercept_time_t;
 
 typedef struct collector_identity {
+    uuid_t uuid;
+
     char *operatorid;
     char *networkelemid;
     char *intpointid;

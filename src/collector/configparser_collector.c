@@ -443,8 +443,8 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "uuid") == 0) {
-        if (config_parse_uuid((char *)value->data.scalar.value, glob->uuid) < 0)
-        {
+        if (config_parse_uuid((char *)value->data.scalar.value,
+                glob->sharedinfo.uuid) < 0) {
             logger(LOG_INFO,
                     "OpenLI: invalid UUID provided in collector configuration: %s",
                     (char *)value->data.scalar.value);

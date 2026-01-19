@@ -243,7 +243,7 @@ struct prov_client {
 
 /* Describes a collector that is being served by the provisioner */
 typedef struct prov_collector {
-    /** Unique identifier for the collector (using the IP address for now) */
+    /** Unique identifier for the collector */
     char *identifier;
 
     /** Common "client" state */

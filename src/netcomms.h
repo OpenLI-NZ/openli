@@ -248,6 +248,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
     OPENLI_PROTO_FIELD_ACL_IPADDR,
     OPENLI_PROTO_FIELD_ACL_PORT,
+    OPENLI_PROTO_FIELD_UUID,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for
@@ -294,7 +295,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype, char *name);
+        authtype, char *name, char *uuidstr);
 int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, char *identifier, uint64_t ts);
 int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
@@ -413,7 +414,8 @@ int decode_intercept_udpsink_removal(uint8_t *msgbody, uint16_t len,
 
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
-int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **name,
+        char **uuidstr);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

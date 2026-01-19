@@ -259,7 +259,7 @@ static int emit_basic_collector_options(collector_global_t *conf,
     yaml_event_t event;
     char buffer[512];
 
-    uuid_unparse(conf->uuid, buffer);
+    uuid_unparse(conf->sharedinfo.uuid, buffer);
     YAML_EMIT_STRING(event, "uuid", buffer);
 
     YAML_EMIT_STRING(event, "operatorid", conf->sharedinfo.operatorid);

@@ -449,8 +449,9 @@ static int add_collector_to_hashmap(provision_state_t *state,
 
     prov_collector_t *col;
     char *colname = NULL;
+    char *uuidstr = NULL;
 
-    if (decode_component_name(msgbody, msglen, &colname) < 0) {
+    if (decode_component_name(msgbody, msglen, &colname, &uuidstr) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
         return -1;
     }
@@ -458,15 +459,18 @@ static int add_collector_to_hashmap(provision_state_t *state,
     if (!colname) {
         colname = strdup(client->identifier);
     }
-    HASH_FIND(hh, state->collectors, client->ipaddress,
-            strlen(client->ipaddress), col);
+    if (!uuidstr) {
+        uuidstr = strdup(colname);
+    }
+
+    HASH_FIND(hh, state->collectors, uuidstr, strlen(uuidstr), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
-        col->identifier = colname;
+        col->identifier = uuidstr;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
-                strlen(col->client->ipaddress), col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
     } else if (col->client != client) {
         HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
@@ -474,12 +478,13 @@ static int add_collector_to_hashmap(provision_state_t *state,
         if (col->identifier) {
             free(col->identifier);
         }
-        col->identifier = colname;
+        col->identifier = uuidstr;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
-                strlen(col->client->ipaddress), col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
     } else {
         free(colname);
+        free(uuidstr);
     }
 
     cs->parent = (void *)col;

@@ -85,6 +85,8 @@ const char *upsert_sql =
 
 int init_clientdb(provision_state_t *state) {
     int rc;
+    char *errmsg = NULL;
+
     if (state == NULL) {
         return 0;
     }
@@ -116,6 +118,16 @@ int init_clientdb(provision_state_t *state) {
         logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
         rc = -1;
         goto endofinit;
+    }
+
+    if (sqlite3_exec(state->clientdb, "ALTER TABLE observed_clients ADD COLUMN config_json TEXT", NULL, NULL, &errmsg) != SQLITE_OK) {
+        if (errmsg && strstr(errmsg, "duplicate column name")) {
+            // column already exists, carry on
+        } else {
+            logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
+            rc = -1;
+            goto endofinit;
+        }
     }
 
     if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS x2x3_listeners (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address));", NULL, NULL,
