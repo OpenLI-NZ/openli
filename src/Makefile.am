@@ -10,6 +10,7 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
 		provisioner/configparser_provisioner.c \
 		netcomms.h netcomms.c coreserver.h coreserver.c \
 		configparser_common.c configparser_common.h \
+		configwriter_common.c configwriter_common.h \
                 collector/jenkinshash.c provisioner/updateserver.c \
                 openli_tls.c openli_tls.h agency.c agency.h \
                 provisioner/provisioner_client.c \
@@ -42,6 +43,8 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/collector.h logger.c logger.h \
                 collector/collector_base.h \
 		configparser_common.c configparser_common.h \
+		configwriter_common.c configwriter_common.h \
+        collector/configwriter_collector.c \
 		collector/collector_sync.c collector/collector_sync.h \
 		etsili_core.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h \

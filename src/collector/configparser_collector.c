@@ -441,6 +441,18 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     collector_global_t *glob = (collector_global_t *)arg;
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "uuid") == 0) {
+        if (config_parse_uuid((char *)value->data.scalar.value, glob->uuid) < 0)
+        {
+            logger(LOG_INFO,
+                    "OpenLI: invalid UUID provided in collector configuration: %s",
+                    (char *)value->data.scalar.value);
+            return -1;
+        }
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "inputs") == 0) {
         if (parse_input_config(glob, doc, value) == -1) {

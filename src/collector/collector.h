@@ -35,6 +35,7 @@
 #include <uthash.h>
 #include <libwandder.h>
 #include <zmq.h>
+#include <uuid/uuid.h>
 
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -298,6 +299,8 @@ typedef struct colthread_local {
 
 typedef struct collector_global {
 
+    uuid_t uuid;
+
     void *zmq_ctxt;
     colinput_t *inputs;
 
@@ -379,6 +382,7 @@ int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
 void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
         uint8_t ismirror);
 
-
+// implemented in configwriter_collector.c
+int emit_collector_config(char *configfile, collector_global_t *conf);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

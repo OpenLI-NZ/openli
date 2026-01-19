@@ -70,6 +70,13 @@ int config_check_onoff(char *value) {
     return -1;
 }
 
+int config_parse_uuid(char *srcvalue, uuid_t dest) {
+    if (uuid_parse(srcvalue, dest) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
 #define AES_KEY_SIZE 32
 #define AES_IV_SIZE 16
 #define SALT_HEADER "Salted__"
