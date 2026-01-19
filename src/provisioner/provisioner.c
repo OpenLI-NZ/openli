@@ -448,19 +448,17 @@ static int add_collector_to_hashmap(provision_state_t *state,
         uint16_t msglen) {
 
     prov_collector_t *col;
-    char *colname = NULL;
+    char *jsonconfig = NULL;
     char *uuidstr = NULL;
 
-    if (decode_component_name(msgbody, msglen, &colname, &uuidstr) < 0) {
+    if (decode_component_name(msgbody, msglen, &jsonconfig, &uuidstr) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
         return -1;
     }
 
-    if (!colname) {
-        colname = strdup(client->identifier);
-    }
     if (!uuidstr) {
-        uuidstr = strdup(colname);
+        logger(LOG_INFO, "OpenLI provisioner: collector authentication announcement from %s does not include a UUID -- is there a version mismatch between the provisioner and collector?", client->identifier);
+        return -1;
     }
 
     HASH_FIND(hh, state->collectors, uuidstr, strlen(uuidstr), col);
@@ -468,6 +466,7 @@ static int add_collector_to_hashmap(provision_state_t *state,
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
         col->identifier = uuidstr;
+        col->jsonconfig = jsonconfig;
         col->client = client;
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
@@ -478,12 +477,16 @@ static int add_collector_to_hashmap(provision_state_t *state,
         if (col->identifier) {
             free(col->identifier);
         }
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
         col->identifier = uuidstr;
+        col->jsonconfig = jsonconfig;
         col->client = client;
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
     } else {
-        free(colname);
+        free(jsonconfig);
         free(uuidstr);
     }
 
@@ -659,6 +662,9 @@ void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
         HASH_DELETE(hh, *collectors, col);
         destroy_provisioner_client(epollfd, col->client, col->identifier);
         free(col->identifier);
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
         free(col);
     }
 }
@@ -1749,6 +1755,9 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
                     col->identifier);
             HASH_DELETE(hh, state->collectors, col);
             free(col->identifier);
+            if (col->jsonconfig) {
+                free(col->jsonconfig);
+            }
             free(col);
         }
         destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);

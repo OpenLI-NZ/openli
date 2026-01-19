@@ -522,23 +522,14 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 }
 
 static int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
-    char colname[1024];
     char uuidstr[1024];
 
     pthread_rwlock_rdlock(sync->info_mutex);
     /* Put our auth message onto the outgoing buffer */
-    if (sync->info->intpointid) {
-        snprintf(colname, 1024, "%s~%s~%s", sync->info->operatorid,
-                sync->info->networkelemid, sync->info->intpointid);
-    } else {
-        snprintf(colname, 1024, "%s~%s", sync->info->operatorid,
-                sync->info->networkelemid);
-    }
-
     uuid_unparse(sync->info->uuid, uuidstr);
 
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH,
-            colname, uuidstr) < 0) {
+            sync->info->jsonconfig, uuidstr) < 0) {
         pthread_rwlock_unlock(sync->info_mutex);
         if (sync->instruct_fail == 0) {
             logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");

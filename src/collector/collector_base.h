@@ -193,6 +193,8 @@ typedef struct upcoming_intercept_time {
 typedef struct collector_identity {
     uuid_t uuid;
 
+    char *jsonconfig;
+
     char *operatorid;
     char *networkelemid;
     char *intpointid;

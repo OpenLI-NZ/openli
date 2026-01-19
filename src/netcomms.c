@@ -211,13 +211,13 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
 }
 
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
-        char *name, char *uuidstr) {
+        char *jsonconfig, char *uuidstr) {
 
     ii_header_t hdr;
     uint16_t len = 0;
 
-    if (name) {
-        len = strlen(name) + 4;
+    if (jsonconfig) {
+        len = strlen(jsonconfig) + 4;
     }
 
     if (uuidstr) {
@@ -238,9 +238,9 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
         return -1;
     }
 
-    if (name) {
-        if (push_tlv(nb, OPENLI_PROTO_FIELD_COMPONENT_NAME, (uint8_t *)name,
-                strlen(name)) < 0) {
+    if (jsonconfig) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
+                (uint8_t *)jsonconfig, strlen(jsonconfig)) < 0) {
             return -1;
         }
     }
@@ -2252,12 +2252,12 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
 }
 
-int decode_component_name(uint8_t *msgbody, uint16_t len, char **name,
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **jsonconfig,
         char **uuidstr) {
 
     uint8_t *msgend = msgbody + len;
 
-    *name = NULL;
+    *jsonconfig = NULL;
     *uuidstr = NULL;
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2267,8 +2267,8 @@ int decode_component_name(uint8_t *msgbody, uint16_t len, char **name,
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
             return -1;
         }
-        if (f == OPENLI_PROTO_FIELD_COMPONENT_NAME) {
-            DECODE_STRING_FIELD(*name, valptr, vallen);
+        if (f == OPENLI_PROTO_FIELD_JSON_CONFIGURATION) {
+            DECODE_STRING_FIELD(*jsonconfig, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_UUID) {
             DECODE_STRING_FIELD(*uuidstr, valptr, vallen);
         } else {

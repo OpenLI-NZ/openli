@@ -34,6 +34,7 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <math.h>
+#include <json-c/json.h>
 
 #include "configparser_collector.h"
 #include "configparser_common.h"
@@ -761,6 +762,54 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {
     return config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
+}
+
+char *collector_config_to_json(collector_global_t *glob) {
+
+    json_object *jobj = json_object_new_object();
+    const char *json_str;
+    char *result;
+    char buffer[1024];
+
+    uuid_unparse(glob->sharedinfo.uuid, buffer);
+
+    json_object_object_add(jobj, "uuid", json_object_new_string(buffer));
+    json_object_object_add(jobj, "operatorid",
+            json_object_new_string(glob->sharedinfo.operatorid));
+    json_object_object_add(jobj, "networkelementid",
+            json_object_new_string(glob->sharedinfo.networkelemid));
+    if (glob->sharedinfo.intpointid) {
+        json_object_object_add(jobj, "interceptpointid",
+                json_object_new_string(glob->sharedinfo.intpointid));
+    }
+    if (glob->sharedinfo.trust_sip_from) {
+        json_object_object_add(jobj, "sipallowfromident",
+                json_object_new_string("yes"));
+    } else {
+        json_object_object_add(jobj, "sipallowfromident",
+                json_object_new_string("no"));
+    }
+
+    if (glob->sharedinfo.disable_sip_redirect) {
+        json_object_object_add(jobj, "sipdisableredirect",
+                json_object_new_string("yes"));
+    } else {
+        json_object_object_add(jobj, "sipdisableredirect",
+                json_object_new_string("no"));
+    }
+
+    if (glob->ignore_sdpo_matches) {
+        json_object_object_add(jobj, "sipignoresdpo",
+                json_object_new_string("yes"));
+    } else {
+        json_object_object_add(jobj, "sipignoresdpo",
+                json_object_new_string("no"));
+    }
+    json_str = json_object_to_json_string(jobj);
+    result = strdup(json_str);
+
+    json_object_put(jobj);
+    return result;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

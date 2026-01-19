@@ -2087,6 +2087,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_threads = 1;
     glob->gtp_threads = 1;
     glob->sip_threads = 1;
+    glob->sharedinfo.jsonconfig = NULL;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -2182,6 +2183,9 @@ static collector_global_t *parse_global_config(char *configfile) {
         /* rewrite config file to contain new UUID */
         emit_collector_config(configfile, glob);
     }
+    pthread_rwlock_wrlock(&glob->config_mutex);
+    glob->sharedinfo.jsonconfig = collector_config_to_json(glob);
+    pthread_rwlock_unlock(&glob->config_mutex);
 
     /* Disable by default, unless the user has configured EITHER:
      *   a) set the enabled flag to true (obviously)

@@ -246,6 +246,11 @@ typedef struct prov_collector {
     /** Unique identifier for the collector */
     char *identifier;
 
+    /** The most recent known configuration for the collector, in JSON
+     *  format.
+     */
+    char *jsonconfig;
+
     /** Common "client" state */
     prov_client_t *client;
 

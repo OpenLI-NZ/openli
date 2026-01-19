@@ -58,11 +58,12 @@ const char *select_udpsink_sql =
         "SELECT * FROM udp_sinks WHERE collector = ? AND last_seen > ?;";
 
 const char *insert_sql =
-        "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
-        " VALUES (?, ?, ?, DATETIME('now')); ";
+        "INSERT INTO observed_clients (identifier, type, ip_address, last_seen,"
+        " config_json)"
+        " VALUES (?, ?, ?, DATETIME('now'), ?); ";
 const char *update_sql =
         "UPDATE observed_clients SET last_seen = DATETIME('now'), "
-        "ip_address = ? "
+        "ip_address = ?, config_json = ? "
         "WHERE identifier = ? AND type = ?;";
 
 const char *select_sql =
@@ -312,14 +313,16 @@ int update_collector_client_row(provision_state_t *state,
     sqlite3_bind_text(ins_stmt, 1, col->identifier, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, "collector", -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, col->client->ipaddress, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 4, col->jsonconfig, -1, SQLITE_STATIC);
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, col->client->ipaddress, -1,
                 SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, col->identifier, -1,
+        sqlite3_bind_text(upd_stmt, 2, col->jsonconfig, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, col->identifier, -1,
                 SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, "collector", -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 4, "collector", -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
@@ -368,12 +371,14 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
     sqlite3_bind_text(ins_stmt, 1, medid_str, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, "mediator", -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, med->details->ipstr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 4, NULL, -1, SQLITE_STATIC);
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, med->details->ipstr, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, medid_str, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, "mediator", -1, SQLITE_STATIC);
+        sqlite3_bind_text(ins_stmt, 2, NULL, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, medid_str, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 4, "mediator", -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
