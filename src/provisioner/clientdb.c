@@ -663,6 +663,14 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
         if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
             clients[ind].lastseen = timegm(&tm);
         }
+
+        if (sqlite3_column_text(sel_stmt, 5) != NULL) {
+            clients[ind].jsonconfig =
+                    strdup((const char *)sqlite3_column_text(sel_stmt, 5));
+        } else {
+            clients[ind].jsonconfig = NULL;
+        }
+
         ind ++;
     }
     *clientcount = rows;

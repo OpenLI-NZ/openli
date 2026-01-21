@@ -79,6 +79,9 @@ typedef struct known_client {
      *  provisioner (approximately)
      */
     time_t lastseen;
+
+    /** The configuration for the client component in JSON format */
+    const char *jsonconfig;
 } known_client_t;
 
 /** Describes a single X2/X3 listening socket that is available on a collector
@@ -546,6 +549,8 @@ void update_inherited_encryption_settings(provision_state_t *state,
 int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
 void update_intercept_timeformats(provision_state_t *state,
         const char *agencyid, openli_timestamp_encoding_fmt_t newfmt);
+int announce_configuration_update_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *newconfig);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);

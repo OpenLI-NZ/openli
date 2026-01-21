@@ -533,7 +533,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "sipdebugfile") == 0) {
-        SET_CONFIG_STRING_OPTION(glob->sipdebugfile, value);
+        SET_CONFIG_STRING_OPTION(glob->sipconfig.sipdebugfile, value);
     }
 
 
@@ -627,7 +627,8 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "sipignoresdpo") == 0) {
-        glob->ignore_sdpo_matches = config_check_onoff((char *)value->data.scalar.value);
+        glob->sipconfig.ignore_sdpo_matches =
+                config_check_onoff((char *)value->data.scalar.value);
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -649,7 +650,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "SIPallowfromident") == 0) {
 
-       glob->sharedinfo.trust_sip_from =
+       glob->sipconfig.trust_sip_from =
                 config_check_onoff((char *)value->data.scalar.value);
     }
 
@@ -658,7 +659,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "SIPdisableredirect") == 0) {
 
-       glob->sharedinfo.disable_sip_redirect =
+       glob->sipconfig.disable_sip_redirect =
                 config_check_onoff((char *)value->data.scalar.value);
     }
 
@@ -771,6 +772,7 @@ char *collector_config_to_json(collector_global_t *glob) {
     char *result;
     char buffer[1024];
 
+    pthread_rwlock_rdlock(&(glob->config_mutex));
     uuid_unparse(glob->sharedinfo.uuid, buffer);
 
     json_object_object_add(jobj, "uuid", json_object_new_string(buffer));
@@ -782,29 +784,24 @@ char *collector_config_to_json(collector_global_t *glob) {
         json_object_object_add(jobj, "interceptpointid",
                 json_object_new_string(glob->sharedinfo.intpointid));
     }
-    if (glob->sharedinfo.trust_sip_from) {
-        json_object_object_add(jobj, "sipallowfromident",
-                json_object_new_string("yes"));
-    } else {
-        json_object_object_add(jobj, "sipallowfromident",
-                json_object_new_string("no"));
+    pthread_rwlock_unlock(&(glob->config_mutex));
+
+    pthread_rwlock_rdlock(&glob->sipconfig_mutex);
+
+    json_object_object_add(jobj, "sipallowfromident",
+            json_object_new_boolean(glob->sipconfig.trust_sip_from));
+    json_object_object_add(jobj, "sipdisableredirect",
+            json_object_new_boolean(glob->sipconfig.disable_sip_redirect));
+    json_object_object_add(jobj, "sipignoresdpo",
+            json_object_new_boolean(glob->sipconfig.ignore_sdpo_matches));
+
+    if (glob->sipconfig.sipdebugfile) {
+        json_object_object_add(jobj, "sipdebugfile",
+                json_object_new_string(glob->sipconfig.sipdebugfile));
     }
 
-    if (glob->sharedinfo.disable_sip_redirect) {
-        json_object_object_add(jobj, "sipdisableredirect",
-                json_object_new_string("yes"));
-    } else {
-        json_object_object_add(jobj, "sipdisableredirect",
-                json_object_new_string("no"));
-    }
+    pthread_rwlock_unlock(&glob->sipconfig_mutex);
 
-    if (glob->ignore_sdpo_matches) {
-        json_object_object_add(jobj, "sipignoresdpo",
-                json_object_new_string("yes"));
-    } else {
-        json_object_object_add(jobj, "sipignoresdpo",
-                json_object_new_string("no"));
-    }
     json_str = json_object_to_json_string(jobj);
     result = strdup(json_str);
 

@@ -255,6 +255,31 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
     return len;
 }
 
+int push_updated_component_configuration(net_buffer_t *nb, const char *config) {
+
+    ii_header_t hdr;
+    uint16_t len = 0;
+
+    if (!config) {
+        return -1;
+    }
+
+    len = strlen(config) + 4;
+    populate_header(&hdr, OPENLI_PROTO_UPDATE_COMPONENT_CONFIG, len, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) < 0) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
+                (uint8_t *)config, strlen(config)) < 0) {
+        return -1;
+    }
+
+    return len;
+}
+
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
     ii_header_t hdr;
 
@@ -3100,6 +3125,32 @@ int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
     return 0;
 }
 
+int decode_updated_component_configuration(uint8_t *msgbody, uint16_t len,
+        char **config) {
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_JSON_CONFIGURATION) {
+            DECODE_STRING_FIELD(*config, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received component config: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+}
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid) {

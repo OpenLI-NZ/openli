@@ -83,6 +83,11 @@ struct json_prov_options {
     struct json_object *defaultemailcompress;
 };
 
+struct json_component_options {
+    struct json_object *name;
+    struct json_object *config;
+};
+
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, \
         minval, maxval, force) \
     if ((*errflag) == 0) { \
@@ -205,6 +210,13 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
             &(agjson->encryptmethod));
     json_object_object_get_ex(parsed, "encryptionkey", &(agjson->encryptkey));
 
+}
+
+static inline void extract_component_options_json_objects(
+        struct json_component_options *opts, struct json_object *parsed) {
+
+    json_object_object_get_ex(parsed, "name", &(opts->name));
+    json_object_object_get_ex(parsed, "configuration", &(opts->config));
 }
 
 static inline void extract_provisioner_options_json_objects(
@@ -1912,6 +1924,82 @@ cepterr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+int modify_collector_configuration(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_component_options optsjson;
+    prov_collector_t *thiscol;
+    int ret = 0;
+    char *uuid = NULL;
+    char *jsonconfig = NULL;
+    int parseerr = 0;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        ret = -1;
+        goto endjsonparse;
+    }
+
+    extract_component_options_json_objects(&optsjson, parsed);
+    EXTRACT_JSON_STRING_PARAM("name", "collector identifier",
+            optsjson.name, uuid, &parseerr, true);
+
+    if (parseerr) {
+        goto endjsonparse;
+    }
+    HASH_FIND(hh, state->collectors, uuid, strlen(uuid), thiscol);
+    if (thiscol == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received collector configuration update for a collector we know nothing about: %s", uuid);
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Cannot update configuration for unknown collector: %s. %s",
+                update_failure_page_start, uuid,
+                update_failure_page_end);
+        ret = -1;
+        goto endjsonparse;
+    }
+
+    EXTRACT_JSON_STRING_PARAM("configuration", "config JSON",
+            optsjson.config, jsonconfig, &parseerr, true);
+
+    if (parseerr) {
+        goto endjsonparse;
+    }
+    if (announce_configuration_update_to_collector(state, thiscol,
+            jsonconfig) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to update configuration for collector: %s. %s",
+                update_failure_page_start, uuid,
+                update_failure_page_end);
+        ret = -1;
+    }
+
+endjsonparse:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    if (jsonconfig) {
+        free(jsonconfig);
+    }
+    if (uuid) {
+        free(uuid);
+    }
+    json_tokener_free(tknr);
+    return ret;
+
 }
 
 int modify_provisioner_options(update_con_info_t *cinfo,

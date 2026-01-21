@@ -74,10 +74,6 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
         trace_destroy_output(sipworker->debug.sipdebugout);
     }
 
-    if (sipworker->debug.sipdebugfile_base) {
-        free(sipworker->debug.sipdebugfile_base);
-    }
-
     if (sipworker->zmq_colthread_recvsock) {
         zmq_close(sipworker->zmq_colthread_recvsock);
     }
@@ -466,19 +462,29 @@ static void handle_bad_sip_update(openli_sip_worker_t *sipworker,
     sipworker->stats->bad_sip_packets ++;
     pthread_mutex_unlock(sipworker->stats_mutex);
 
-    if (sipworker->debug.sipdebugfile_base && packets) {
-        if (!sipworker->debug.sipdebugout) {
-            sipworker->debug.sipdebugout = open_debug_output(
-                    sipworker->debug.sipdebugfile_base,
-                    sipworker->workerid, "invalid");
+    if (!packets) {
+        return;
+    }
+
+    if (!sipworker->debug.sipdebugout) {
+        pthread_rwlock_rdlock(sipworker->shared_mutex);
+        if (sipworker->shared->sipdebugfile == NULL) {
+            pthread_rwlock_unlock(sipworker->shared_mutex);
+            return;
         }
-        if (sipworker->debug.sipdebugout) {
-            for (i = 0; i < pkt_cnt; i++) {
-                if (packets[i] == NULL) {
-                    continue;
-                }
-                trace_write_packet(sipworker->debug.sipdebugout, packets[i]);
+
+        sipworker->debug.sipdebugout = open_debug_output(
+                    sipworker->shared->sipdebugfile,
+                    sipworker->workerid, "invalid");
+        pthread_rwlock_unlock(sipworker->shared_mutex);
+    }
+
+    if (sipworker->debug.sipdebugout) {
+        for (i = 0; i < pkt_cnt; i++) {
+            if (packets[i] == NULL) {
+                continue;
             }
+            trace_write_packet(sipworker->debug.sipdebugout, packets[i]);
         }
     }
 }

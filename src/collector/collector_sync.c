@@ -74,6 +74,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->incoming = NULL;
     sync->info = &(glob->sharedinfo);
     sync->info_mutex = &(glob->config_mutex);
+    sync->sipconfig = &(glob->sipconfig);
+    sync->sipconfig_mutex = &(glob->sipconfig_mutex);
 
     sync->upcoming_intercept_events = NULL;
     sync->upcomingtimerfd = -1;
@@ -486,6 +488,34 @@ static int create_udp_sink_thread(collector_sync_t *sync,
     }
 
     return 0;
+}
+
+static int update_collector_global_config(collector_sync_t *sync,
+        uint8_t *provmsg, uint16_t msglen) {
+
+    char *newconfig = NULL;
+    (void)sync;
+
+    if (decode_updated_component_configuration(provmsg, msglen,
+            &newconfig) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to decode component configuration update from the provisioner");
+        return -1;
+    }
+
+    if (newconfig == NULL) {
+        return 0;
+    }
+
+    pthread_rwlock_wrlock(sync->sipconfig_mutex);
+    handle_sip_config_changes(sync->sipconfig, newconfig);
+    pthread_rwlock_unlock(sync->sipconfig_mutex);
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+
+    free(newconfig);
+    return 0;
+
 }
 
 static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
@@ -2442,6 +2472,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
 
+            case OPENLI_PROTO_UPDATE_COMPONENT_CONFIG:
+                ret = update_collector_global_config(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
             default:
                 if (sync->instruct_log) {
                     logger(LOG_INFO, "Received unexpected message of type %d from provisioner.", msgtype);

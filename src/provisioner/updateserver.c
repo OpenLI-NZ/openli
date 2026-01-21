@@ -479,8 +479,13 @@ static int update_configuration_post(update_con_info_t *cinfo,
             break;
         case TARGET_OPENLIVERSION:
             break;
-        case TARGET_MEDIATOR:
         case TARGET_COLLECTOR:
+            if (strcmp(method, "PUT") == 0) {
+                // allow for modification of the collector config
+                ret = modify_collector_configuration(cinfo, state);
+            }
+            break;
+        case TARGET_MEDIATOR:
             break;
     }
 

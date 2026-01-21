@@ -56,6 +56,7 @@
 
 volatile int collector_halt = 0;
 volatile int reload_config = 0;
+volatile int config_write_required = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -1895,6 +1896,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_rwlock_destroy(&glob->sipconfig_mutex);
     free(glob);
 }
 
@@ -1919,8 +1921,8 @@ static void clear_global_config(collector_global_t *glob) {
         destroy_x_input(xinp);
     };
 
-    if (glob->sipdebugfile) {
-        free(glob->sipdebugfile);
+    if (glob->sipconfig.sipdebugfile) {
+        free(glob->sipconfig.sipdebugfile);
     }
 
     if (glob->default_email_domain) {
@@ -2102,11 +2104,10 @@ static void init_collector_global(collector_global_t *glob) {
     glob->configfile = NULL;
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
-    glob->sharedinfo.disable_sip_redirect = 0;
+    glob->sipconfig.disable_sip_redirect = 0;
     glob->alumirrors = NULL;
     glob->jmirrors = NULL;
     glob->ciscomirrors = NULL;
-    glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
 
@@ -2133,7 +2134,8 @@ static void init_collector_global(collector_global_t *glob) {
     glob->emailconf.authpassword = NULL;
 
     glob->etsitls = 1;
-    glob->ignore_sdpo_matches = 0;
+    glob->sipconfig.ignore_sdpo_matches = 0;
+    glob->sipconfig.sipdebugfile = NULL;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
@@ -2163,6 +2165,7 @@ static void init_collector_global(collector_global_t *glob) {
 static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
+    char *jsonconfig;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2172,6 +2175,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
+    pthread_rwlock_init(&glob->sipconfig_mutex, NULL);
 
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
@@ -2183,8 +2187,9 @@ static collector_global_t *parse_global_config(char *configfile) {
         /* rewrite config file to contain new UUID */
         emit_collector_config(configfile, glob);
     }
+    jsonconfig = collector_config_to_json(glob);
     pthread_rwlock_wrlock(&glob->config_mutex);
-    glob->sharedinfo.jsonconfig = collector_config_to_json(glob);
+    glob->sharedinfo.jsonconfig = jsonconfig;
     pthread_rwlock_unlock(&glob->config_mutex);
 
     /* Disable by default, unless the user has configured EITHER:
@@ -2223,12 +2228,12 @@ static collector_global_t *parse_global_config(char *configfile) {
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
 
-    if (glob->sharedinfo.trust_sip_from) {
+    if (glob->sipconfig.trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
 
     logger(LOG_INFO, "Redirection of packets between SIP threads is %s",
-            glob->sharedinfo.disable_sip_redirect ? "disabled": "allowed");
+            glob->sipconfig.disable_sip_redirect ? "disabled": "allowed");
 
     if (glob->mask_imap_creds) {
         logger(LOG_INFO, "Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
@@ -2297,7 +2302,7 @@ static int reload_collector_config(collector_global_t *glob,
     int i, tlschanged, ret;
     coreserver_t *tmp;
     x_input_t *xinp, *xtmp;
-
+    char *newjson = NULL;
     ret = 0;
 
     init_collector_global(&newstate);
@@ -2405,13 +2410,22 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid = newstate.sharedinfo.intpointid;
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
-
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
-    glob->sharedinfo.trust_sip_from = newstate.sharedinfo.trust_sip_from;
-    glob->sharedinfo.disable_sip_redirect =
-            newstate.sharedinfo.disable_sip_redirect;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
+
+    pthread_rwlock_wrlock(&(glob->sipconfig_mutex));
+    glob->sipconfig.trust_sip_from = newstate.sipconfig.trust_sip_from;
+    glob->sipconfig.disable_sip_redirect =
+            newstate.sipconfig.disable_sip_redirect;
+    glob->sipconfig.ignore_sdpo_matches =
+            newstate.sipconfig.ignore_sdpo_matches;
+    if (glob->sipconfig.sipdebugfile) {
+        free(glob->sipconfig.sipdebugfile);
+    }
+    glob->sipconfig.sipdebugfile = newstate.sipconfig.sipdebugfile;
+    newstate.sipconfig.sipdebugfile = NULL;
+    pthread_rwlock_unlock(&(glob->sipconfig_mutex));
 
     pthread_rwlock_wrlock(&(glob->email_config_mutex));
     if (glob->mask_imap_creds != newstate.mask_imap_creds) {
@@ -2472,6 +2486,15 @@ static int reload_collector_config(collector_global_t *glob,
     logger(LOG_DEBUG, "OpenLI: session idle timeout for POP3 sessions is now %u minutes", glob->email_timeouts.pop3);
     pthread_rwlock_unlock(&(glob->email_config_mutex));
 
+    newjson = collector_config_to_json(glob);
+    if (newjson != NULL) {
+        pthread_rwlock_wrlock(&glob->config_mutex);
+        free(glob->sharedinfo.jsonconfig);
+        glob->sharedinfo.jsonconfig = newjson;
+        pthread_rwlock_unlock(&glob->config_mutex);
+    } else {
+        ret = -1;
+    }
 endreload:
     clear_global_config(&newstate);
     return ret;
@@ -2515,6 +2538,11 @@ static void *start_ip_sync_thread(void *params) {
     }
 
     while (collector_halt == 0) {
+        if (__atomic_exchange_n(&config_write_required, 0, __ATOMIC_ACQUIRE)) {
+            emit_collector_config(glob->configfile, glob);
+            reload_config = 0;
+        }
+
         if (reload_config) {
             if (reload_collector_config(glob, sync) == -1) {
                 break;
@@ -2584,8 +2612,8 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->zmq_ctxt = glob->zmq_ctxt;
     sipworker->stats_mutex = &(glob->stats_mutex);
     sipworker->stats = &(glob->stats);
-    sipworker->shared = &(glob->sharedinfo);
-    sipworker->shared_mutex = &(glob->config_mutex);
+    sipworker->shared = &(glob->sipconfig);
+    sipworker->shared_mutex = &(glob->sipconfig_mutex);
     sipworker->collector_queues = NULL;
     sipworker->haltinfo = NULL;
 
@@ -2605,13 +2633,7 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->sipworker_threads = glob->sip_threads;
     sipworker->voipintercepts = NULL;
     sipworker->knowncallids = NULL;
-    sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
 
-    if (glob->sipdebugfile) {
-        sipworker->debug.sipdebugfile_base = strdup(glob->sipdebugfile);
-    } else {
-        sipworker->debug.sipdebugfile_base = NULL;
-    }
     sipworker->debug.sipdebugout = NULL;
     sipworker->debug.sipdebugupdate = NULL;
     sipworker->debug.log_bad_sip = 1;

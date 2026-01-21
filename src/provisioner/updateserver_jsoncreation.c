@@ -471,7 +471,7 @@ static inline struct json_object *openli_json_object_new_uint64(uint64_t val) {
 
 static json_object *convert_client_to_json(known_client_t *c) {
     json_object *jobj;
-    json_object *medid, *ipaddress, *firstseen, *lastseen, *colname;
+    json_object *medid, *ipaddress, *firstseen, *lastseen, *colname, *config;
 
     medid = ipaddress = firstseen = lastseen = NULL;
 
@@ -488,6 +488,11 @@ static json_object *convert_client_to_json(known_client_t *c) {
     if (c->ipaddress) {
         ipaddress = json_object_new_string(c->ipaddress);
         json_object_object_add(jobj, "ipaddress", ipaddress);
+    }
+
+    if (c->jsonconfig) {
+        config = json_object_new_string(c->jsonconfig);
+        json_object_object_add(jobj, "configuration", config);
     }
 
     firstseen = openli_json_object_new_uint64(c->firstseen);

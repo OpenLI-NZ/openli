@@ -275,9 +275,6 @@ static int emit_basic_collector_options(collector_global_t *conf,
     snprintf(buffer, 512, "%d", conf->encoding_threads);
     YAML_EMIT_INTEGER(event, "encoderthreads", buffer);
 
-    snprintf(buffer, 512, "%d", conf->forwarding_threads);
-    YAML_EMIT_INTEGER(event, "forwardingthreads", buffer);
-
     snprintf(buffer, 512, "%d", conf->email_threads);
     YAML_EMIT_INTEGER(event, "emailthreads", buffer);
 
@@ -299,13 +296,14 @@ static int emit_basic_collector_options(collector_global_t *conf,
     YAML_EMIT_STRING(event, "tlsca", conf->sslconf.cacertfile);
     YAML_EMIT_STRING(event, "tlskeylogfile", conf->sslconf.logkeyfile);
 
-    YAML_EMIT_BOOLEAN(event, "sipignoresdpo", conf->ignore_sdpo_matches);
+    YAML_EMIT_BOOLEAN(event, "sipignoresdpo",
+            conf->sipconfig.ignore_sdpo_matches);
     YAML_EMIT_BOOLEAN(event, "sipallowfromident",
-            conf->sharedinfo.trust_sip_from);
+            conf->sipconfig.trust_sip_from);
     YAML_EMIT_BOOLEAN(event, "sipdisableredirect",
-            conf->sharedinfo.disable_sip_redirect);
+            conf->sipconfig.disable_sip_redirect);
 
-    YAML_EMIT_STRING(event, "sipdebugfile", conf->sipdebugfile);
+    YAML_EMIT_STRING(event, "sipdebugfile", conf->sipconfig.sipdebugfile);
 
     YAML_EMIT_BOOLEAN(event, "maskimapcreds", conf->mask_imap_creds);
     YAML_EMIT_BOOLEAN(event, "maskpop3creds", conf->mask_imap_creds);

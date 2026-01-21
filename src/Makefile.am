@@ -46,6 +46,7 @@ openlicollector_SOURCES=collector/collector.c \
 		configwriter_common.c configwriter_common.h \
         collector/configwriter_collector.c \
 		collector/collector_sync.c collector/collector_sync.h \
+        collector/configupdating.c \
 		etsili_core.h export_buffer.h export_buffer.c \
                 util.c util.h intercept.c intercept.h \
                 netcomms.c netcomms.h byteswap.c byteswap.h etsili_core.c \

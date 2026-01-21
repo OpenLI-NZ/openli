@@ -332,14 +332,13 @@ typedef struct collector_global {
 
     char *configfile;
     collector_identity_t sharedinfo;
+    pthread_rwlock_t sipconfig_mutex;
+    collector_sip_config_t sipconfig;
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
     coreserver_t *jmirrors;
     coreserver_t *ciscomirrors;
-
-    char *sipdebugfile;
-    uint8_t ignore_sdpo_matches;
 
     pthread_t seqproxy_tid;
 
@@ -368,6 +367,12 @@ typedef struct collector_global {
     x_input_t *x_inputs;
 
 } collector_global_t;
+
+// "dirty" flag that is used to signal when the sync thread has received
+// updated collector config from the provisioner that needs to be written
+// to disk
+extern volatile int config_write_required;
+
 
 int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,

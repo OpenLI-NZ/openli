@@ -169,6 +169,7 @@ typedef enum {
     OPENLI_PROTO_ADD_UDPSINK,
     OPENLI_PROTO_MODIFY_UDPSINK,
     OPENLI_PROTO_REMOVE_UDPSINK,
+    OPENLI_PROTO_UPDATE_COMPONENT_CONFIG,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -269,6 +270,7 @@ void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state);
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
+int push_updated_component_configuration(net_buffer_t *nb, const char *config);
 int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
         uint8_t defaultcompress);
 int push_default_radius_onto_net_buffer(net_buffer_t *nb,
@@ -412,6 +414,8 @@ int decode_intercept_udpsink_modify(uint8_t *msgbody, uint16_t len,
         intercept_udp_sink_t *sink);
 int decode_intercept_udpsink_removal(uint8_t *msgbody, uint16_t len,
         intercept_udp_sink_t *sink);
+int decode_updated_component_configuration(uint8_t *msgbody, uint16_t len,
+        char **config);
 
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
