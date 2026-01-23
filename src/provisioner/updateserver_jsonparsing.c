@@ -781,6 +781,63 @@ int remove_defaultradius(update_con_info_t *cinfo UNUSED,
     return 0;
 }
 
+int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
+        const char *fullid) {
+
+    char *copy, *tok;
+    char *uuid, *ipaddr, *port;
+    prov_collector_t *col;
+    int ret = 0;
+
+    copy = strdup(fullid);
+    tok = strtok(copy, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove X2X3 listener '%s' via update socket.",
+                fullid);
+        goto endremx2x3;
+    }
+    uuid = tok;
+
+    tok = strtok(NULL, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove X2X3 listener '%s' via update socket.",
+                fullid);
+        goto endremx2x3;
+    }
+    ipaddr = tok;
+
+    tok = strtok(NULL, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove X2X3 listener '%s' via update socket.",
+                fullid);
+        goto endremx2x3;
+    }
+    port = tok;
+
+    remove_x2x3_listener_from_clientdb(state, uuid, ipaddr, port);
+
+    HASH_FIND(hh, state->collectors, uuid, strlen(uuid), col);
+    if (!col) {
+        goto endremx2x3;
+    }
+    if (announce_x2x3_listener_removal_to_collector(state, col, ipaddr,
+            port) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to remove X2X3 listener from collector: %s (%s:%s). %s",
+                update_failure_page_start, uuid, ipaddr, port,
+                update_failure_page_end);
+        ret = -1;
+        goto endremx2x3;
+    }
+    ret = 1;
+endremx2x3:
+    free(copy);
+    return ret;
+}
+
 int remove_coreserver(update_con_info_t *cinfo UNUSED, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
@@ -932,6 +989,74 @@ defraderr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state) {
+    struct json_object *parsed = NULL;
+    struct json_tokener *tknr;
+    prov_collector_t *thiscol;
+
+    struct json_object *ipaddr;
+    struct json_object *port;
+    struct json_object *uuid;
+
+    char *ipaddr_str = NULL;
+    char *port_str = NULL;
+    char *uuid_str = NULL;
+
+    int parseerr = 0;
+    int ret = -1;
+
+    tknr = json_tokener_new();
+
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto x2x3err;
+    }
+
+    json_object_object_get_ex(parsed, "uuid", &(uuid));
+    json_object_object_get_ex(parsed, "ipaddress", &(ipaddr));
+    json_object_object_get_ex(parsed, "port", &(port));
+
+    EXTRACT_JSON_STRING_PARAM("ipaddress", "X2X3 listener", ipaddr,
+            ipaddr_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("port", "X2X3 listener", port,
+            port_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("uuid", "X2X3 listener", uuid,
+            uuid_str, &parseerr, true);
+
+    if (parseerr) {
+        goto x2x3err;
+    }
+
+    HASH_FIND(hh, state->collectors, uuid_str, strlen(uuid_str), thiscol);
+    if (thiscol) {
+        if (announce_x2x3_listener_to_collector(state, thiscol, ipaddr_str,
+                port_str) < 0) {
+            goto x2x3err;
+        }
+    }
+
+    ret = 0;
+
+x2x3err:
+    if (ipaddr_str) free(ipaddr_str);
+    if (port_str) free(port_str);
+    if (uuid_str) free(uuid_str);
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
 }
 
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,

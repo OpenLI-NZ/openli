@@ -1896,6 +1896,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_rwlock_destroy(&glob->x_input_mutex);
     pthread_rwlock_destroy(&glob->sipconfig_mutex);
     free(glob);
 }
@@ -2176,6 +2177,7 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
     pthread_rwlock_init(&glob->sipconfig_mutex, NULL);
+    pthread_rwlock_init(&glob->x_input_mutex, NULL);
 
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
@@ -2356,19 +2358,24 @@ static int reload_collector_config(collector_global_t *glob,
             pthread_mutex_unlock(&(glob->forwarders[i].sslmutex));
         }
 
+        pthread_rwlock_wrlock(&(glob->x_input_mutex));
         HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
             pthread_mutex_lock(&(xinp->sslmutex));
             xinp->ssl_ctx = glob->sslconf.ctx;
             xinp->ssl_ctx_bad = 0;
             pthread_mutex_unlock(&(xinp->sslmutex));
         }
+        pthread_rwlock_unlock(&(glob->x_input_mutex));
     }
 
-    pthread_rwlock_wrlock(&(glob->config_mutex));
+    pthread_rwlock_wrlock(&(glob->x_input_mutex));
+    reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
+    pthread_rwlock_unlock(&(glob->x_input_mutex));
 
+
+    pthread_rwlock_wrlock(&(glob->config_mutex));
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
-    reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
     reload_udpsinks(glob, &newstate);
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
@@ -2937,16 +2944,16 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        pthread_rwlock_wrlock(&(glob->config_mutex));
+        pthread_rwlock_rdlock(&(glob->config_mutex));
+        pthread_rwlock_rdlock(&(glob->x_input_mutex));
         HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
             if (start_xinput(glob, xinp) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start X2-X3 input %s",
                         xinp->identifier);
             }
         }
-        pthread_rwlock_unlock(&(glob->config_mutex));
+        pthread_rwlock_unlock(&(glob->x_input_mutex));
 
-        pthread_rwlock_rdlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->inputs, inp, tmp) {
             if (start_input(glob, inp, todaemon, argv[0]) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start input %s",
@@ -2985,14 +2992,16 @@ int main(int argc, char *argv[]) {
             free(stat);
         }
     }
+    pthread_rwlock_unlock(&(glob->config_mutex));
 
+    pthread_rwlock_wrlock(&(glob->x_input_mutex));
     HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
         pthread_join(xinp->threadid, NULL);
         HASH_DELETE(hh, glob->x_inputs, xinp);
         destroy_x_input(xinp);
     }
+    pthread_rwlock_unlock(&(glob->x_input_mutex));
 
-    pthread_rwlock_unlock(&(glob->config_mutex));
 
     if (glob->zmq_encoder_ctrl) {
         /* The only control message required for encoding threads is the

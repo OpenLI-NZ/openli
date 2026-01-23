@@ -1244,7 +1244,7 @@ static int process_udp_sink_announcement(provision_state_t *state,
     return 0;
 }
 
-static int process_x2x3_listener_announcement(provision_state_t *state,
+static int process_x2x3_listener_details(provision_state_t *state,
         prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
 
     char *listenport = NULL;
@@ -1300,8 +1300,8 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
-            case OPENLI_PROTO_X2X3_LISTENER:
-                process_x2x3_listener_announcement(state,
+            case OPENLI_PROTO_X2X3_LISTENER_DETAILS:
+                process_x2x3_listener_details(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
             case OPENLI_PROTO_ADD_UDPSINK:

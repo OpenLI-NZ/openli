@@ -365,6 +365,7 @@ typedef struct collector_global {
     email_ingestor_state_t *email_ingestor;
 
     x_input_t *x_inputs;
+    pthread_rwlock_t x_input_mutex;
 
 } collector_global_t;
 

@@ -70,6 +70,8 @@ typedef struct colsync_data {
     void *zmq_colsock;
 
     x_input_sync_t *x2x3_queues;
+    x_input_t **glob_xinputs;
+    pthread_rwlock_t *xinput_mutex;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;

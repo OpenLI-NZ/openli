@@ -333,42 +333,6 @@ int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
     return (int)totallen;
 }
 
-#define X2X3_BODY_LEN(addr, port) \
-    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
-
-int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts) {
-
-    ii_header_t hdr;
-    uint16_t totallen;
-
-    totallen = X2X3_BODY_LEN(addr, port);
-    populate_header(&hdr, OPENLI_PROTO_X2X3_LISTENER, totallen, 0);
-
-    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
-            sizeof(ii_header_t)) == -1) {
-        return -1;
-    }
-
-    /* may as well re-use these field types */
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
-            strlen(addr)) == -1) {
-        return -1;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
-            strlen(port)) == -1) {
-        return -1;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
-            sizeof(ts)) == -1) {
-        return -1;
-    }
-
-    return (int)totallen;
-}
-
 #define LIIDMAP_BODY_LEN(agency, liid, enclen) \
     (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
     sizeof(openli_liid_format_t) + \
@@ -1823,6 +1787,67 @@ int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
 
     return push_coreserver_msg_onto_net_buffer(nb, cs, cstype,
             OPENLI_PROTO_WITHDRAW_CORESERVER);
+}
+
+#define X2X3_BODY_LEN(addr, port) \
+    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
+
+static int push_x2x3_listener_msg_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port, uint64_t ts,
+        openli_proto_msgtype_t type) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    if (ipaddr == NULL || port == NULL) {
+        return 0;
+    }
+
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = X2X3_BODY_LEN(ipaddr, port);
+
+    /* Push on header */
+    populate_header(&hdr, type, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+    /* may as well re-use these field types */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP,
+            (uint8_t *)ipaddr, strlen(ipaddr))) == -1) {
+        return -1;
+    }
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT,
+            (uint8_t *)port, strlen(port))) == -1) {
+        return -1;
+    }
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+}
+
+int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts) {
+
+    return push_x2x3_listener_msg_onto_net_buffer(nb, addr, port, ts,
+            OPENLI_PROTO_X2X3_LISTENER_DETAILS);
+}
+
+int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port) {
+
+    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0,
+            OPENLI_PROTO_WITHDRAW_X2X3LISTENER);
+}
+
+int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port) {
+
+    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0,
+            OPENLI_PROTO_ANNOUNCE_X2X3LISTENER);
 }
 
 int push_nomore_intercepts(net_buffer_t *nb) {

@@ -228,17 +228,68 @@ int announce_lea_to_mediators(provision_state_t *state,
     return 0;
 }
 
+#define SEND_SINGLE_COLLECTOR_BEGIN \
+    if (col->client == NULL || col->client->commev == NULL) { \
+        return 0; \
+    } \
+    sock = (prov_sock_state_t *)(col->client->state); \
+    if (!sock->trusted || sock->halted) { \
+        return 0; \
+    }
+
+#define SEND_SINGLE_COLLECTOR_END \
+    if (enable_epoll_write(state, col->client->commev) == -1) { \
+        if (sock->log_allowed) { \
+            logger(LOG_INFO, \
+                    "OpenLI: unable to enable epoll write event for collector %s -- %s", \
+                    col->identifier, strerror(errno)); \
+        } \
+        disconnect_provisioner_client(state->epoll_fd, \
+                col->client, col->identifier); \
+        return -1; \
+    }
+
+int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_x2x3_listener_removal_onto_net_buffer(sock->outgoing, ipaddr,
+            port) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send X2X3 listener removal to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+
+}
+
+int announce_x2x3_listener_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_x2x3_listener_addition_onto_net_buffer(sock->outgoing, ipaddr,
+            port) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send X2X3 listener addition to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+
+}
+
 int announce_configuration_update_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *newconfig) {
 
     prov_sock_state_t *sock;
-    if (col->client == NULL || col->client->commev == NULL) {
-        return 0;
-    }
-    sock = (prov_sock_state_t *)(col->client->state);
-    if (!sock->trusted || sock->halted) {
-        return 0;
-    }
+    SEND_SINGLE_COLLECTOR_BEGIN
 
     if (push_updated_component_configuration(sock->outgoing, newconfig) == -1) {
         logger(LOG_INFO, "OpenLI provisioner: unable to send new component configuration to collector '%s'",
@@ -248,16 +299,7 @@ int announce_configuration_update_to_collector(provision_state_t *state,
         return -1;
     }
 
-    if (enable_epoll_write(state, col->client->commev) == -1) {
-        if (sock->log_allowed) {
-            logger(LOG_INFO,
-                    "OpenLI: unable to enable epoll write event for collector %s -- %s",
-                    col->identifier, strerror(errno));
-        }
-        disconnect_provisioner_client(state->epoll_fd,
-                col->client, col->identifier);
-        return -1;
-    }
+    SEND_SINGLE_COLLECTOR_END
     return 1;
 }
 

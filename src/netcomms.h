@@ -163,13 +163,15 @@ typedef enum {
     OPENLI_PROTO_RAWIP_CC,
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
-    OPENLI_PROTO_X2X3_LISTENER,
+    OPENLI_PROTO_X2X3_LISTENER_DETAILS,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
     OPENLI_PROTO_ADD_UDPSINK,
     OPENLI_PROTO_MODIFY_UDPSINK,
     OPENLI_PROTO_REMOVE_UDPSINK,
     OPENLI_PROTO_UPDATE_COMPONENT_CONFIG,
+    OPENLI_PROTO_WITHDRAW_X2X3LISTENER,
+    OPENLI_PROTO_ANNOUNCE_X2X3LISTENER,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -301,8 +303,6 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype, char *jsonconfig, char *uuidstr);
 int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, char *identifier, uint64_t ts);
-int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,
         payload_encryption_method_t method, openli_liid_format_t liidformat);
@@ -338,6 +338,12 @@ int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
 int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
+int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts);
+int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port);
+int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port);
 
 int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
         uint8_t using_rmq);
