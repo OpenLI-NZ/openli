@@ -89,6 +89,9 @@ libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt);
 size_t openli_convert_hexstring_to_binary(const char *src, uint8_t *space,
         size_t maxspace);
 
+char *ltrim(char *s);
+char *rtrim(char *s);
+
 /* string set methods */
 int remove_from_string_set(string_set_t **set, char *term);
 void purge_string_set(string_set_t **set);
