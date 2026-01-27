@@ -1612,6 +1612,8 @@ const char *get_udp_encap_format_string(uint8_t encapfmt) {
             return "jmirror";
         case INTERCEPT_UDP_ENCAP_FORMAT_NOKIA:
             return "nokia";
+        case INTERCEPT_UDP_ENCAP_FORMAT_NOKIA_L3:
+            return "nokia-l3";
         case INTERCEPT_UDP_ENCAP_FORMAT_CISCO:
             return "cisco";
         default:
@@ -1686,6 +1688,9 @@ uint8_t map_udp_encap_format_string(char *fmtstr) {
     }
     if (strcasecmp(fmtstr, "raw") == 0) {
         return INTERCEPT_UDP_ENCAP_FORMAT_RAW;
+    }
+    if (strcasecmp(fmtstr, "nokia-l3") == 0) {
+        return INTERCEPT_UDP_ENCAP_FORMAT_NOKIA_L3;
     }
     if (strcasecmp(fmtstr, "nokia") == 0) {
         return INTERCEPT_UDP_ENCAP_FORMAT_NOKIA;

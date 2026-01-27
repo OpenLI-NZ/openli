@@ -383,9 +383,11 @@ static int parse_intercept_udp_sink_config(ipintercept_t *cept,
                 }
                 else if (strcasecmp((char *)value->data.scalar.value, "nokia") == 0 || strcasecmp((char *)value->data.scalar.value, "alu") == 0) {
                     sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_NOKIA;
+                } else if (strcasecmp((char *)value->data.scalar.value, "nokia-l3") == 0) {
+                    sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_NOKIA_L3;
                 } else {
                     logger(LOG_INFO,
-                            "OpenLI provisioner: unexpected encapsulation for UDP sink '%s' -- should be one of 'raw', 'cisco', 'jmirror', or 'nokia'",
+                            "OpenLI provisioner: unexpected encapsulation for UDP sink '%s' -- should be one of 'raw', 'cisco', 'jmirror', 'nokia' or 'nokia-l3'",
                             (char *)value->data.scalar.value);
                     goto parsefail;
                 }

@@ -371,7 +371,14 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
     } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_NOKIA) {
         uint32_t shimintid = 0;
         skipptr = decode_alushim_from_udp_payload(recvbuf, got, &cin, &dir,
-                &shimintid, &iplen);
+                &shimintid, &iplen, 0);
+        if (skipptr == NULL) {
+            return 0;
+        }
+    } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_NOKIA_L3) {
+        uint32_t shimintid = 0;
+        skipptr = decode_alushim_from_udp_payload(recvbuf, got, &cin, &dir,
+                &shimintid, &iplen, 1);
         if (skipptr == NULL) {
             return 0;
         }

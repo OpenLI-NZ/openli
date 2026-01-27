@@ -83,7 +83,8 @@ static inline int alushim_get_direction(alushimhdr_t *aluhdr) {
 }
 
 uint8_t *decode_alushim_from_udp_payload(uint8_t *payload, uint32_t plen,
-        uint32_t *cin, uint8_t *dir, uint32_t *shimintid, uint32_t *bodylen) {
+        uint32_t *cin, uint8_t *dir, uint32_t *shimintid, uint32_t *bodylen,
+        uint8_t l3_only) {
 
 
     uint16_t ethertype;
@@ -98,40 +99,46 @@ uint8_t *decode_alushim_from_udp_payload(uint8_t *payload, uint32_t plen,
 
     *shimintid = alushim_get_interceptid(aluhdr);
 
-    /* Strip the extra headers + shim */
-    l2 = ((uint8_t *)aluhdr) + sizeof(alushimhdr_t);
-    rem -= sizeof(alushimhdr_t);
+    if (l3_only) {
+        /* Just strip the shim */
+        l3 = ((uint8_t *)aluhdr) + sizeof(alushimhdr_t);
+        rem -= sizeof(alushimhdr_t);
+    } else {
+        /* Strip the extra headers + shim */
+        l2 = ((uint8_t *)aluhdr) + sizeof(alushimhdr_t);
+        rem -= sizeof(alushimhdr_t);
 
-    /* TODO add support for layer 3 only intercepts? */
-    l3 = trace_get_payload_from_layer2(l2, TRACE_TYPE_ETH, &ethertype, &rem);
-    while (1) {
-        if (l3 == NULL || rem == 0) {
+        l3 = trace_get_payload_from_layer2(l2, TRACE_TYPE_ETH, &ethertype,
+                &rem);
+        while (1) {
+            if (l3 == NULL || rem == 0) {
+                break;
+            }
+            switch(ethertype) {
+                case TRACE_ETHERTYPE_8021Q:
+                    l3 = trace_get_payload_from_vlan(l3, &ethertype, &rem);
+                    continue;
+                case TRACE_ETHERTYPE_MPLS:
+                    l3 = trace_get_payload_from_mpls(l3, &ethertype, &rem);
+                    if (l3 && ethertype == 0) {
+                        l3 = trace_get_payload_from_layer2(l3, TRACE_TYPE_ETH,
+                                &ethertype, &rem);
+                    }
+                    continue;
+                case TRACE_ETHERTYPE_PPP_SES:
+                    l3 = trace_get_payload_from_pppoe(l3, &ethertype, &rem);
+                    continue;
+                case TRACE_ETHERTYPE_ARP:
+                    /* Probably shouldn't be intercepting ARP */
+                    return NULL;
+                case TRACE_ETHERTYPE_IP:
+                case TRACE_ETHERTYPE_IPV6:
+                    break;
+                default:
+                    return NULL;
+            }
             break;
         }
-        switch(ethertype) {
-            case TRACE_ETHERTYPE_8021Q:
-                l3 = trace_get_payload_from_vlan(l3, &ethertype, &rem);
-                continue;
-            case TRACE_ETHERTYPE_MPLS:
-                l3 = trace_get_payload_from_mpls(l3, &ethertype, &rem);
-                if (l3 && ethertype == 0) {
-                    l3 = trace_get_payload_from_layer2(l3, TRACE_TYPE_ETH,
-                            &ethertype, &rem);
-                }
-                continue;
-            case TRACE_ETHERTYPE_PPP_SES:
-                l3 = trace_get_payload_from_pppoe(l3, &ethertype, &rem);
-                continue;
-            case TRACE_ETHERTYPE_ARP:
-                /* Probably shouldn't be intercepting ARP */
-                return NULL;
-            case TRACE_ETHERTYPE_IP:
-            case TRACE_ETHERTYPE_IPV6:
-                break;
-            default:
-                return NULL;
-        }
-        break;
     }
 
     if (!l3 || rem == 0) {
@@ -169,8 +176,12 @@ int check_alu_intercept(colthread_local_t *loc,
         return 0;
     }
 
+    /* We don't really have a way to figure out if the mirrored packet
+     * is going to have layer 2 headers or not, or even a way for the
+     * user to tell us.
+     */
     l3 = decode_alushim_from_udp_payload(payload, rem, &cin, &direction,
-            &shimintid, &bodylen);
+            &shimintid, &bodylen, 0);
     if (!l3) {
         return 0;
     }
