@@ -2,8 +2,10 @@ openli (1.1.17-1) unstable; urgency=medium
 
   * Fix interception of email communication content when the message
     includes a large attachment.
+  * Add "nokia-l3" encapsulation type for UDP sink intercepts to
+    support Nokia mirroring that does not include any layer 2 headers.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 15 Jan 2026 09:59:13 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 27 Jan 2026 17:06:49 +1300
 
 openli (1.1.16-1) unstable; urgency=medium
 
