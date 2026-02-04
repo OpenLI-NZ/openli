@@ -52,6 +52,7 @@
 #include "export_buffer.h"
 #include "openli_tls.h"
 #include "etsiencoding/etsiencoding.h"
+#include "configwriter_common.h"
 
 #define MAX_ENCODED_RESULT_BATCH 50
 
@@ -169,6 +170,10 @@ typedef struct sync_thread_global {
 
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
+
+    pthread_mutex_t *configupdate_mutex;
+    openli_yaml_config_pending_updates_t configupdates;
+
     /* ZMQ context for the entire collector process */
     void *zmq_ctxt;
 } sync_thread_global_t;

@@ -1798,6 +1798,12 @@ static inline void init_sync_thread_data(collector_global_t *glob,
 
     sup->stats_mutex = &(glob->stats_mutex);
     sup->stats = &(glob->stats);
+
+    sup->configupdate_mutex = &(glob->configupdate_mutex);
+    sup->configupdates.updates = calloc(16,
+            sizeof(openli_yaml_config_update_t));
+    sup->configupdates.update_count = 0;
+    sup->configupdates.array_size = 16;
 }
 
 static inline void free_sync_thread_data(sync_thread_global_t *sup) {
@@ -1812,6 +1818,8 @@ static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	if (sup->epollevs) {
         libtrace_list_deinit((libtrace_list_t *)(sup->epollevs));
 	}
+    clean_openli_yaml_config_updates(&(sup->configupdates));
+    free(sup->configupdates.updates);
 }
 
 static void destroy_collector_state(collector_global_t *glob) {
@@ -1894,6 +1902,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
+    pthread_mutex_destroy(&(glob->configupdate_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
     pthread_rwlock_destroy(&glob->x_input_mutex);
@@ -1952,6 +1961,9 @@ static void clear_global_config(collector_global_t *glob) {
 
     if (glob->sharedinfo.provisionerport) {
         free(glob->sharedinfo.provisionerport);
+    }
+    if (glob->sharedinfo.jsonconfig) {
+        free(glob->sharedinfo.jsonconfig);
     }
     if (glob->alumirrors) {
         free_coreserver_list(glob->alumirrors);
@@ -2173,6 +2185,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     glob->configfile = configfile;
 
     pthread_mutex_init(&(glob->stats_mutex), NULL);
+    pthread_mutex_init(&(glob->configupdate_mutex), NULL);
     pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
@@ -2185,9 +2198,22 @@ static collector_global_t *parse_global_config(char *configfile) {
     }
 
     if (uuid_is_null(glob->sharedinfo.uuid)) {
+        char uuidstr[64];
+        openli_yaml_config_pending_updates_t *pending;
+
         uuid_generate(glob->sharedinfo.uuid);
+        uuid_unparse(glob->sharedinfo.uuid, uuidstr);
         /* rewrite config file to contain new UUID */
-        emit_collector_config(configfile, glob);
+        //emit_collector_config(configfile, glob);
+        pthread_mutex_lock(&(glob->configupdate_mutex));
+        pending = &(glob->syncip.configupdates);
+        UPDATE_SCALAR_CONFIG(pending, "uuid", uuidstr, true, true);
+        if (apply_yaml_config_updates(configfile,
+                &(glob->syncip.configupdates)) < 0) {
+            logger(LOG_INFO, "Failed to write updated YAML configuration to local config file: %s", configfile);
+        }
+        clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
+        pthread_mutex_unlock(&(glob->configupdate_mutex));
     }
     jsonconfig = collector_config_to_json(glob);
     pthread_rwlock_wrlock(&glob->config_mutex);
@@ -2546,7 +2572,14 @@ static void *start_ip_sync_thread(void *params) {
 
     while (collector_halt == 0) {
         if (__atomic_exchange_n(&config_write_required, 0, __ATOMIC_ACQUIRE)) {
-            emit_collector_config(glob->configfile, glob);
+            pthread_mutex_lock(&(glob->configupdate_mutex));
+            if (apply_yaml_config_updates(glob->configfile,
+                    &(glob->syncip.configupdates)) < 0) {
+                logger(LOG_INFO, "Failed to write updated YAML configuration to local config file: %s", glob->configfile);
+            }
+            clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
+
+            pthread_mutex_unlock(&(glob->configupdate_mutex));
             reload_config = 0;
         }
 

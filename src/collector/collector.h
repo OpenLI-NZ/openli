@@ -315,6 +315,7 @@ typedef struct collector_global {
     void *zmq_encoder_ctrl;
 
     pthread_rwlock_t config_mutex;
+    pthread_mutex_t configupdate_mutex;
 
     sync_thread_global_t syncip;
     etsili_generic_freelist_t *syncgenericfreelist;

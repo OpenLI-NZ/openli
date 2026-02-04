@@ -29,8 +29,8 @@
 #include "logger.h"
 #include "collector.h"
 
-
-int handle_sip_config_changes(collector_sip_config_t *sipconfig, char *json) {
+int handle_sip_config_changes(collector_sip_config_t *sipconfig,
+        openli_yaml_config_pending_updates_t *pending, char *json) {
     struct json_tokener *tknr;
     struct json_object *ignore_sdpo, *trust_from, *disable_redirect;
     struct json_object *sipdebugfile;
@@ -51,17 +51,26 @@ int handle_sip_config_changes(collector_sip_config_t *sipconfig, char *json) {
     if (json_object_object_get_ex(parsed, "sipallowfromident", &trust_from)
             && json_object_is_type(trust_from, json_type_boolean)) {
         sipconfig->trust_sip_from = json_object_get_boolean(trust_from);
+        UPDATE_SCALAR_CONFIG(pending, "sipallowfromident",
+                GENERATE_CONFIG_BOOLEAN(sipconfig->trust_sip_from),
+                false, true);
     }
     if (json_object_object_get_ex(parsed, "sipdisableredirect",
                 &disable_redirect) && json_object_is_type(disable_redirect,
                         json_type_boolean)) {
         sipconfig->disable_sip_redirect =
                 json_object_get_boolean(disable_redirect);
+        UPDATE_SCALAR_CONFIG(pending, "sipdisableredirect",
+                GENERATE_CONFIG_BOOLEAN(sipconfig->disable_sip_redirect),
+                false, true);
     }
     if (json_object_object_get_ex(parsed, "sipignoresdpo", &ignore_sdpo)
             && json_object_is_type(ignore_sdpo, json_type_boolean)) {
         sipconfig->ignore_sdpo_matches =
                 json_object_get_boolean(ignore_sdpo);
+        UPDATE_SCALAR_CONFIG(pending, "sipignoresdpo",
+                GENERATE_CONFIG_BOOLEAN(sipconfig->ignore_sdpo_matches),
+                false, true);
     }
 
     if (json_object_object_get_ex(parsed, "sipdebugfile", &sipdebugfile) &&
@@ -72,8 +81,10 @@ int handle_sip_config_changes(collector_sip_config_t *sipconfig, char *json) {
                 free(sipconfig->sipdebugfile);
             }
             sipconfig->sipdebugfile = strdup((char *)debugfile);
+            UPDATE_SCALAR_CONFIG(pending, "sipdebugfile",
+                    sipconfig->sipdebugfile, true, true);
         }
-        free((char *)debugfile);
+        //free((char *)debugfile);
     }
     ret = 0;
 

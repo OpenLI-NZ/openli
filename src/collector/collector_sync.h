@@ -123,7 +123,8 @@ void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
         pthread_t threadid);
 
 // defined in configupdating.c
-int handle_sip_config_changes(collector_sip_config_t *sipconfig, char *json);
+int handle_sip_config_changes(collector_sip_config_t *sipconfig,
+        openli_yaml_config_pending_updates_t *pending, char *json);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

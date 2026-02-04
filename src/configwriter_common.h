@@ -27,6 +27,7 @@
 #ifndef OPENLI_CONFIGWRITER_COMMON_H_
 #define OPENLI_CONFIGWRITER_COMMON_H_
 
+#include <stdbool.h>
 #include <yaml.h>
 #include "coreserver.h"
 
@@ -73,9 +74,88 @@ typedef struct yaml_mem_buf {
     } else {                                                            \
         YAML_EMIT_STRING(event, label, "no");                           \
     }
-#endif
 
 int buffer_yaml_memory(void *data, unsigned char *towrite, size_t size);
 
 int emit_core_server_list(coreserver_t *servers, const char *label,
         yaml_emitter_t *emitter);
+
+
+#define OPENLI_YAML_MAX_LINE 1024
+#define OPENLI_YAML_MAX_KEY_LENGTH 512
+#define OPENLI_YAML_MAX_PATH_DEPTH 10
+
+typedef enum {
+    UPDATE_SCALAR,
+    UPDATE_ARRAY_INDEX,
+    UPDATE_ARRAY_ALL,
+    UPDATE_ARRAY_APPEND,
+} openli_yaml_update_type_t;
+
+typedef struct {
+    char *key;
+    char *value;
+    bool is_string;
+} openli_yaml_config_object_field_t;
+
+typedef struct {
+    openli_yaml_config_object_field_t *fields;
+    size_t field_count;
+} openli_yaml_config_object_t;
+
+typedef struct {
+    char key_path[OPENLI_YAML_MAX_KEY_LENGTH];
+    char value[OPENLI_YAML_MAX_LINE];
+    bool is_string;
+    openli_yaml_update_type_t type;
+    int array_index;
+    char **array_values;
+    size_t array_count;
+
+    openli_yaml_config_object_t *array_objects;
+    size_t array_objects_count;
+    bool create_if_missing;
+} openli_yaml_config_update_t;
+
+typedef struct {
+    openli_yaml_config_update_t *updates;
+    size_t update_count;
+    size_t array_size;
+} openli_yaml_config_pending_updates_t;
+
+#define UPDATE_SCALAR_CONFIG(pending, key, value, quote, create) \
+    prepare_new_openli_yaml_config_update(pending); \
+    generate_scalar_openli_yaml_config_update( \
+            &((pending)->updates[pending->update_count]), \
+            key, value, quote, create); \
+    pending->update_count ++
+
+#define GENERATE_CONFIG_BOOLEAN(value) \
+    (value != 0 ? "yes" : "no")
+
+size_t prepare_new_openli_yaml_config_update(
+        openli_yaml_config_pending_updates_t *update_array);
+
+int apply_yaml_config_updates(const char *filename,
+        openli_yaml_config_pending_updates_t *updates);
+void clean_openli_yaml_config_updates(
+        openli_yaml_config_pending_updates_t *updates);
+
+void generate_scalar_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        const char *value, bool is_string, bool create);
+void generate_array_scalar_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        const char *value, bool is_string, int array_index);
+void generate_array_simple_append_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        const char **values, bool is_string, size_t value_count, bool create);
+void generate_array_object_append_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        openli_yaml_config_object_t *objects,
+        size_t obj_count, bool create);
+void generate_array_replace_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        const char **values, bool is_string, size_t value_count, bool create);
+
+#endif
