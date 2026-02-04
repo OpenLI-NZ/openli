@@ -34,13 +34,16 @@
 #include <stdbool.h>
 #include <yaml.h>
 #include <errno.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 #include "logger.h"
 #include "util.h"
+#include "configwriter_common.h"
 
-#define MAX_LINE 1024
-#define MAX_KEY_LENGTH 512
-#define MAX_PATH_DEPTH 10
+#define OPENLI_YAML_MAX_LINE 1024
+#define OPENLI_YAML_MAX_KEY_LENGTH 512
+#define OPENLI_YAML_MAX_PATH_DEPTH 10
 
 #define WRITE_QUOTED_VALUE(fout, value) \
     fprintf(fout, " \"%s\"\n", value);
@@ -48,45 +51,56 @@
 #define WRITE_UNQUOTED_VALUE(fout, value) \
     fprintf(fout, " %s\n", value);
 
-typedef enum {
-    UPDATE_SCALAR,
-    UPDATE_ARRAY_INDEX,
-    UPDATE_ARRAY_ALL,
-    UPDATE_ARRAY_APPEND,
-} openli_yaml_update_type_t;
 
 typedef struct {
-    char key_path[MAX_KEY_LENGTH];
-    char value[MAX_LINE];
-    bool is_string;
-    openli_yaml_update_type_t type;
-    int array_index;
-    char **array_values;
-    size_t array_count;
-
-    struct {
-        char **keys;
-        char **values;
-        bool *is_string;
-        size_t count;
-    } *array_objects;
-    size_t array_objects_count;
-} openli_yaml_config_update_t;
-
-typedef struct {
-    char path[MAX_PATH_DEPTH][MAX_KEY_LENGTH];
+    char path[OPENLI_YAML_MAX_PATH_DEPTH][OPENLI_YAML_MAX_KEY_LENGTH];
     int depth;
-    int indents[MAX_PATH_DEPTH];
-    bool in_array[MAX_PATH_DEPTH];
-    int array_index[MAX_PATH_DEPTH];
+    int indents[OPENLI_YAML_MAX_PATH_DEPTH];
+    bool in_array[OPENLI_YAML_MAX_PATH_DEPTH];
+    int array_index[OPENLI_YAML_MAX_PATH_DEPTH];
 } openli_yaml_context_t;
 
 typedef struct {
-    char key_path[MAX_KEY_LENGTH];
+    char key_path[OPENLI_YAML_MAX_KEY_LENGTH];
     int indent;
     uint32_t filepos;
+    uint32_t tentative_pos;
     bool is_string;
+    bool just_marked;
 } openli_yaml_array_append_t;
+
+typedef struct {
+    char parent_path[OPENLI_YAML_MAX_KEY_LENGTH];
+    char key[OPENLI_YAML_MAX_KEY_LENGTH];
+    int indent;
+    long filepos;
+} openli_yaml_key_insert_t;
+
+typedef struct {
+    char *path;
+    int indent;
+    long last_child_pos;
+} openli_yaml_section_t;
+
+static void parse_key_path(const char *key_path, char *parent, char *key) {
+    const char *last_dot = strrchr(key_path, '.');
+
+    if (last_dot) {
+        size_t plen = last_dot - key_path;
+        strncpy(parent, key_path, plen);
+        parent[plen] = '\0';
+        strcpy(key, last_dot + 1);
+    } else {
+        parent[0] = '\0';
+        strcpy(key, key_path);
+    }
+}
+
+static void pop_context_as_needed(openli_yaml_context_t *ctx, int indent) {
+    while (ctx->depth > 0 && indent <= ctx->indents[ctx->depth - 1]) {
+        ctx->depth --;
+    }
+}
 
 static bool parse_array_syntax(const char *path, char *base, int *index,
         char *remainder) {
@@ -226,18 +240,10 @@ static void update_context(openli_yaml_context_t *ctx, const char *line,
         char *key, uint8_t is_array) {
 
     int indent = get_indent(line);
-    while (ctx->depth > 0 && indent <= ctx->indents[ctx->depth - 1]) {
-        ctx->depth --;
-    }
-
-    if (ctx->depth > 0 && is_array_item(line) && ctx->in_array[ctx->depth - 1])
-    {
-        ctx->array_index[ctx->depth - 1]++;
-    }
 
     if (!has_value(line) || is_array) {
-        if (ctx->depth < MAX_PATH_DEPTH) {
-            strncpy(ctx->path[ctx->depth], key, MAX_KEY_LENGTH - 1);
+        if (ctx->depth < OPENLI_YAML_MAX_PATH_DEPTH) {
+            strncpy(ctx->path[ctx->depth], key, OPENLI_YAML_MAX_KEY_LENGTH - 1);
             ctx->indents[ctx->depth] = indent;
             ctx->in_array[ctx->depth] = is_array;
             ctx->array_index[ctx->depth] = is_array ? -1 : 0;
@@ -249,7 +255,7 @@ static void update_context(openli_yaml_context_t *ctx, const char *line,
 static bool path_matches(const char *current_path, const char *key,
         const char *target_path) {
 
-    char full_path[MAX_KEY_LENGTH * 2];
+    char full_path[OPENLI_YAML_MAX_KEY_LENGTH * 2];
     if (current_path[0] != '\0') {
         snprintf(full_path, sizeof(full_path), "%s.%s", current_path, key);
     } else {
@@ -258,33 +264,44 @@ static bool path_matches(const char *current_path, const char *key,
     return (strcmp(full_path, target_path) == 0);
 }
 
-static void check_for_appendable_array_end(openli_yaml_context_t *ctx,
-        const char *line, FILE *fout, openli_yaml_array_append_t *append_arrays,
-        size_t append_count) {
+static void check_for_appendable_array_end(const char *line, FILE *fout,
+        openli_yaml_array_append_t *append_arrays, size_t append_count) {
 
     size_t i;
-    char current_path[MAX_KEY_LENGTH * 2];
-
-    build_path(ctx, current_path, sizeof(current_path));
 
     for (i = 0; i < append_count; i++) {
         char *trimmed;
         if (append_arrays[i].filepos != 0) {
             continue;
         }
-        if (is_array_item(line)) {
+        if (append_arrays[i].just_marked) {
+            append_arrays[i].just_marked = false;
             continue;
         }
-        if (get_indent(line) > append_arrays[i].indent) {
+
+        if (is_array_item(line)) {
+            append_arrays[i].tentative_pos = 0;
             continue;
         }
         trimmed = ltrim((char *)line);
         if (trimmed[0] == '\0' || trimmed[0] == '#') {
+            // possible end point for the sequence, but can't be sure yet
+            // until we see what is coming up next because this might be
+            // a comment or blank line belonging to the current sequence
+            if (get_indent(line) <= append_arrays[i].indent &&
+                    append_arrays[i].tentative_pos == 0) {
+                append_arrays[i].tentative_pos = ftell(fout) - strlen(line);
+            }
             continue;
         }
-        // array must be over, save our current position to write the
-        // appendages to later on.
-        append_arrays[i].filepos = ftell(fout) - strlen(line);
+        if (get_indent(line) <= append_arrays[i].indent) {
+            if (append_arrays[i].tentative_pos != 0) {
+                // rewind to the oldest blank line / comment
+                append_arrays[i].filepos = append_arrays[i].tentative_pos;
+            } else {
+                append_arrays[i].filepos = ftell(fout) - strlen(line);
+            }
+        }
     }
 }
 
@@ -292,33 +309,275 @@ static void append_array_object(FILE *fout, openli_yaml_config_update_t *update,
         int base_indent) {
 
     size_t i, j;
+    openli_yaml_config_object_field_t field;
+
     for (i = 0; i < update->array_objects_count; i++) {
         fprintf(fout, "%*s- ", base_indent, "");
-        if (update->array_objects[i].count == 0) {
+        if (update->array_objects[i].field_count == 0) {
             fprintf(fout, "\n");
             continue;
         }
 
         // first field must be in line with the dash
-        fprintf(fout, "%s:", update->array_objects[i].keys[0]);
-        if (update->array_objects[i].is_string[0]) {
-            WRITE_QUOTED_VALUE(fout, update->array_objects[i].values[0]);
+        field = update->array_objects[i].fields[0];
+        fprintf(fout, "%s:", field.key);
+        if (field.is_string) {
+            WRITE_QUOTED_VALUE(fout, field.value);
         } else {
-            WRITE_UNQUOTED_VALUE(fout, update->array_objects[i].values[0]);
+            WRITE_UNQUOTED_VALUE(fout, field.value);
         }
 
         // remaining fields need the extra indentation
-        for (j = 1; j < update->array_objects[i].count; j++) {
-            fprintf(fout, "%*s%s:", base_indent + 2, "",
-                    update->array_objects[i].keys[j]);
-            if (update->array_objects[i].is_string[j]) {
-                WRITE_QUOTED_VALUE(fout, update->array_objects[i].values[j]);
+        for (j = 1; j < update->array_objects[i].field_count; j++) {
+            field = update->array_objects[i].fields[j];
+            fprintf(fout, "%*s%s:", base_indent + 2, "", field.key);
+            if (field.is_string) {
+                WRITE_QUOTED_VALUE(fout, field.value);
             } else {
-                WRITE_UNQUOTED_VALUE(fout, update->array_objects[i].values[j]);
+                WRITE_UNQUOTED_VALUE(fout, field.value);
             }
         }
     }
 
+}
+
+static void calculate_key_insertions(openli_yaml_config_update_t *updates,
+        size_t update_count, openli_yaml_key_insert_t *insert_keys,
+        size_t *insert_count, openli_yaml_section_t *sections,
+        size_t section_count, bool *found, long file_end_pos) {
+
+    size_t i, j;
+    int target_indent = 0;
+    char parent_path[OPENLI_YAML_MAX_KEY_LENGTH - 1];
+    char key_name[OPENLI_YAML_MAX_KEY_LENGTH - 1];
+    long insert_pos = -1;
+
+    for (i = 0; i < update_count; i++) {
+        if (found[i]) {
+            continue;
+        }
+        if (!updates[i].create_if_missing) {
+            continue;
+        }
+        if (updates[i].type != UPDATE_SCALAR &&
+                updates[i].type != UPDATE_ARRAY_ALL &&
+                updates[i].type != UPDATE_ARRAY_APPEND) {
+            continue;
+        }
+
+        parse_key_path(updates[i].key_path, parent_path, key_name);
+        if (parent_path[0] == '\0') {
+            // top level, append to the end of the file
+            insert_pos = file_end_pos;
+            target_indent = 0;
+        } else {
+            for (j = 0; j < section_count; j++) {
+                if (strcmp(sections[j].path, parent_path) == 0) {
+                    insert_pos = sections[j].last_child_pos;
+                    target_indent = sections[j].indent + 2;
+                    break;
+                }
+            }
+            if (insert_pos < 0) {
+                // couldn't find the matching section?
+                continue;
+            }
+        }
+
+        strncpy(insert_keys[*insert_count].parent_path, parent_path,
+                OPENLI_YAML_MAX_KEY_LENGTH - 1);
+        strncpy(insert_keys[*insert_count].key, key_name,
+                OPENLI_YAML_MAX_KEY_LENGTH - 1);
+        insert_keys[*insert_count].indent = target_indent;
+        insert_keys[*insert_count].filepos = insert_pos;
+        (*insert_count)++;
+        found[i] = true;
+    }
+}
+
+static void write_new_key(FILE *fout, const char *key, int base_indent,
+        openli_yaml_config_update_t *update) {
+    size_t k;
+
+    if (update->type == UPDATE_SCALAR) {
+        fprintf(fout, "%*s%s:", base_indent, "", key);
+        if (update->is_string) {
+            WRITE_QUOTED_VALUE(fout, update->value);
+        } else {
+            WRITE_UNQUOTED_VALUE(fout, update->value);
+        }
+    } else if (update->type == UPDATE_ARRAY_ALL ||
+            (update->type == UPDATE_ARRAY_APPEND &&
+             update->array_objects_count == 0)) {
+        fprintf(fout, "%*s%s:\n", base_indent, "", key);
+        for (k = 0; k < update->array_count; k++) {
+            fprintf(fout, "%*s-", base_indent + 2, "");
+
+            if (update->is_string) {
+                WRITE_QUOTED_VALUE(fout, update->value);
+            } else {
+                WRITE_UNQUOTED_VALUE(fout, update->value);
+            }
+        }
+    } else if (update->type == UPDATE_ARRAY_APPEND) {
+        fprintf(fout, "%*s%s:\n", base_indent, "", key);
+        append_array_object(fout, update, base_indent);
+    }
+}
+
+static int apply_key_insertions(const char *tmpfile,
+        openli_yaml_key_insert_t *insert_keys, size_t insert_count,
+        openli_yaml_config_update_t *updates, size_t update_count) {
+
+    FILE *temp_in, *temp_out;
+    char line[OPENLI_YAML_MAX_LINE];
+    char tmpfile2[768];
+    long current_pos = 0;
+    size_t i, j;
+    int base_indent;
+    char parent[OPENLI_YAML_MAX_KEY_LENGTH];
+    char key[OPENLI_YAML_MAX_KEY_LENGTH];
+    size_t ins_remaining;
+
+    if (insert_count == 0) {
+        return 0;
+    }
+
+    /* This is a bit clunky and ugly, but it should hopefully do the job.
+     *
+     * Our main goal here is essentially go through our "draft" modified
+     * config (which already has all of the non-inserting updates applied)
+     * and now insert the new keys at the locations we found when we walked
+     * through the first time around.
+     */
+    temp_in = fopen(tmpfile, "r");
+    if (!temp_in) {
+        logger(LOG_INFO,
+                "OpenLI: unable to reopen draft file for updated configuration: %s",
+                strerror(errno));
+        return -1;
+    }
+    snprintf(tmpfile2, 768, "%s2", tmpfile);
+    temp_out = fopen(tmpfile2, "w");
+    if (!temp_out) {
+        logger(LOG_INFO,
+                "OpenLI: unable to create secondary temp file for generating updated configuration: %s",
+                strerror(errno));
+        fclose(temp_in);
+        return -1;
+    }
+
+    ins_remaining = insert_count;
+    while (fgets(line, OPENLI_YAML_MAX_LINE, temp_in)) {
+        for (i = 0; i < insert_count; i++) {
+            if (insert_keys[i].filepos <= 0) {
+                continue;
+            }
+            if (current_pos != insert_keys[i].filepos) {
+                continue;
+            }
+            for (j = 0; j < update_count; j++) {
+                parse_key_path(updates[j].key_path, parent, key);
+                if (strcmp(insert_keys[i].parent_path, parent) != 0) {
+                    continue;
+                }
+                if (strcmp(insert_keys[i].key, key) != 0) {
+                    continue;
+                }
+                base_indent = insert_keys[i].indent;
+                write_new_key(temp_out, key, base_indent, &(updates[j]));
+                break;
+            }
+            insert_keys[i].filepos = -1;
+            ins_remaining --;
+        }
+        fputs(line, temp_out);
+        current_pos = ftell(temp_in);
+    }
+
+    fclose(temp_in);
+    fclose(temp_out);
+
+    if (ins_remaining > 0) {
+        // handle the leftover insertions that must go at the end of the file
+        temp_out = fopen(tmpfile2, "a");
+        if (!temp_out) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to create secondary temp file for generating updated configuration: %s",
+                    strerror(errno));
+            remove(tmpfile);
+            remove(tmpfile2);
+            return -1;
+        }
+
+        for (i = 0; i < insert_count; i++) {
+            if (insert_keys[i].filepos <= 0) {
+                continue;
+            }
+            for (j = 0; j < update_count; j++) {
+                parse_key_path(updates[j].key_path, parent, key);
+                if (strcmp(insert_keys[i].parent_path, parent) != 0) {
+                    continue;
+                }
+                if (strcmp(insert_keys[i].key, key) != 0) {
+                    continue;
+                }
+                base_indent = insert_keys[i].indent;
+                write_new_key(temp_out, key, base_indent, &(updates[j]));
+                insert_keys[i].filepos = -1;
+            }
+        }
+        fclose(temp_out);
+    }
+
+    remove(tmpfile);
+    rename(tmpfile2, tmpfile);
+    return 0;
+
+}
+
+static int _apply_array_appends(openli_yaml_array_append_t *append_arrays,
+        size_t append_count, openli_yaml_config_update_t *updates,
+        size_t update_count, FILE *fout, long current_pos) {
+
+    size_t i, j, k;
+    char *val;
+    int base_indent;
+
+    for (i = 0; i < append_count; i++) {
+        if (append_arrays[i].filepos <= 0) {
+            continue;
+        }
+        if (current_pos != (long)append_arrays[i].filepos) {
+            continue;
+        }
+        for (j = 0; j < update_count; j++) {
+            if (updates[j].type != UPDATE_ARRAY_APPEND) {
+                continue;
+            }
+            if (strcmp(updates[j].key_path, append_arrays[i].key_path)) {
+                continue;
+            }
+            base_indent = append_arrays[i].indent + 2;
+            if (updates[j].array_objects_count == 0) {
+                // just appending simple values
+                for (k = 0; k < updates[j].array_count; k++) {
+                    val = updates[j].array_values[k];
+                    fprintf(fout, "%*s-", base_indent, "");
+                    if (updates[j].is_string) {
+                        WRITE_QUOTED_VALUE(fout, val);
+                    } else {
+                        WRITE_UNQUOTED_VALUE(fout, val);
+                    }
+                }
+            } else {
+                append_array_object(fout, &(updates[j]), base_indent);
+            }
+            break;
+        }
+        append_arrays[i].filepos = -1;  // mark as completed
+    }
+    return 0;
 }
 
 static int apply_array_appends(const char *tmpfile,
@@ -326,12 +585,9 @@ static int apply_array_appends(const char *tmpfile,
         openli_yaml_config_update_t *updates, size_t update_count) {
 
     FILE *temp_in, *temp_out;
-    char line[MAX_LINE];
+    char line[OPENLI_YAML_MAX_LINE];
     char tmpfile2[768];
     long current_pos = 0;
-    size_t i, j, k;
-    int base_indent;
-    char *val;
 
     if (append_count == 0) {
         return 0;
@@ -361,43 +617,19 @@ static int apply_array_appends(const char *tmpfile,
         return -1;
     }
 
-    while (fgets(line, MAX_LINE, temp_in)) {
-        for (i = 0; i < append_count; i++) {
-            if (append_arrays[i].filepos <= 0) {
-                continue;
-            }
-            if (current_pos != append_arrays[i].filepos) {
-                continue;
-            }
-            for (j = 0; j < update_count; j++) {
-                if (updates[j].type != UPDATE_ARRAY_APPEND) {
-                    continue;
-                }
-                if (strcmp(updates[j].key_path, append_arrays[i].key_path)) {
-                    continue;
-                }
-                base_indent = append_arrays[i].indent + 2;
-                if (updates[j].array_objects_count == 0) {
-                    // just appending simple values
-                    for (k = 0; k < updates[j].array_count; k++) {
-                        val = updates[j].array_values[k];
-                        fprintf(temp_out, "%*s-", base_indent, "");
-                        if (updates[j].is_string) {
-                            WRITE_QUOTED_VALUE(temp_out, val);
-                        } else {
-                            WRITE_UNQUOTED_VALUE(temp_out, val);
-                        }
-                    }
-                } else {
-                    append_array_object(temp_out, &(updates[j]), base_indent);
-                }
-                break;
-            }
-            append_arrays[i].filepos = -1;  // mark as completed
-        }
+    while (fgets(line, OPENLI_YAML_MAX_LINE, temp_in)) {
+        current_pos = ftell(temp_in) - strlen(line);
+
+        _apply_array_appends(append_arrays, append_count, updates, update_count,
+                temp_out, current_pos);
+
         fputs(line, temp_out);
         current_pos = ftell(temp_in);
     }
+
+    // handle any appends that occur at the end of the file
+    _apply_array_appends(append_arrays, append_count, updates, update_count,
+            temp_out, current_pos);
 
     fclose(temp_in);
     fclose(temp_out);
@@ -405,6 +637,79 @@ static int apply_array_appends(const char *tmpfile,
     remove(tmpfile);
     rename(tmpfile2, tmpfile);
     return 0;
+}
+
+static bool handle_array_object_field_update(const char *line,
+        const char *current_path, const char *item_key,
+        openli_yaml_config_update_t *update, FILE *fout) {
+
+    char base[OPENLI_YAML_MAX_KEY_LENGTH];
+    char remainder[OPENLI_YAML_MAX_KEY_LENGTH];
+    int target_index;
+    char target_path[OPENLI_YAML_MAX_KEY_LENGTH * 2 + 16];
+    char full_path[OPENLI_YAML_MAX_KEY_LENGTH * 3];
+    const char *item_start, *colon;
+
+    if (!parse_array_syntax(update->key_path, base, &target_index, remainder)) {
+        return false;
+    }
+
+    if (remainder[0] == '\0') {
+        return false;
+    }
+
+    snprintf(target_path, sizeof(target_path), "%s[%d].%s", base,
+            target_index, remainder);
+    snprintf(full_path, sizeof(full_path), "%s.%s", current_path, item_key);
+
+    if (strcmp(full_path, target_path) != 0) {
+        return false;
+    }
+    item_start = strchr(line, '-') + 1;
+    colon = strchr(item_start, ':');
+    if (!colon) {
+        return false;
+    }
+    fwrite(line, 1, colon - line + 1, fout);
+    if (update->is_string) {
+        WRITE_QUOTED_VALUE(fout, update->value);
+    } else {
+        WRITE_UNQUOTED_VALUE(fout, update->value);
+    }
+    return true;
+}
+
+static bool handle_simple_array_item_update(const char *line,
+        const char *current_path, openli_yaml_config_update_t *update,
+        FILE *fout) {
+
+    char base[OPENLI_YAML_MAX_KEY_LENGTH];
+    char remainder[OPENLI_YAML_MAX_KEY_LENGTH];
+    int target_index;
+    char target_path[OPENLI_YAML_MAX_KEY_LENGTH * 2 + 16];
+    const char *item_start;
+
+    if (!parse_array_syntax(update->key_path, base, &target_index, remainder)) {
+        return false;
+    }
+
+    if (remainder[0] != '\0') {
+        return false;
+    }
+
+    snprintf(target_path, sizeof(target_path), "%s[%d]", base, target_index);
+
+    if (strcmp(current_path, target_path) != 0) {
+        return false;
+    }
+    item_start = strchr(line, '-') + 1;
+    fwrite(line, 1, item_start - line, fout);
+    if (update->is_string) {
+        WRITE_QUOTED_VALUE(fout, update->value);
+    } else {
+        WRITE_UNQUOTED_VALUE(fout, update->value);
+    }
+    return true;
 }
 
 static bool handle_array_replacement(const char *line, const char *current_path,
@@ -447,9 +752,12 @@ static bool handle_array_append_marking(const char *current_path,
     }
 
     strncpy(append_arrays[*append_count].key_path, update->key_path,
-            MAX_KEY_LENGTH - 1);
+            OPENLI_YAML_MAX_KEY_LENGTH - 1);
     append_arrays[*append_count].indent = indent;
     append_arrays[*append_count].is_string = update->is_string;
+    append_arrays[*append_count].just_marked = true;
+    append_arrays[*append_count].filepos = 0;
+    append_arrays[*append_count].tentative_pos = 0;
     (*append_count)++;
     return true;
 }
@@ -486,8 +794,9 @@ static bool update_regular_keyitem(openli_yaml_context_t *ctx,
 
     size_t i;
     bool ret = false;
-    char current_path[MAX_KEY_LENGTH * 2];
+    char current_path[OPENLI_YAML_MAX_KEY_LENGTH * 2];
 
+    pop_context_as_needed(ctx, indent);
     build_path(ctx, current_path, sizeof(current_path));
 
     for (i = 0; i < update_count; i++) {
@@ -533,19 +842,17 @@ static bool update_array_item(openli_yaml_context_t *ctx,
         char *line, FILE *fout, bool *found) {
 
     const char *item_start = strchr(line, '-') + 1;
-    char item_key[MAX_KEY_LENGTH] = "";
+    char item_key[OPENLI_YAML_MAX_KEY_LENGTH] = "";
     size_t i;
-    char base[MAX_KEY_LENGTH];
-    char remainder[MAX_KEY_LENGTH];
-    int target_index;
-    char target_path[MAX_KEY_LENGTH * 2 + 20];
-    char full_path[MAX_KEY_LENGTH * 3];
-    const char *colon;
     bool ret = false;
-    char current_path[MAX_KEY_LENGTH * 2];
+    char current_path[OPENLI_YAML_MAX_KEY_LENGTH * 2];
 
+    pop_context_as_needed(ctx, get_indent(line));
+    if (ctx->depth > 0 && ctx->in_array[ctx->depth - 1]) {
+        ctx->array_index[ctx->depth - 1]++;
+    }
     build_path(ctx, current_path, sizeof(current_path));
-    if (extract_key(item_start, item_key, MAX_KEY_LENGTH)) {
+    if (extract_key(item_start, item_key, OPENLI_YAML_MAX_KEY_LENGTH)) {
         // deal with individual array element updates
         for (i = 0; i < update_count; i++) {
             if (found[i]) {
@@ -554,26 +861,8 @@ static bool update_array_item(openli_yaml_context_t *ctx,
             if (updates[i].type != UPDATE_ARRAY_INDEX) {
                 continue;
             }
-            if (parse_array_syntax(updates[i].key_path, base, &target_index,
-                    remainder) == false) {
-                continue;
-            }
-            snprintf(target_path, MAX_KEY_LENGTH * 2 + 20, "%s[%d].%s",
-                    base, target_index, remainder);
-            snprintf(full_path, MAX_KEY_LENGTH * 3, "%s.%s", current_path, item_key);
-
-            if (strcmp(full_path, target_path) != 0) {
-                continue;
-            }
-            // found a match, time to update
-            colon = strchr(item_start, ':');
-            if (colon) {
-                fwrite(line, 1, colon - line + 1, fout);
-                if (updates[i].is_string) {
-                    WRITE_QUOTED_VALUE(fout, updates[i].value);
-                } else {
-                    WRITE_UNQUOTED_VALUE(fout, updates[i].value);
-                }
+            if (handle_array_object_field_update(line, current_path,
+                    item_key, &(updates[i]), fout)) {
                 found[i] = true;
                 ret = true;
                 break;
@@ -589,31 +878,14 @@ static bool update_array_item(openli_yaml_context_t *ctx,
             if (updates[i].type != UPDATE_ARRAY_INDEX) {
                 continue;
             }
-            if (parse_array_syntax(updates[i].key_path, base, &target_index,
-                    remainder) == false) {
-                continue;
+            if (handle_simple_array_item_update(line, current_path,
+                    &(updates[i]), fout)) {
+                found[i] = true;
+                ret = true;
+                break;
             }
-            if (remainder[0] != '\0') {
-                continue;
-            }
-            snprintf(target_path, MAX_KEY_LENGTH * 2, "%s[%d]", base,
-                    target_index);
-
-            if (strcmp(full_path, target_path) != 0) {
-                continue;
-            }
-            // write the indentation followed by the '-'
-            fwrite(line, 1, item_start - line, fout);
-            if (updates[i].is_string) {
-                WRITE_QUOTED_VALUE(fout, updates[i].value);
-            } else {
-                WRITE_UNQUOTED_VALUE(fout, updates[i].value);
-            }
-            found[i] = true;
-            ret = true;
-            break;
         }
-        update_context(ctx, line, item_key, false);
+        update_context(ctx, line, "", false);
     }
     return ret;
 }
@@ -654,22 +926,85 @@ static bool validate_yaml(const char *filename) {
     return valid;
 }
 
-int apply_yaml_config_update(const char *filename,
-        openli_yaml_config_update_t *updates, size_t update_count) {
+static void update_section_positions(openli_yaml_section_t *sections,
+        size_t section_count, const char *current_path, FILE *fout) {
+
+    size_t i;
+    size_t sec_len;
+
+    for (i = 0; i < section_count; i++) {
+        sec_len = strlen(sections[i].path);
+        if (strncmp(current_path, sections[i].path, sec_len) == 0) {
+            if (current_path[sec_len] == '.') {
+                sections[i].last_child_pos = ftell(fout);
+            } else if (current_path[sec_len] == '\0') {
+                sections[i].last_child_pos = ftell(fout);
+            }
+        }
+    }
+
+}
+
+static void track_new_observed_section(const char *current_path, int indent,
+        openli_yaml_section_t *sections, size_t *section_count,
+        const char *key) {
+
+    size_t i, psize;
+    char *full_path = NULL;
+
+    if (*section_count >= OPENLI_YAML_MAX_PATH_DEPTH) {
+        return;
+    }
+
+    for (i = 0; i < (*section_count); i++) {
+        if (strcmp(sections[i].path, current_path) == 0) {
+            return;
+        }
+    }
+
+    psize = strlen(key) + strlen(current_path) + 2;
+    full_path = malloc(psize);
+
+    if (current_path[0] == '\0') {
+        strncpy(full_path, key, psize);
+    } else {
+        snprintf(full_path, psize, "%s.%s", current_path, key);
+    }
+
+    sections[*section_count].path = full_path;
+    sections[*section_count].indent = indent;
+    sections[*section_count].last_child_pos = 0;
+    (*section_count)++;
+
+}
+
+int apply_yaml_config_updates(const char *filename,
+        openli_yaml_config_pending_updates_t *updates) {
 
     FILE *fin = fopen(filename, "r");
     FILE *fout = NULL;
     char tmpfile[512];
-    char line[MAX_LINE];
+    char line[OPENLI_YAML_MAX_LINE];
     openli_yaml_context_t ctx;
+    long file_end_pos;
     bool *found;
     bool in_replaced_array = false;
     int replaced_array_indent = 0;
     openli_yaml_array_append_t *append_arrays;
+    openli_yaml_key_insert_t *insert_keys;
+    openli_yaml_section_t *sections;
     size_t append_count = 0;
+    size_t insert_count = 0;
+    size_t section_count = 0;
     size_t i;
+    struct stat st;
 
     memset(&ctx, 0, sizeof(openli_yaml_context_t));
+
+    if (stat(filename, &st) != 0) {
+        logger(LOG_INFO, "Failed to stat configuration file '%s' prior to updating: %s", filename, strerror(errno));
+        return -1;
+    }
 
     if (!fin) {
         logger(LOG_INFO, "Failed to open configuration file for updating: %s",
@@ -686,12 +1021,17 @@ int apply_yaml_config_update(const char *filename,
         return -1;
     }
 
-    found = calloc(update_count, sizeof(bool));
-    append_arrays = calloc(update_count, sizeof(openli_yaml_array_append_t));
+    found = calloc(updates->update_count, sizeof(bool));
+    append_arrays = calloc(updates->update_count,
+            sizeof(openli_yaml_array_append_t));
+    sections = calloc(OPENLI_YAML_MAX_PATH_DEPTH,
+            sizeof(openli_yaml_section_t));
+    insert_keys = calloc(updates->update_count,
+            sizeof(openli_yaml_key_insert_t));
 
-    while (fgets(line, MAX_LINE, fin)) {
+    while (fgets(line, OPENLI_YAML_MAX_LINE, fin)) {
         bool line_updated = false;
-        char key[MAX_KEY_LENGTH];
+        char key[OPENLI_YAML_MAX_KEY_LENGTH];
         int indent = get_indent(line);
 
         if (in_replaced_array) {
@@ -708,25 +1048,38 @@ int apply_yaml_config_update(const char *filename,
         // preserve comments and empty lines
         if (ltrim(line)[0] == '#' || ltrim(line)[0] == '\0') {
             fputs(line, fout);
-            continue;
+            line_updated = true;
         }
 
         if (is_array_item(line)) {
-            line_updated = update_array_item(&ctx, updates, update_count,
-                    line, fout, found);
-        } else if (extract_key(line, key, MAX_KEY_LENGTH)) {
-            line_updated = update_regular_keyitem(&ctx, updates, update_count,
+            line_updated = update_array_item(&ctx, updates->updates,
+                    updates->update_count, line, fout, found);
+        } else if (extract_key(line, key, OPENLI_YAML_MAX_KEY_LENGTH)) {
+            char current_path[OPENLI_YAML_MAX_KEY_LENGTH * 2];
+            build_path(&ctx, current_path, sizeof(current_path));
+
+            if (!has_value(line)) {
+                // this is a section
+                track_new_observed_section(current_path, indent, sections,
+                        &section_count, key);
+            }
+
+            update_section_positions(sections, section_count, current_path,
+                    fout);
+
+            line_updated = update_regular_keyitem(&ctx, updates->updates,
+                    updates->update_count,
                     line, indent, fout, found, key, &in_replaced_array,
                     &replaced_array_indent, append_arrays, &append_count);
 
             if (line_updated == false || !has_value(line)) {
                 bool next_is_array = false;
                 long pos;
-                char next_line[MAX_LINE];
+                char next_line[OPENLI_YAML_MAX_LINE];
 
                 // peek to see if the next line will be an array
                 pos = ftell(fin);
-                if (fgets(next_line, MAX_LINE, fin)) {
+                if (fgets(next_line, OPENLI_YAML_MAX_LINE, fin)) {
                     next_is_array = is_array_item(next_line);
                     fseek(fin, pos, SEEK_SET);
                 }
@@ -741,17 +1094,44 @@ int apply_yaml_config_update(const char *filename,
 
         if (append_count > 0) {
             // check if an array has ended that we need to append to
-            check_for_appendable_array_end(&ctx, line, fout, append_arrays,
+            check_for_appendable_array_end(line, fout, append_arrays,
                     append_count);
         }
     }
 
     fclose(fin);
+    file_end_pos = ftell(fout);
     fclose(fout);
 
-    if (apply_array_appends(tmpfile, append_arrays, append_count,
-            updates, update_count) < 0) {
+    for (i = 0; i < append_count; i++) {
+        if (append_arrays[i].filepos == 0) {
+            if (append_arrays[i].tentative_pos != 0) {
+                append_arrays[i].filepos = append_arrays[i].tentative_pos;
+            } else {
+                append_arrays[i].filepos = (uint32_t)file_end_pos;
+            }
+        }
+    }
+
+    calculate_key_insertions(updates->updates, updates->update_count,
+            insert_keys,
+            &insert_count, sections, section_count, found, file_end_pos);
+
+    if (apply_key_insertions(tmpfile, insert_keys, insert_count,
+            updates->updates, updates->update_count) < 0) {
         free(found);
+        free(sections);
+        free(insert_keys);
+        free(append_arrays);
+        remove(tmpfile);
+        return -1;
+    }
+
+    if (apply_array_appends(tmpfile, append_arrays, append_count,
+            updates->updates, updates->update_count) < 0) {
+        free(found);
+        free(sections);
+        free(insert_keys);
         free(append_arrays);
         remove(tmpfile);
         return -1;
@@ -759,19 +1139,48 @@ int apply_yaml_config_update(const char *filename,
 
     // check that we managed to perform all of the requested updates -- if not,
     // at least log a warning
-    for (i = 0; i < update_count; i++) {
+    for (i = 0; i < updates->update_count; i++) {
         if (!found[i]) {
             logger(LOG_INFO,
-                    "OpenLI: unable to update configuration for key '%s' as it was not already present in the config file",
-                    updates[i].key_path);
+                    "OpenLI: unable to update configuration for key '%s' as it was not already present in the config file and we were not instructed to add it",
+                    updates->updates[i].key_path);
         }
     }
+
+    for (i = 0; i < section_count; i++) {
+        if (sections[i].path) {
+            free(sections[i].path);
+        }
+    }
+
+    free(found);
+    free(sections);
+    free(insert_keys);
+    free(append_arrays);
 
     if (!validate_yaml(tmpfile)) {
         logger(LOG_INFO,
                 "OpenLI: generated invalid YAML to replace configuration file '%s' -- changes will NOT persist", filename);
-        remove(tmpfile);
+        //remove(tmpfile);
         return 0;
+    }
+
+    /* Try to preserve ownership and permissions from the original file */
+    if (chown(tmpfile, st.st_uid, st.st_gid) != 0) {
+        if (errno != EPERM) {
+            logger(LOG_INFO,
+                    "OpenLI: error while setting ownership on replacement configuration file: %s",
+                    strerror(errno));
+        }
+        // EPERM is expected if we're not root and we didn't own the original,
+        // no need to complain
+    }
+
+    if (chmod(tmpfile, st.st_mode) != 0) {
+        logger(LOG_INFO,
+                "OpenLI: error while restoring permissions on replacement configuration file: %s",
+                strerror(errno));
+        // Allow to carry on?
     }
 
     if (remove(filename) != 0) {
@@ -790,23 +1199,62 @@ int apply_yaml_config_update(const char *filename,
     return 1;
 }
 
-void clean_openli_yaml_config_update(openli_yaml_config_update_t *update) {
-    if (update->array_objects) {
-        free(update->array_objects);
-        update->array_objects = NULL;
+static void destroy_array_object(openli_yaml_config_object_t *obj) {
+    size_t i;
+    openli_yaml_config_object_field_t *f;
+
+    if (!obj->fields) {
+        return;
     }
+    for (i = 0; i < obj->field_count; i++) {
+        f = &(obj->fields[i]);
+        if (f->key) {
+            free(f->key);
+        }
+        if (f->value) {
+            free(f->value);
+        }
+    }
+    free(obj->fields);
+    obj->field_count = 0;
+}
+
+void clean_openli_yaml_config_updates(
+        openli_yaml_config_pending_updates_t *updates) {
+
+    size_t i, j;
+    if (!updates) {
+        return;
+    }
+
+    if (updates->updates == NULL) {
+        return;
+    }
+
+    for (i = 0; i < updates->update_count; i++) {
+        if (updates->updates[i].array_objects) {
+            for (j = 0; j < updates->updates[i].array_objects_count; j++) {
+                destroy_array_object(&(updates->updates[i].array_objects[j]));
+            }
+            free(updates->updates[i].array_objects);
+            updates->updates[i].array_objects = NULL;
+        }
+    }
+    updates->update_count = 0;
+    //free(updates->updates);
 }
 
 void generate_scalar_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
-        const char *value, bool is_string) {
+        const char *value, bool is_string, bool create) {
 
     memset(update, 0, sizeof(openli_yaml_config_update_t));
 
-    strncpy(update->key_path, key_path, MAX_KEY_LENGTH - 1);
-    strncpy(update->value, value, MAX_LINE - 1);
+    strncpy(update->key_path, key_path, OPENLI_YAML_MAX_KEY_LENGTH - 1);
+    strncpy(update->value, value, OPENLI_YAML_MAX_LINE - 1);
     update->is_string = is_string;
     update->type = UPDATE_SCALAR;
+    update->create_if_missing = create;
 
 }
 
@@ -816,56 +1264,89 @@ void generate_array_scalar_openli_yaml_config_update(
 
     memset(update, 0, sizeof(openli_yaml_config_update_t));
 
-    strncpy(update->key_path, key_path, MAX_KEY_LENGTH - 1);
-    strncpy(update->value, value, MAX_LINE - 1);
+    strncpy(update->key_path, key_path, OPENLI_YAML_MAX_KEY_LENGTH - 1);
+    strncpy(update->value, value, OPENLI_YAML_MAX_LINE - 1);
     update->is_string = is_string;
     update->type = UPDATE_ARRAY_INDEX;
     update->array_index = array_index;
+    // create not supported for this operation, either replace the entire
+    // array entry or append a new one instead
+    update->create_if_missing = false;
 }
 
 void generate_array_simple_append_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
-        const char **values, bool is_string, size_t value_count) {
+        const char **values, bool is_string, size_t value_count,
+        bool create) {
 
     memset(update, 0, sizeof(openli_yaml_config_update_t));
 
-    strncpy(update->key_path, key_path, MAX_KEY_LENGTH - 1);
+    strncpy(update->key_path, key_path, OPENLI_YAML_MAX_KEY_LENGTH - 1);
     update->is_string = is_string;
     update->type = UPDATE_ARRAY_APPEND;
     update->array_values = (char **)values;
     update->array_count = value_count;
+    update->create_if_missing = create;
 }
 
 void generate_array_object_append_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
-        const char ***obj_keys, char ***obj_values, bool **obj_is_string,
-        size_t *obj_field_counts, size_t obj_count) {
+        openli_yaml_config_object_t *objects, size_t obj_count, bool create) {
 
-    size_t i;
+    size_t i, j;
 
     memset(update, 0, sizeof(openli_yaml_config_update_t));
-    strncpy(update->key_path, key_path, MAX_KEY_LENGTH - 1);
+    strncpy(update->key_path, key_path, OPENLI_YAML_MAX_KEY_LENGTH - 1);
     update->type = UPDATE_ARRAY_APPEND;
-    update->array_objects = calloc(obj_count, sizeof(*(update->array_objects)));
+    update->array_objects = calloc(obj_count,
+            sizeof(openli_yaml_config_object_t));
     update->array_objects_count = obj_count;
+    update->create_if_missing = create;
 
-    for (i = 0; i < obj_count; i++) {
-        update->array_objects[i].keys = (char **)obj_keys[i];
-        update->array_objects[i].values = obj_values[i];
-        update->array_objects[i].is_string = obj_is_string[i];
-        update->array_objects[i].count = obj_field_counts[i];
+    for (i = 0; i < update->array_objects_count; i++) {
+        update->array_objects[i].field_count = objects[i].field_count;
+        update->array_objects[i].fields = calloc(objects[i].field_count,
+                sizeof(openli_yaml_config_object_field_t));
+        for (j = 0; j < objects[i].field_count; j++) {
+            update->array_objects[i].fields[j].key = strdup(
+                    objects[i].fields[j].key);
+            update->array_objects[i].fields[j].value = strdup(
+                    objects[i].fields[j].value);
+            update->array_objects[i].fields[j].is_string =
+                    objects[i].fields[j].is_string;
+        }
     }
 }
 
 void generate_array_replace_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
-        const char **values, bool is_string, size_t value_count) {
+        const char **values, bool is_string, size_t value_count,
+        bool create) {
 
     memset(update, 0, sizeof(openli_yaml_config_update_t));
 
-    strncpy(update->key_path, key_path, MAX_KEY_LENGTH - 1);
+    strncpy(update->key_path, key_path, OPENLI_YAML_MAX_KEY_LENGTH - 1);
     update->is_string = is_string;
     update->type = UPDATE_ARRAY_ALL;
     update->array_values = (char **)values;
     update->array_count = value_count;
+    update->create_if_missing = create;
+}
+
+size_t prepare_new_openli_yaml_config_update(
+        openli_yaml_config_pending_updates_t *update_array) {
+
+    // assuming we have the lock for the config update array...
+
+    if (update_array->update_count < update_array->array_size) {
+        // next expected slot is available, go ahead
+        return update_array->update_count;
+    }
+
+    // otherwise the array is full, time to extend it
+    update_array->updates = realloc(update_array->updates,
+            sizeof(openli_yaml_config_update_t) *
+                    (update_array->array_size + 16));
+    update_array->array_size += 16;
+    return update_array->update_count;
 }

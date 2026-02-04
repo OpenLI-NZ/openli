@@ -509,11 +509,16 @@ static int update_collector_global_config(collector_sync_t *sync,
         return 0;
     }
 
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+
     pthread_rwlock_wrlock(sync->sipconfig_mutex);
-    handle_sip_config_changes(sync->sipconfig, newconfig);
+    handle_sip_config_changes(sync->sipconfig, &(sync->glob->configupdates),
+            newconfig);
     pthread_rwlock_unlock(sync->sipconfig_mutex);
 
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
 
     free(newconfig);
     return 0;
@@ -2213,6 +2218,8 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     uint64_t ts;
     char identifier[1024];
     x_input_t *xinp;
+    openli_yaml_config_object_t newobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
 
     if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts) < 0) {
         if (sync->instruct_log) {
@@ -2225,6 +2232,16 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     if (ipaddr == NULL || port == NULL) {
         return 0;
     }
+
+    newobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    newobj.fields[0].key = "listenaddr";
+    newobj.fields[0].value = ipaddr;
+    newobj.fields[0].is_string = false;
+    newobj.fields[1].key = "listenport";
+    newobj.fields[1].value = port;
+    newobj.fields[1].is_string = false;
+    newobj.field_count = 2;
+
     snprintf(identifier, 1024, "%s-%s", ipaddr, port);
     add_x2x3_to_sync(sync, identifier, ipaddr, port);
 
@@ -2245,7 +2262,16 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
                 strlen(xinp->identifier), xinp);
     }
     pthread_rwlock_unlock(sync->xinput_mutex);
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_object_append_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "x2x3inputs", &newobj, 1, true);
+    pending->update_count ++;
+
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
     free(ipaddr);
     free(port);
     return 1;
