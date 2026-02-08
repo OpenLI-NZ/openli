@@ -52,7 +52,7 @@
 #include "export_buffer.h"
 #include "openli_tls.h"
 #include "etsiencoding/etsiencoding.h"
-#include "configwriter_common.h"
+#include "yaml_modifier.h"
 
 #define MAX_ENCODED_RESULT_BATCH 50
 
