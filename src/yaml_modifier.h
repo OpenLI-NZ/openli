@@ -39,6 +39,8 @@ typedef enum {
     UPDATE_ARRAY_INDEX,
     UPDATE_ARRAY_ALL,
     UPDATE_ARRAY_APPEND,
+    UPDATE_ARRAY_REMOVE,
+    UPDATE_ARRAY_REMOVE_SCALAR,
 } openli_yaml_update_type_t;
 
 typedef struct {
@@ -106,6 +108,11 @@ void generate_array_object_append_openli_yaml_config_update(
 void generate_array_replace_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
         const char **values, bool is_string, size_t value_count, bool create);
-
+void generate_array_remove_object_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        openli_yaml_config_object_t *criteria);
+void generate_array_remove_scalar_openli_yaml_config_update(
+        openli_yaml_config_update_t *update, const char *key_path,
+        const char *value, bool is_string);
 
 #endif
