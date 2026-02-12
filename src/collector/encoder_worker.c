@@ -231,9 +231,18 @@ static inline void finalize_encoded_result(openli_encoded_result_t *res,
     res->liid = strdup(job->liid);
     res->seqno = job->seqno;
     res->destid = job->origreq->destid;
-    res->origreq = job->origreq;
     res->encodedby = enc->workerid;
     res->restype = type;
+
+    if (type == OPENLI_EXPORT_LAST_SEGMENT_FLAG ||
+            type == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
+        // Otherwise we run the risk of double freeing this later on
+        // XXX we could duplicate it if we absolutely needed it, but
+        // we shouldn't need it
+        res->origreq = NULL;
+    } else {
+        res->origreq = job->origreq;
+    }
 
 }
 
