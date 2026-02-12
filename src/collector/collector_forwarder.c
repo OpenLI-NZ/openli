@@ -639,8 +639,10 @@ static inline int enqueue_result(forwarding_thread_data_t *fwd,
         memcpy(tosave, res, sizeof(openli_encoded_result_t));
 
         if (res->restype == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
+            tosave->origreq = NULL;
             JLI(pval, reord->pending_first_segflags, res->seqno);
         } else if (res->restype == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+            tosave->origreq = NULL;
             JLI(pval, reord->pending_last_segflags, res->seqno);
         } else {
             JLI(pval, reord->pending, res->seqno);
