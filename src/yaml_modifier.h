@@ -91,6 +91,7 @@ int apply_yaml_config_updates(const char *filename,
         openli_yaml_config_pending_updates_t *updates);
 void clean_openli_yaml_config_updates(
         openli_yaml_config_pending_updates_t *updates);
+void destroy_openli_yaml_config_array_object(openli_yaml_config_object_t *obj);
 
 void generate_scalar_openli_yaml_config_update(
         openli_yaml_config_update_t *update, const char *key_path,
