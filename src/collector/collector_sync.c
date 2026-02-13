@@ -2183,6 +2183,8 @@ void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
         pthread_t threadid) {
     x_input_sync_t *found;
     openli_export_recv_t *msg;
+    openli_yaml_config_object_t remobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
 
     HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
     if (!found) {
@@ -2205,10 +2207,31 @@ void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
 
     HASH_DELETE(hh, sync->x2x3_queues, found);
     zmq_close(found->zmq_socket);
+
+    remobj.field_count = 2;
+    remobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    remobj.fields[0].key = strdup("listenaddr");
+    remobj.fields[0].value = strdup(found->listenaddr);
+    remobj.fields[0].is_string = false;
+    remobj.fields[1].key = strdup("listenport");
+    remobj.fields[1].value = strdup(found->listenport);
+    remobj.fields[1].is_string = false;
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_remove_object_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "x2x3inputs", &remobj);
+    pending->update_count ++;
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
+
     if (found->listenaddr) free(found->listenaddr);
     if (found->listenport) free(found->listenport);
     free(found->identifier);
     free(found);
+    destroy_openli_yaml_config_array_object(&remobj);
 }
 
 static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
@@ -2234,11 +2257,11 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     }
 
     newobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
-    newobj.fields[0].key = "listenaddr";
-    newobj.fields[0].value = ipaddr;
+    newobj.fields[0].key = strdup("listenaddr");
+    newobj.fields[0].value = strdup(ipaddr);
     newobj.fields[0].is_string = false;
-    newobj.fields[1].key = "listenport";
-    newobj.fields[1].value = port;
+    newobj.fields[1].key = strdup("listenport");
+    newobj.fields[1].value = strdup(port);
     newobj.fields[1].is_string = false;
     newobj.field_count = 2;
 
@@ -2274,6 +2297,7 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     pthread_mutex_unlock(sync->glob->configupdate_mutex);
     free(ipaddr);
     free(port);
+    destroy_openli_yaml_config_array_object(&newobj);
     return 1;
 }
 

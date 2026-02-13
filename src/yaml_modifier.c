@@ -1436,7 +1436,7 @@ int apply_yaml_config_updates(const char *filename,
     return 1;
 }
 
-static void destroy_array_object(openli_yaml_config_object_t *obj) {
+void destroy_openli_yaml_config_array_object(openli_yaml_config_object_t *obj) {
     size_t i;
     openli_yaml_config_object_field_t *f;
 
@@ -1471,7 +1471,8 @@ void clean_openli_yaml_config_updates(
     for (i = 0; i < updates->update_count; i++) {
         if (updates->updates[i].array_objects) {
             for (j = 0; j < updates->updates[i].array_objects_count; j++) {
-                destroy_array_object(&(updates->updates[i].array_objects[j]));
+                destroy_openli_yaml_config_array_object(
+                        &(updates->updates[i].array_objects[j]));
             }
             free(updates->updates[i].array_objects);
             updates->updates[i].array_objects = NULL;
@@ -1585,7 +1586,7 @@ void generate_array_remove_object_openli_yaml_config_update(
 
     update->array_objects[0].field_count = criteria->field_count;
     update->array_objects[0].fields = calloc(criteria->field_count,
-            sizeof(openli_yaml_config_object_t));
+            sizeof(openli_yaml_config_object_field_t));
     for (i = 0; i < criteria->field_count; i++) {
         update->array_objects[0].fields[i].key =
                 strdup(criteria->fields[i].key);
