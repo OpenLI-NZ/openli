@@ -39,16 +39,6 @@
 #include "export_shared.h"
 #include "etsiencoding/etsiencoding.h"
 
-
-typedef struct saved_encoding_templates {
-
-    char *key;
-    Pvoid_t headers;
-    Pvoid_t ccpayloads;
-    Pvoid_t iripayloads;
-
-} saved_encoding_templates_t;
-
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);
 

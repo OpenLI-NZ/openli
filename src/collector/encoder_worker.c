@@ -155,7 +155,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     openli_encoding_job_t job;
     uint32_t drained = 0;
 
-    destroy_all_saved_encoding_templates(enc->saved_intercept_templates):
+    destroy_all_saved_encoding_templates(enc->saved_intercept_templates);
 
     clear_global_templates(&(enc->saved_global_templates));
 

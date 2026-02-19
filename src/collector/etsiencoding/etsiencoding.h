@@ -152,7 +152,7 @@ typedef struct saved_encoding_templates {
 
 } saved_encoding_templates_t;
 
-void destroy_all_saved_encoding_templates(saved_encoding_templates_t *tplates);
+void destroy_all_saved_encoding_templates(Pvoid_t tplates);
 
 void encode_ipaddress(wandder_encoder_t *encoder,
 		wandder_encode_job_t *precomputed, etsili_ipaddress_t *addr);
