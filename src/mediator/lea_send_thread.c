@@ -1192,6 +1192,8 @@ void destroy_agency_thread_state(lea_thread_state_t *state) {
     purge_liid_map(&(state->active_liids));
     free(state->agencyid);
 
+    etsili_destroy_encrypted_templates(state->encryptstate.saved_encryption_templates);
+
     close(state->epoll_fd);
 }
 

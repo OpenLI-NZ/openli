@@ -319,6 +319,8 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
             etsili_clear_preencoded_fields(known->preencoded_etsi);
             free(known->preencoded_etsi);
         }
+        destroy_all_saved_encoding_templates(known->etsitemplates);
+
         clear_digest_key_map(known);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
@@ -643,6 +645,7 @@ static void preencode_etsi_for_known_liid(coll_recv_t *col,
     intdetails.networkelemid = netelemid;
 
     etsili_preencode_static_fields(found->preencoded_etsi, &intdetails);
+    found->preencoded_version ++;
     unlock_med_collector_config(col->parentconfig);
 
 }
@@ -667,7 +670,9 @@ static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
     found->provisioner_withdrawn = 0;
     found->preencoded_etsi = calloc(OPENLI_PREENCODE_LAST,
             sizeof(wandder_encode_job_t));
+    found->preencoded_version = 0;
     found->digest_cin_keys = NULL;
+    found->etsitemplates = NULL;
 
     snprintf(qname, 1024, "%s-iri", found->liid);
     found->queuenames[0] = strdup(qname);
@@ -1263,6 +1268,9 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         EVP_CIPHER_CTX_free(col->evp_ctx);
     }
 
+    etsili_destroy_encrypted_templates(
+            col->encryptstate.saved_encryption_templates);
+
     HASH_ITER(hh, col->known_agencies, ag, tmpag) {
         HASH_DELETE(hh, col->known_agencies, ag);
         free_agency_digest_config(ag);
@@ -1293,6 +1301,7 @@ static void cleanup_collector_thread(coll_recv_t *col) {
             etsili_clear_preencoded_fields(known->preencoded_etsi);
             free(known->preencoded_etsi);
         }
+        destroy_all_saved_encoding_templates(known->etsitemplates);
         clear_digest_key_map(known);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);

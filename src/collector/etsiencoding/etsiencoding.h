@@ -143,6 +143,17 @@ typedef struct encoder_job {
     openli_liid_format_t liid_format;
 } PACKED openli_encoding_job_t;
 
+typedef struct saved_encoding_templates {
+
+    char *key;
+    Pvoid_t headers;
+    Pvoid_t ccpayloads;
+    Pvoid_t iripayloads;
+
+} saved_encoding_templates_t;
+
+void destroy_all_saved_encoding_templates(saved_encoding_templates_t *tplates);
+
 void encode_ipaddress(wandder_encoder_t *encoder,
 		wandder_encode_job_t *precomputed, etsili_ipaddress_t *addr);
 

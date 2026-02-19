@@ -169,6 +169,13 @@ typedef struct col_known_liid {
 
     wandder_encode_job_t *preencoded_etsi;
 
+    uint32_t preencode_version;
+
+    /** Templates of encoded PSHdrs for use when generating integrity check
+     *  records.
+     */
+    saved_encoding_templates_t *etsitemplates;
+
     digest_map_key_t *digest_cin_keys;
 
     UT_hash_handle hh;
