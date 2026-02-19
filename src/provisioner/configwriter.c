@@ -37,29 +37,7 @@
 #include "provisioner.h"
 #include "intercept.h"
 #include "configparser_common.h"
-
-typedef struct yaml_mem_buf {
-    uint8_t *buffer;
-    size_t alloced;
-    size_t used;
-} yaml_buffer_t;
-
-
-#define YAML_EMIT_STRING(event, label, strval) \
-    if (strval != NULL) {                                               \
-        yaml_scalar_event_initialize(&event, NULL,                      \
-                (yaml_char_t *)YAML_STR_TAG,                            \
-                (yaml_char_t *)label, strlen(label), 1, 0,              \
-                YAML_PLAIN_SCALAR_STYLE);                               \
-        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
-                                                                        \
-        yaml_scalar_event_initialize(&event, NULL,                      \
-                (yaml_char_t *)YAML_STR_TAG,                            \
-                (yaml_char_t *)strval, strlen(strval),                  \
-                        1, 0, YAML_PLAIN_SCALAR_STYLE);                 \
-        if (!yaml_emitter_emit(emitter, &event)) return -1;             \
-    }
-
+#include "configwriter_common.h"
 
 static const char *access_type_to_string(internet_access_method_t method) {
 
@@ -171,91 +149,6 @@ static int emit_default_radius_usernames(default_radius_user_t *radusers,
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
     }
-    yaml_sequence_end_event_initialize(&event);
-    if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-    return 0;
-}
-
-static int emit_core_server_list(coreserver_t *servers, const char *label,
-        yaml_emitter_t *emitter) {
-
-    yaml_event_t event;
-    coreserver_t *cs, *tmp;
-
-    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-            (yaml_char_t *)label, strlen(label), 1, 0,
-            YAML_PLAIN_SCALAR_STYLE);
-
-    if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-    yaml_sequence_start_event_initialize(&event, NULL,
-            (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
-    if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-    HASH_ITER(hh, servers, cs, tmp) {
-        yaml_mapping_start_event_initialize(&event, NULL,
-                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)"ip", strlen("ip"), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-                (yaml_char_t *)cs->ipstr, strlen(cs->ipstr), 1, 0,
-                YAML_PLAIN_SCALAR_STYLE);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-        if (cs->portstr) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"port", strlen("port"), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)cs->portstr, strlen(cs->portstr), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-        }
-
-        if (cs->lower_portstr) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"port_lower", strlen("port_lower"), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)cs->lower_portstr,
-                    strlen(cs->lower_portstr), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-        }
-
-        if (cs->upper_portstr) {
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)"port_upper", strlen("port_upper"), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-
-            yaml_scalar_event_initialize(&event, NULL,
-                    (yaml_char_t *)YAML_STR_TAG,
-                    (yaml_char_t *)cs->upper_portstr,
-                    strlen(cs->upper_portstr), 1, 0,
-                    YAML_PLAIN_SCALAR_STYLE);
-            if (!yaml_emitter_emit(emitter, &event)) return -1;
-        }
-
-        yaml_mapping_end_event_initialize(&event);
-        if (!yaml_emitter_emit(emitter, &event)) return -1;
-    }
-
     yaml_sequence_end_event_initialize(&event);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
@@ -1313,24 +1206,6 @@ uint8_t *encrypt_intercept_config(yaml_buffer_t *buf, const char *encpassfile,
     }
     *enclen = *enclen + 8 + AES_SALT_SIZE;
     return output;
-}
-
-int buffer_yaml_memory(void *data, unsigned char *towrite, size_t size) {
-
-    yaml_buffer_t *buf = (yaml_buffer_t *)data;
-
-    if (size > buf->alloced - buf->used) {
-        buf->buffer = realloc(buf->buffer, buf->alloced + 65536);
-        if (buf->buffer == NULL) {
-            return 0;
-        }
-        buf->alloced += 65536;
-    }
-
-    memcpy(buf->buffer + buf->used, towrite, size);
-    buf->used += size;
-    buf->buffer[buf->used] = '\0';
-    return 1;
 }
 
 int emit_intercept_config(char *configfile, const char *encpassfile,

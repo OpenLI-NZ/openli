@@ -53,6 +53,8 @@ typedef struct colsync_data {
     sync_thread_global_t *glob;
     collector_identity_t *info;
     pthread_rwlock_t *info_mutex;
+    collector_sip_config_t *sipconfig;
+    pthread_rwlock_t *sipconfig_mutex;
 
     size_t pubsockcount;
     size_t forwardcount;
@@ -68,6 +70,8 @@ typedef struct colsync_data {
     void *zmq_colsock;
 
     x_input_sync_t *x2x3_queues;
+    x_input_t **glob_xinputs;
+    pthread_rwlock_t *xinput_mutex;
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
@@ -117,6 +121,10 @@ int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,
         char *port);
 void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
         pthread_t threadid);
+
+// defined in configupdating.c
+int handle_sip_config_changes(collector_sip_config_t *sipconfig,
+        openli_yaml_config_pending_updates_t *pending, char *json);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

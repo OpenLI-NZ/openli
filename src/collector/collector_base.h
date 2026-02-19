@@ -52,6 +52,7 @@
 #include "export_buffer.h"
 #include "openli_tls.h"
 #include "etsiencoding/etsiencoding.h"
+#include "yaml_modifier.h"
 
 #define MAX_ENCODED_RESULT_BATCH 50
 
@@ -169,6 +170,10 @@ typedef struct sync_thread_global {
 
     pthread_mutex_t *stats_mutex;
     collector_stats_t *stats;
+
+    pthread_mutex_t *configupdate_mutex;
+    openli_yaml_config_pending_updates_t configupdates;
+
     /* ZMQ context for the entire collector process */
     void *zmq_ctxt;
 } sync_thread_global_t;
@@ -191,6 +196,10 @@ typedef struct upcoming_intercept_time {
 } upcoming_intercept_time_t;
 
 typedef struct collector_identity {
+    uuid_t uuid;
+
+    char *jsonconfig;
+
     char *operatorid;
     char *networkelemid;
     char *intpointid;
@@ -202,10 +211,19 @@ typedef struct collector_identity {
     int intpointid_len;
 
     uint8_t cisco_noradius;
+} collector_identity_t;
+
+typedef struct collector_sip_configuration {
     uint8_t trust_sip_from;
     uint8_t disable_sip_redirect;
+    /* Flag that indicates whether we should avoid treating calls with
+     * matching SDP-O fields as separate legs of the same call, regardless
+     * of their call ID
+     */
+    uint8_t ignore_sdpo_matches;
+    char *sipdebugfile;
 
-} collector_identity_t;
+} collector_sip_config_t;
 
 typedef struct old_intercept removed_intercept_t;
 

@@ -448,25 +448,28 @@ static int add_collector_to_hashmap(provision_state_t *state,
         uint16_t msglen) {
 
     prov_collector_t *col;
-    char *colname = NULL;
+    char *jsonconfig = NULL;
+    char *uuidstr = NULL;
 
-    if (decode_component_name(msgbody, msglen, &colname) < 0) {
+    if (decode_component_name(msgbody, msglen, &jsonconfig, &uuidstr) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
         return -1;
     }
 
-    if (!colname) {
-        colname = strdup(client->identifier);
+    if (!uuidstr) {
+        logger(LOG_INFO, "OpenLI provisioner: collector authentication announcement from %s does not include a UUID -- is there a version mismatch between the provisioner and collector?", client->identifier);
+        return -1;
     }
-    HASH_FIND(hh, state->collectors, client->ipaddress,
-            strlen(client->ipaddress), col);
+
+    HASH_FIND(hh, state->collectors, uuidstr, strlen(uuidstr), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
-        col->identifier = colname;
+        col->identifier = uuidstr;
+        col->jsonconfig = jsonconfig;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
-                strlen(col->client->ipaddress), col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
     } else if (col->client != client) {
         HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
@@ -474,12 +477,17 @@ static int add_collector_to_hashmap(provision_state_t *state,
         if (col->identifier) {
             free(col->identifier);
         }
-        col->identifier = colname;
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
+        col->identifier = uuidstr;
+        col->jsonconfig = jsonconfig;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
-                strlen(col->client->ipaddress), col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
     } else {
-        free(colname);
+        free(jsonconfig);
+        free(uuidstr);
     }
 
     cs->parent = (void *)col;
@@ -654,6 +662,9 @@ void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
         HASH_DELETE(hh, *collectors, col);
         destroy_provisioner_client(epollfd, col->client, col->identifier);
         free(col->identifier);
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
         free(col);
     }
 }
@@ -1233,7 +1244,7 @@ static int process_udp_sink_announcement(provision_state_t *state,
     return 0;
 }
 
-static int process_x2x3_listener_announcement(provision_state_t *state,
+static int process_x2x3_listener_details(provision_state_t *state,
         prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
 
     char *listenport = NULL;
@@ -1289,8 +1300,8 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
-            case OPENLI_PROTO_X2X3_LISTENER:
-                process_x2x3_listener_announcement(state,
+            case OPENLI_PROTO_X2X3_LISTENER_DETAILS:
+                process_x2x3_listener_details(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
             case OPENLI_PROTO_ADD_UDPSINK:
@@ -1744,6 +1755,9 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
                     col->identifier);
             HASH_DELETE(hh, state->collectors, col);
             free(col->identifier);
+            if (col->jsonconfig) {
+                free(col->jsonconfig);
+            }
             free(col);
         }
         destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);

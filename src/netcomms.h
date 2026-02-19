@@ -163,12 +163,15 @@ typedef enum {
     OPENLI_PROTO_RAWIP_CC,
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
-    OPENLI_PROTO_X2X3_LISTENER,
+    OPENLI_PROTO_X2X3_LISTENER_DETAILS,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
     OPENLI_PROTO_ADD_UDPSINK,
     OPENLI_PROTO_MODIFY_UDPSINK,
     OPENLI_PROTO_REMOVE_UDPSINK,
+    OPENLI_PROTO_UPDATE_COMPONENT_CONFIG,
+    OPENLI_PROTO_WITHDRAW_X2X3LISTENER,
+    OPENLI_PROTO_ANNOUNCE_X2X3LISTENER,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -248,6 +251,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
     OPENLI_PROTO_FIELD_ACL_IPADDR,
     OPENLI_PROTO_FIELD_ACL_PORT,
+    OPENLI_PROTO_FIELD_UUID,
+    OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for
@@ -267,6 +272,7 @@ void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state);
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
+int push_updated_component_configuration(net_buffer_t *nb, const char *config);
 int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
         uint8_t defaultcompress);
 int push_default_radius_onto_net_buffer(net_buffer_t *nb,
@@ -294,11 +300,9 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype, char *name);
+        authtype, char *jsonconfig, char *uuidstr);
 int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, char *identifier, uint64_t ts);
-int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,
         payload_encryption_method_t method, openli_liid_format_t liidformat);
@@ -334,6 +338,12 @@ int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
 int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
+int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts);
+int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port);
+int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port);
 
 int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
         uint8_t using_rmq);
@@ -410,10 +420,13 @@ int decode_intercept_udpsink_modify(uint8_t *msgbody, uint16_t len,
         intercept_udp_sink_t *sink);
 int decode_intercept_udpsink_removal(uint8_t *msgbody, uint16_t len,
         intercept_udp_sink_t *sink);
+int decode_updated_component_configuration(uint8_t *msgbody, uint16_t len,
+        char **config);
 
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
-int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **jsonconfig,
+        char **uuidstr);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

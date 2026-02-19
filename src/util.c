@@ -39,6 +39,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <assert.h>
+#include <ctype.h>
 
 #include "logger.h"
 #include "util.h"
@@ -848,5 +849,27 @@ size_t openli_convert_hexstring_to_binary(const char *src, uint8_t *space,
     return i;
 }
 
+char *ltrim(char *s) {
+    if (!s) {
+        return NULL;
+    }
+    while (isspace((unsigned char)*s)) {
+        s++;
+    }
+    return s;
+}
+
+char *rtrim(char *s) {
+    char *end;
+    if (!s) {
+        return NULL;
+    }
+    end = s + strlen(s) - 1;
+    while (end > s && isspace((unsigned char)*end)) {
+        end --;
+    }
+    *(end + 1) = '\0';
+    return s;
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

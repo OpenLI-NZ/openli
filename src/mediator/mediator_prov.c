@@ -301,7 +301,7 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
      * mediator and they can safely start sending us intercept information.
      */
     if (push_auth_onto_net_buffer(prov->outgoing,
-                OPENLI_PROTO_MEDIATOR_AUTH, NULL) == -1) {
+                OPENLI_PROTO_MEDIATOR_AUTH, NULL, NULL) == -1) {
         if (prov->disable_log == 0) {
             logger(LOG_INFO, "OpenLI Mediator: unable to push auth message for provisioner.");
         }

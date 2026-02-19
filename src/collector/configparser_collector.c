@@ -34,6 +34,7 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 #include <math.h>
+#include <json-c/json.h>
 
 #include "configparser_collector.h"
 #include "configparser_common.h"
@@ -413,18 +414,18 @@ static int parse_email_timeouts_config(collector_global_t *glob,
     return 0;
 }
 
-static void parse_col_thread_count(int *toset, const char *expectedkey,
+static int parse_col_thread_count(int *toset, const char *expectedkey,
         yaml_node_t *key, yaml_node_t *value, const char *errlabel, int min) {
 
     if (key->type != YAML_SCALAR_NODE) {
-        return;
+        return 0;
     }
     if (value->type != YAML_SCALAR_NODE) {
-        return;
+        return 0;
     }
 
     if (strcasecmp(expectedkey, (const char *)key->data.scalar.value) != 0) {
-        return;
+        return 0;
     }
 
     *toset = strtoul((const char *)value->data.scalar.value, NULL, 10);
@@ -434,6 +435,7 @@ static void parse_col_thread_count(int *toset, const char *expectedkey,
                 "OpenLI: you must have at least %d %s thread(s) per collector!",
                 min, errlabel);
     }
+    return 1;
 }
 
 static int collector_parser(void *arg, yaml_document_t *doc,
@@ -441,11 +443,22 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     collector_global_t *glob = (collector_global_t *)arg;
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "uuid") == 0) {
+        if (config_parse_uuid((char *)value->data.scalar.value,
+                glob->sharedinfo.uuid) < 0) {
+            uuid_clear(glob->sharedinfo.uuid);
+        }
+        return 0;
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "inputs") == 0) {
         if (parse_input_config(glob, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -454,6 +467,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         if (parse_x2x3_ingestion_config(glob, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -462,6 +476,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         if (parse_udp_sink_config(glob, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -475,6 +490,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             logger(LOG_INFO, "OpenLI: Operator ID must be 16 characters or less!");
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -489,6 +505,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             logger(LOG_INFO, "OpenLI: Network Element ID must be 16 characters or less!");
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -503,24 +520,28 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             logger(LOG_INFO, "OpenLI: Intercept Point ID must be 8 characters or less!");
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "provisionerport") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sharedinfo.provisionerport, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "provisioneraddr") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sharedinfo.provisionerip, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "sipdebugfile") == 0) {
-        SET_CONFIG_STRING_OPTION(glob->sipdebugfile, value);
+        SET_CONFIG_STRING_OPTION(glob->sipconfig.sipdebugfile, value);
+        return 0;
     }
 
 
@@ -530,6 +551,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         if (parse_email_ingest_config(glob, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -539,6 +561,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
                 OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -548,6 +571,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
                 OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -557,64 +581,73 @@ static int collector_parser(void *arg, yaml_document_t *doc,
                 OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
-    parse_col_thread_count(&(glob->encoding_threads), "seqtrackerthreads",
-            key, value, "sequence tracker", 1);
-    parse_col_thread_count(&(glob->encoding_threads), "encoderthreads",
-            key, value, "encoder", 1);
-    parse_col_thread_count(&(glob->forwarding_threads), "forwardingthreads",
-            key, value, "forwarding", 1);
-    parse_col_thread_count(&(glob->email_threads), "emailthreads",
-            key, value, "email worker", 0);
-    parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
-            key, value, "GTP worker", 0);
-    parse_col_thread_count(&(glob->sip_threads), "smsthreads",
-            key, value, "SIP worker", 1);
-    parse_col_thread_count(&(glob->sip_threads), "sipthreads",
-            key, value, "SIP worker", 1);
+    if (parse_col_thread_count(&(glob->encoding_threads), "seqtrackerthreads",
+            key, value, "sequence tracker", 1)) return 0;
+    if (parse_col_thread_count(&(glob->encoding_threads), "encoderthreads",
+            key, value, "encoder", 1)) return 0;
+    if (parse_col_thread_count(&(glob->forwarding_threads), "forwardingthreads",
+            key, value, "forwarding", 1)) return 0;
+    if (parse_col_thread_count(&(glob->email_threads), "emailthreads",
+            key, value, "email worker", 0)) return 0;
+    if (parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
+            key, value, "GTP worker", 0)) return 0;
+    if (parse_col_thread_count(&(glob->sip_threads), "smsthreads",
+            key, value, "SIP worker", 1)) return 0;
+    if (parse_col_thread_count(&(glob->sip_threads), "sipthreads",
+            key, value, "SIP worker", 1)) return 0;
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "logstatfrequency") == 0) {
         glob->stat_frequency = strtoul((char *) value->data.scalar.value,
                 NULL, 10);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "tlscert") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sslconf.certfile, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "tlskey") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sslconf.keyfile, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "tlsca") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sslconf.cacertfile, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "tlskeylogfile") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sslconf.logkeyfile, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "etsitls") == 0) {
         glob->etsitls = config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "sipignoresdpo") == 0) {
-        glob->ignore_sdpo_matches = config_check_onoff((char *)value->data.scalar.value);
+        glob->sipconfig.ignore_sdpo_matches =
+                config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -629,6 +662,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         } else {
             glob->encoding_method = OPENLI_ENCODING_DER;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -636,8 +670,9 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "SIPallowfromident") == 0) {
 
-       glob->sharedinfo.trust_sip_from =
+        glob->sipconfig.trust_sip_from =
                 config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -645,8 +680,9 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "SIPdisableredirect") == 0) {
 
-       glob->sharedinfo.disable_sip_redirect =
+        glob->sipconfig.disable_sip_redirect =
                 config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -654,7 +690,8 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "maskimapcreds") == 0) {
 
-       glob->mask_imap_creds = config_check_onoff((char *)value->data.scalar.value);
+        glob->mask_imap_creds = config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -662,7 +699,8 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "maskpop3creds") == 0) {
 
-       glob->mask_pop3_creds = config_check_onoff((char *)value->data.scalar.value);
+        glob->mask_pop3_creds = config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -670,8 +708,9 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "emailingest-usetargetid") == 0) {
 
-       glob->email_ingest_use_targetid =
+        glob->email_ingest_use_targetid =
             config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -679,8 +718,9 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value,
                     "cisconoradius") == 0) {
 
-       glob->sharedinfo.cisco_noradius =
+        glob->sharedinfo.cisco_noradius =
                 config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -690,12 +730,14 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         if (parse_email_timeouts_config(glob, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "defaultemaildomain") == 0) {
         SET_CONFIG_STRING_OPTION(glob->default_email_domain, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -705,24 +747,28 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         if (parse_email_forwarding_headers(glob, doc, value) == -1) {
             return -1;
         }
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "RMQname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.name, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "RMQpass") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.pass, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "RMQhostname") == 0) {
         SET_CONFIG_STRING_OPTION(glob->RMQ_conf.hostname, value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -730,12 +776,14 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value, "RMQheartbeatfreq") == 0) {
         glob->RMQ_conf.heartbeatFreq = strtoul((char *)value->data.scalar.value,
                 NULL, 10);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
         glob->RMQ_conf.enabled = config_check_onoff((char *)value->data.scalar.value);
+        return 0;
     }
 
     if (key->type == YAML_SCALAR_NODE &&
@@ -743,12 +791,57 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             strcasecmp((char *)key->data.scalar.value, "RMQport") == 0) {
         glob->RMQ_conf.port = strtoul((char *)value->data.scalar.value,
                 NULL, 10);
+        return 0;
     }
     return 0;
 }
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {
     return config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
+}
+
+char *collector_config_to_json(collector_global_t *glob) {
+
+    json_object *jobj = json_object_new_object();
+    const char *json_str;
+    char *result;
+    char buffer[1024];
+
+    pthread_rwlock_rdlock(&(glob->config_mutex));
+    uuid_unparse(glob->sharedinfo.uuid, buffer);
+
+    json_object_object_add(jobj, "uuid", json_object_new_string(buffer));
+    json_object_object_add(jobj, "operatorid",
+            json_object_new_string(glob->sharedinfo.operatorid));
+    json_object_object_add(jobj, "networkelementid",
+            json_object_new_string(glob->sharedinfo.networkelemid));
+    if (glob->sharedinfo.intpointid) {
+        json_object_object_add(jobj, "interceptpointid",
+                json_object_new_string(glob->sharedinfo.intpointid));
+    }
+    pthread_rwlock_unlock(&(glob->config_mutex));
+
+    pthread_rwlock_rdlock(&glob->sipconfig_mutex);
+
+    json_object_object_add(jobj, "sipallowfromident",
+            json_object_new_boolean(glob->sipconfig.trust_sip_from));
+    json_object_object_add(jobj, "sipdisableredirect",
+            json_object_new_boolean(glob->sipconfig.disable_sip_redirect));
+    json_object_object_add(jobj, "sipignoresdpo",
+            json_object_new_boolean(glob->sipconfig.ignore_sdpo_matches));
+
+    if (glob->sipconfig.sipdebugfile) {
+        json_object_object_add(jobj, "sipdebugfile",
+                json_object_new_string(glob->sipconfig.sipdebugfile));
+    }
+
+    pthread_rwlock_unlock(&glob->sipconfig_mutex);
+
+    json_str = json_object_to_json_string(jobj);
+    result = strdup(json_str);
+
+    json_object_put(jobj);
+    return result;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

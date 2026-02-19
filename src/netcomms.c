@@ -211,13 +211,17 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
 }
 
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
-        char *name) {
+        char *jsonconfig, char *uuidstr) {
 
     ii_header_t hdr;
     uint16_t len = 0;
 
-    if (name) {
-        len = strlen(name) + 4;
+    if (jsonconfig) {
+        len = strlen(jsonconfig) + 4;
+    }
+
+    if (uuidstr) {
+        len += strlen(uuidstr) + 4;
     }
 
     if (msgtype == OPENLI_PROTO_COLLECTOR_AUTH) {
@@ -234,12 +238,45 @@ int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
         return -1;
     }
 
-    if (name) {
-        if (push_tlv(nb, OPENLI_PROTO_FIELD_COMPONENT_NAME, (uint8_t *)name,
-                strlen(name)) < 0) {
+    if (jsonconfig) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
+                (uint8_t *)jsonconfig, strlen(jsonconfig)) < 0) {
             return -1;
         }
     }
+
+    if (uuidstr) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_UUID, (uint8_t *)uuidstr,
+                strlen(uuidstr)) < 0) {
+            return -1;
+        }
+    }
+
+    return len;
+}
+
+int push_updated_component_configuration(net_buffer_t *nb, const char *config) {
+
+    ii_header_t hdr;
+    uint16_t len = 0;
+
+    if (!config) {
+        return -1;
+    }
+
+    len = strlen(config) + 4;
+    populate_header(&hdr, OPENLI_PROTO_UPDATE_COMPONENT_CONFIG, len, 0);
+
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) < 0) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
+                (uint8_t *)config, strlen(config)) < 0) {
+        return -1;
+    }
+
     return len;
 }
 
@@ -285,42 +322,6 @@ int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
             (uint8_t *)identifier, strlen(identifier)) == -1) {
-        return -1;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
-            sizeof(ts)) == -1) {
-        return -1;
-    }
-
-    return (int)totallen;
-}
-
-#define X2X3_BODY_LEN(addr, port) \
-    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
-
-int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts) {
-
-    ii_header_t hdr;
-    uint16_t totallen;
-
-    totallen = X2X3_BODY_LEN(addr, port);
-    populate_header(&hdr, OPENLI_PROTO_X2X3_LISTENER, totallen, 0);
-
-    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
-            sizeof(ii_header_t)) == -1) {
-        return -1;
-    }
-
-    /* may as well re-use these field types */
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP, (uint8_t *)addr,
-            strlen(addr)) == -1) {
-        return -1;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT, (uint8_t *)port,
-            strlen(port)) == -1) {
         return -1;
     }
 
@@ -1788,6 +1789,67 @@ int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
             OPENLI_PROTO_WITHDRAW_CORESERVER);
 }
 
+#define X2X3_BODY_LEN(addr, port) \
+    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
+
+static int push_x2x3_listener_msg_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port, uint64_t ts,
+        openli_proto_msgtype_t type) {
+
+    ii_header_t hdr;
+    uint16_t totallen;
+    int ret;
+
+    if (ipaddr == NULL || port == NULL) {
+        return 0;
+    }
+
+    /* Pre-compute our body length so we can write it in the header */
+    totallen = X2X3_BODY_LEN(ipaddr, port);
+
+    /* Push on header */
+    populate_header(&hdr, type, totallen, 0);
+    if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t))) == -1) {
+        return -1;
+    }
+    /* may as well re-use these field types */
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP,
+            (uint8_t *)ipaddr, strlen(ipaddr))) == -1) {
+        return -1;
+    }
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_PORT,
+            (uint8_t *)port, strlen(port))) == -1) {
+        return -1;
+    }
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TS_SEC, (uint8_t *)(&ts),
+            sizeof(ts)) == -1) {
+        return -1;
+    }
+    return (int)totallen;
+}
+
+int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts) {
+
+    return push_x2x3_listener_msg_onto_net_buffer(nb, addr, port, ts,
+            OPENLI_PROTO_X2X3_LISTENER_DETAILS);
+}
+
+int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port) {
+
+    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0,
+            OPENLI_PROTO_WITHDRAW_X2X3LISTENER);
+}
+
+int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port) {
+
+    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0,
+            OPENLI_PROTO_ANNOUNCE_X2X3LISTENER);
+}
+
 int push_nomore_intercepts(net_buffer_t *nb) {
     ii_header_t hdr;
     populate_header(&hdr, OPENLI_PROTO_NOMORE_INTERCEPTS, 0, 0);
@@ -2240,11 +2302,13 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
 
 }
 
-int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **jsonconfig,
+        char **uuidstr) {
 
     uint8_t *msgend = msgbody + len;
 
-    *name = NULL;
+    *jsonconfig = NULL;
+    *uuidstr = NULL;
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;
@@ -2253,8 +2317,10 @@ int decode_component_name(uint8_t *msgbody, uint16_t len, char **name) {
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
             return -1;
         }
-        if (f == OPENLI_PROTO_FIELD_COMPONENT_NAME) {
-            DECODE_STRING_FIELD(*name, valptr, vallen);
+        if (f == OPENLI_PROTO_FIELD_JSON_CONFIGURATION) {
+            DECODE_STRING_FIELD(*jsonconfig, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_UUID) {
+            DECODE_STRING_FIELD(*uuidstr, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -3084,6 +3150,32 @@ int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
     return 0;
 }
 
+int decode_updated_component_configuration(uint8_t *msgbody, uint16_t len,
+        char **config) {
+    uint8_t *msgend = msgbody + len;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            return -1;
+        }
+        if (f == OPENLI_PROTO_FIELD_JSON_CONFIGURATION) {
+            DECODE_STRING_FIELD(*config, valptr, vallen);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                    "OpenLI: invalid field in received component config: %d.",
+                    f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+}
 
 openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
         uint16_t *msglen, uint64_t *intid) {

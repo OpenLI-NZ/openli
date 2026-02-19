@@ -66,6 +66,8 @@ enum {
     TARGET_COLLECTOR,
     TARGET_MEDIATOR,
     TARGET_DIGESTHASHKEY,
+    TARGET_X2X3LISTENER,
+    TARGET_UDPSINK,
 };
 
 extern const char *update_success_page;
@@ -101,6 +103,8 @@ int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
 int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
+int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
+        const char *fullid);
 
 int add_new_agency(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_defaultradius(update_con_info_t *cinfo, provision_state_t *state);
@@ -109,12 +113,15 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         uint8_t srvtype);
+int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state);
 
 int modify_agency(update_con_info_t *cinfo, provision_state_t *state);
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state);
 int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state);
 int modify_provisioner_options(update_con_info_t *cinfo,
+        provision_state_t *state);
+int modify_collector_configuration(update_con_info_t *cinfo,
         provision_state_t *state);
 
 struct json_object *get_agency(update_con_info_t *cinfo,

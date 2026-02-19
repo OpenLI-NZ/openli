@@ -314,11 +314,12 @@ when you use X1 to trigger the X2/X3 delivery on your network equipment.
 X2/X3 inputs should include the following key-value elements:
 * listenaddr       -- the IP address that the collector should listen on.
 * listenport       -- the TCP port that the collector should listen on.
-* certfile         -- the path to the .pem file containing the TLS certificate
-                      that the collector should offer to connecting clients.
 
 Note that TLS is mandatory for X2/X3 transport and we do not provide an option
-to disable it.
+to disable it. See TLSDoc.md for instructions on how to generate certificates
+and enable TLS for your OpenLI collector. The certificate file that you
+provide using the `tlscert` option will be offered to any devices that
+connect to your collector on an X2/X3 listening socket.
 
 ---
 

@@ -58,11 +58,12 @@ const char *select_udpsink_sql =
         "SELECT * FROM udp_sinks WHERE collector = ? AND last_seen > ?;";
 
 const char *insert_sql =
-        "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
-        " VALUES (?, ?, ?, DATETIME('now')); ";
+        "INSERT INTO observed_clients (identifier, type, ip_address, last_seen,"
+        " config_json)"
+        " VALUES (?, ?, ?, DATETIME('now'), ?); ";
 const char *update_sql =
         "UPDATE observed_clients SET last_seen = DATETIME('now'), "
-        "ip_address = ? "
+        "ip_address = ?, config_json = ? "
         "WHERE identifier = ? AND type = ?;";
 
 const char *select_sql =
@@ -74,8 +75,14 @@ const char *remove_client_sql =
 const char *remove_x2x3_sql =
         "DELETE FROM x2x3_listeners WHERE collector = ?;";
 
+const char *remove_single_x2x3_sql =
+        "DELETE FROM x2x3_listeners WHERE collector = ? AND ip_address = ? AND port = ?;";
+
 const char *remove_udpsink_sql =
         "DELETE FROM udp_sinks WHERE collector = ?;";
+
+const char *remove_single_udpsink_sql =
+        "DELETE FROM udp_sinks WHERE collector = ? AND ip_address = ? AND port = ? AND identifier = ?;";
 
 const char *upsert_sql =
         "INSERT INTO observed_clients (identifier, type, ip_address, last_seen)"
@@ -85,6 +92,8 @@ const char *upsert_sql =
 
 int init_clientdb(provision_state_t *state) {
     int rc;
+    char *errmsg = NULL;
+
     if (state == NULL) {
         return 0;
     }
@@ -116,6 +125,16 @@ int init_clientdb(provision_state_t *state) {
         logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
         rc = -1;
         goto endofinit;
+    }
+
+    if (sqlite3_exec(state->clientdb, "ALTER TABLE observed_clients ADD COLUMN config_json TEXT", NULL, NULL, &errmsg) != SQLITE_OK) {
+        if (errmsg && strstr(errmsg, "duplicate column name")) {
+            // column already exists, carry on
+        } else {
+            logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
+            rc = -1;
+            goto endofinit;
+        }
     }
 
     if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS x2x3_listeners (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address));", NULL, NULL,
@@ -300,14 +319,16 @@ int update_collector_client_row(provision_state_t *state,
     sqlite3_bind_text(ins_stmt, 1, col->identifier, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, "collector", -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, col->client->ipaddress, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 4, col->jsonconfig, -1, SQLITE_STATIC);
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, col->client->ipaddress, -1,
                 SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, col->identifier, -1,
+        sqlite3_bind_text(upd_stmt, 2, col->jsonconfig, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, col->identifier, -1,
                 SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, "collector", -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 4, "collector", -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
@@ -356,12 +377,14 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
     sqlite3_bind_text(ins_stmt, 1, medid_str, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, "mediator", -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, med->details->ipstr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 4, NULL, -1, SQLITE_STATIC);
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, med->details->ipstr, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, medid_str, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, "mediator", -1, SQLITE_STATIC);
+        sqlite3_bind_text(ins_stmt, 2, NULL, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 3, medid_str, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 4, "mediator", -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
@@ -409,6 +432,62 @@ static void url_decode(char *dst, const char *src) {
     *dst = '\0';
 }
 
+int remove_x2x3_listener_from_clientdb(provision_state_t *state,
+        const char *uuid, const char *ipaddr, const char *port) {
+
+#ifdef HAVE_SQLCIPHER
+    sqlite3_stmt *del_x2x3_stmt;
+    int rc;
+
+    if (sqlite3_prepare_v2(state->clientdb, remove_single_x2x3_sql, -1,
+            &del_x2x3_stmt, 0) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE single X2X3 listener statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    sqlite3_bind_text(del_x2x3_stmt, 1, uuid, -1, SQLITE_STATIC);
+    sqlite3_bind_text(del_x2x3_stmt, 2, ipaddr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(del_x2x3_stmt, 3, port, -1, SQLITE_STATIC);
+
+    if ((rc = sqlite3_step(del_x2x3_stmt)) != SQLITE_DONE) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE single X2X3 statement for client tracking database: %s",
+                sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+    sqlite3_finalize(del_x2x3_stmt);
+#endif
+    return 1;
+}
+
+int remove_udpsink_from_clientdb(provision_state_t *state,
+        const char *uuid, const char *ipaddr, const char *port,
+        const char *identifier) {
+
+#ifdef HAVE_SQLCIPHER
+    sqlite3_stmt *del_udpsink_stmt;
+    int rc;
+
+    if (sqlite3_prepare_v2(state->clientdb, remove_single_udpsink_sql, -1,
+            &del_udpsink_stmt, 0) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE single UDP Sink statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+
+    sqlite3_bind_text(del_udpsink_stmt, 1, uuid, -1, SQLITE_STATIC);
+    sqlite3_bind_text(del_udpsink_stmt, 2, ipaddr, -1, SQLITE_STATIC);
+    sqlite3_bind_text(del_udpsink_stmt, 3, port, -1, SQLITE_STATIC);
+    sqlite3_bind_text(del_udpsink_stmt, 4, identifier, -1, SQLITE_STATIC);
+
+    if ((rc = sqlite3_step(del_udpsink_stmt)) != SQLITE_DONE) {
+        logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE single UDP Sink statement for client tracking database: %s",
+                sqlite3_errmsg(state->clientdb));
+        return -1;
+    }
+    sqlite3_finalize(del_udpsink_stmt);
+#endif
+    return 1;
+}
+
 int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
 {
 
@@ -433,7 +512,7 @@ int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
 
     if (sqlite3_prepare_v2(state->clientdb, remove_client_sql, -1,
             &del_stmt, 0) != SQLITE_OK) {
-        logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE observed statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE collector statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
         return -1;
     }
 
@@ -646,6 +725,14 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
         if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
             clients[ind].lastseen = timegm(&tm);
         }
+
+        if (sqlite3_column_text(sel_stmt, 5) != NULL) {
+            clients[ind].jsonconfig =
+                    strdup((const char *)sqlite3_column_text(sel_stmt, 5));
+        } else {
+            clients[ind].jsonconfig = NULL;
+        }
+
         ind ++;
     }
     *clientcount = rows;

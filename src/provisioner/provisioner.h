@@ -79,6 +79,9 @@ typedef struct known_client {
      *  provisioner (approximately)
      */
     time_t lastseen;
+
+    /** The configuration for the client component in JSON format */
+    const char *jsonconfig;
 } known_client_t;
 
 /** Describes a single X2/X3 listening socket that is available on a collector
@@ -243,8 +246,13 @@ struct prov_client {
 
 /* Describes a collector that is being served by the provisioner */
 typedef struct prov_collector {
-    /** Unique identifier for the collector (using the IP address for now) */
+    /** Unique identifier for the collector */
     char *identifier;
+
+    /** The most recent known configuration for the collector, in JSON
+     *  format.
+     */
+    char *jsonconfig;
 
     /** Common "client" state */
     prov_client_t *client;
@@ -541,6 +549,12 @@ void update_inherited_encryption_settings(provision_state_t *state,
 int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
 void update_intercept_timeformats(provision_state_t *state,
         const char *agencyid, openli_timestamp_encoding_fmt_t newfmt);
+int announce_configuration_update_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *newconfig);
+int announce_x2x3_listener_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port);
+int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);
@@ -571,6 +585,11 @@ x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
 collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
         size_t *sinkcount, const char *collectorid);
 int remove_collector_from_clientdb(provision_state_t *state, const char *idstr);
+int remove_udpsink_from_clientdb(provision_state_t *state,
+        const char *uuid, const char *ipaddr, const char *port,
+        const char *identifier);
+int remove_x2x3_listener_from_clientdb(provision_state_t *state,
+        const char *uuid, const char *ipaddr, const char *port);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

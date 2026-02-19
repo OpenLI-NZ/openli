@@ -74,6 +74,10 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->incoming = NULL;
     sync->info = &(glob->sharedinfo);
     sync->info_mutex = &(glob->config_mutex);
+    sync->sipconfig = &(glob->sipconfig);
+    sync->sipconfig_mutex = &(glob->sipconfig_mutex);
+    sync->glob_xinputs = &(glob->x_inputs);
+    sync->xinput_mutex = &(glob->x_input_mutex);
 
     sync->upcoming_intercept_events = NULL;
     sync->upcomingtimerfd = -1;
@@ -488,6 +492,39 @@ static int create_udp_sink_thread(collector_sync_t *sync,
     return 0;
 }
 
+static int update_collector_global_config(collector_sync_t *sync,
+        uint8_t *provmsg, uint16_t msglen) {
+
+    char *newconfig = NULL;
+    (void)sync;
+
+    if (decode_updated_component_configuration(provmsg, msglen,
+            &newconfig) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to decode component configuration update from the provisioner");
+        return -1;
+    }
+
+    if (newconfig == NULL) {
+        return 0;
+    }
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+
+    pthread_rwlock_wrlock(sync->sipconfig_mutex);
+    handle_sip_config_changes(sync->sipconfig, &(sync->glob->configupdates),
+            newconfig);
+    pthread_rwlock_unlock(sync->sipconfig_mutex);
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
+
+    free(newconfig);
+    return 0;
+
+}
+
 static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
         uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype,
         const char *workertype) {
@@ -522,20 +559,14 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 }
 
 static int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
-    char colname[1024];
+    char uuidstr[1024];
 
     pthread_rwlock_rdlock(sync->info_mutex);
     /* Put our auth message onto the outgoing buffer */
-    if (sync->info->intpointid) {
-        snprintf(colname, 1024, "%s~%s~%s", sync->info->operatorid,
-                sync->info->networkelemid, sync->info->intpointid);
-    } else {
-        snprintf(colname, 1024, "%s~%s", sync->info->operatorid,
-                sync->info->networkelemid);
-    }
+    uuid_unparse(sync->info->uuid, uuidstr);
 
     if (push_auth_onto_net_buffer(sync->outgoing, OPENLI_PROTO_COLLECTOR_AUTH,
-            colname) < 0) {
+            sync->info->jsonconfig, uuidstr) < 0) {
         pthread_rwlock_unlock(sync->info_mutex);
         if (sync->instruct_fail == 0) {
             logger(LOG_INFO,"OpenLI: collector is unable to queue auth message.");
@@ -2148,6 +2179,168 @@ static int withdraw_default_radius(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
+void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
+        pthread_t threadid) {
+    x_input_sync_t *found;
+    openli_export_recv_t *msg;
+    openli_yaml_config_object_t remobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
+
+    HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
+    if (!found) {
+        /* we don't have a PUSH ZMQ for this identifier */
+        return;
+    }
+
+    msg = calloc(1, sizeof(openli_export_recv_t));
+    msg->type = OPENLI_EXPORT_HALT;
+    msg->data.haltinfo = NULL;
+
+    if (zmq_send(found->zmq_socket, &msg, sizeof(msg), 0) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to send HALT message to X2/X3 thread %s: %s",
+                found->identifier, strerror(errno));
+        if (threadid != 0) {
+            pthread_cancel(threadid);
+        }
+    }
+
+    HASH_DELETE(hh, sync->x2x3_queues, found);
+    zmq_close(found->zmq_socket);
+
+    remobj.field_count = 2;
+    remobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    remobj.fields[0].key = strdup("listenaddr");
+    remobj.fields[0].value = strdup(found->listenaddr);
+    remobj.fields[0].is_string = false;
+    remobj.fields[1].key = strdup("listenport");
+    remobj.fields[1].value = strdup(found->listenport);
+    remobj.fields[1].is_string = false;
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_remove_object_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "x2x3inputs", &remobj);
+    pending->update_count ++;
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
+
+    if (found->listenaddr) free(found->listenaddr);
+    if (found->listenport) free(found->listenport);
+    free(found->identifier);
+    free(found);
+    destroy_openli_yaml_config_array_object(&remobj);
+}
+
+static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    char *ipaddr = NULL, *port = NULL;
+    uint64_t ts;
+    char identifier[1024];
+    x_input_t *xinp;
+    openli_yaml_config_object_t newobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
+
+    if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts) < 0) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid X2X3 listener announcement from provisioner.");
+        }
+        return -1;
+    }
+
+    if (ipaddr == NULL || port == NULL) {
+        return 0;
+    }
+
+    newobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    newobj.fields[0].key = strdup("listenaddr");
+    newobj.fields[0].value = strdup(ipaddr);
+    newobj.fields[0].is_string = false;
+    newobj.fields[1].key = strdup("listenport");
+    newobj.fields[1].value = strdup(port);
+    newobj.fields[1].is_string = false;
+    newobj.field_count = 2;
+
+    snprintf(identifier, 1024, "%s-%s", ipaddr, port);
+    add_x2x3_to_sync(sync, identifier, ipaddr, port);
+
+    // we also need to remove this from glob_xinputs so that the config
+    // file will get updated properly
+    pthread_rwlock_wrlock(sync->xinput_mutex);
+    HASH_FIND(hh, *(sync->glob_xinputs), identifier, strlen(identifier), xinp);
+    if (!xinp) {
+        xinp = calloc(1, sizeof(x_input_t));
+        xinp->listenport = strdup(port);
+        xinp->listenaddr = strdup(ipaddr);
+        xinp->identifier = strdup(identifier);
+        xinp->use_tls = 1;
+
+        // the collector main thread should start the listener thread
+        // automatically
+        HASH_ADD_KEYPTR(hh, *(sync->glob_xinputs), xinp->identifier,
+                strlen(xinp->identifier), xinp);
+    }
+    pthread_rwlock_unlock(sync->xinput_mutex);
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_object_append_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "x2x3inputs", &newobj, 1, true);
+    pending->update_count ++;
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
+    free(ipaddr);
+    free(port);
+    destroy_openli_yaml_config_array_object(&newobj);
+    return 1;
+}
+
+static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    char *ipaddr = NULL, *port = NULL;
+    uint64_t ts;
+    char identifier[1024];
+    x_input_t *xinp;
+
+    if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts) < 0) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid X2X3 listener from provisioner for withdrawal.");
+        }
+        return -1;
+    }
+
+    if (ipaddr == NULL || port == NULL) {
+        return 0;
+    }
+    snprintf(identifier, 1024, "%s-%s", ipaddr, port);
+    free(ipaddr);
+    free(port);
+    remove_x2x3_from_sync(sync, identifier, 0);
+
+    // we also need to remove this from glob_xinputs so that the config
+    // file will get updated properly
+    pthread_rwlock_wrlock(sync->xinput_mutex);
+    HASH_FIND(hh, *(sync->glob_xinputs), identifier, strlen(identifier), xinp);
+    if (xinp) {
+        HASH_DELETE(hh, *(sync->glob_xinputs), xinp);
+        if (xinp->threadid != 0) {
+            pthread_join(xinp->threadid, NULL);
+        }
+        destroy_x_input(xinp);
+    }
+    pthread_rwlock_unlock(sync->xinput_mutex);
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    return 1;
+}
+
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -2389,6 +2582,18 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_WITHDRAW_X2X3LISTENER:
+                ret = withdraw_x2x3_listener(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ANNOUNCE_X2X3LISTENER:
+                ret = new_x2x3_listener(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
 
             case OPENLI_PROTO_MODIFY_IPINTERCEPT:
                 ret = modify_ipintercept(sync, provmsg, msglen);
@@ -2448,6 +2653,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 break;
 
+            case OPENLI_PROTO_UPDATE_COMPONENT_CONFIG:
+                ret = update_collector_global_config(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
             default:
                 if (sync->instruct_log) {
                     logger(LOG_INFO, "Received unexpected message of type %d from provisioner.", msgtype);
@@ -3124,38 +3335,6 @@ x2x3setup_fail:
     return -1;
 }
 
-void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
-        pthread_t threadid) {
-    x_input_sync_t *found;
-    openli_export_recv_t *msg;
-
-    HASH_FIND(hh, sync->x2x3_queues, identifier, strlen(identifier), found);
-    if (!found) {
-        /* we don't have a PUSH ZMQ for this identifier */
-        return;
-    }
-
-    msg = calloc(1, sizeof(openli_export_recv_t));
-    msg->type = OPENLI_EXPORT_HALT;
-    msg->data.haltinfo = NULL;
-
-    if (zmq_send(found->zmq_socket, &msg, sizeof(msg), 0) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: failed to send HALT message to X2/X3 thread %s: %s",
-                found->identifier, strerror(errno));
-        if (threadid != 0) {
-            pthread_cancel(threadid);
-        }
-    }
-
-    HASH_DELETE(hh, sync->x2x3_queues, found);
-    zmq_close(found->zmq_socket);
-    if (found->listenaddr) free(found->listenaddr);
-    if (found->listenport) free(found->listenport);
-    free(found->identifier);
-    free(found);
-}
-
 static int set_upcoming_timer(collector_sync_t *sync) {
     struct itimerspec its;
     sync->upcomingtimerfd = timerfd_create(CLOCK_MONOTONIC, 0);
@@ -3226,7 +3405,8 @@ int sync_thread_main(collector_sync_t *sync) {
                             xpush->listenport == NULL) {
                         continue;
                     }
-                    if (push_x2x3_listener_onto_net_buffer(sync->outgoing,
+                    if (push_x2x3_listener_details_onto_net_buffer(
+                            sync->outgoing,
                             xpush->listenaddr, xpush->listenport,
                             (uint64_t)tv.tv_sec) < 0) {
                         logger(LOG_INFO,"OpenLI: collector is unable to queue X2/X3 listener update message (%s) for provisioner.", xpush->identifier);
