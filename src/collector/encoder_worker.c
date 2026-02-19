@@ -154,29 +154,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     int x, i;
     openli_encoding_job_t job;
     uint32_t drained = 0;
-    PWord_t pval;
-    uint8_t index[1000];
-    Word_t rcw;
 
-    index[0] = '\0';
-
-    JSLF(pval, enc->saved_intercept_templates, index);
-    while (pval) {
-        saved_encoding_templates_t *t_set;
-
-        t_set = (saved_encoding_templates_t *)(*pval);
-        if (t_set->key) {
-            free(t_set->key);
-        }
-        free_encoded_header_templates(&(t_set->headers));
-
-        assert(t_set->ccpayloads == NULL);
-        assert(t_set->iripayloads == NULL);
-        free(t_set);
-
-        JSLN(pval, enc->saved_intercept_templates, index);
-    }
-    JSLFA(rcw, enc->saved_intercept_templates);
+    destroy_all_saved_encoding_templates(enc->saved_intercept_templates):
 
     clear_global_templates(&(enc->saved_global_templates));
 

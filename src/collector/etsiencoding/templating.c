@@ -48,6 +48,35 @@ void free_encoded_header_templates(Pvoid_t *headers) {
     JLFA(rcint, *headers);
 }
 
+void destroy_all_saved_encoding_templates(saved_encoding_templates_t *tplates) {
+    PWord_t pval;
+    uint8_t index[1000];
+    Word_t rcw;
+    saved_encoding_templates_t *t_set;
+
+    index[0] = '\0';
+    JSLF(pval, tplates, index);
+    while (pval) {
+        t_set = (saved_encoding_templates_t *)(*pval);
+        if (t_set->key) {
+            free(t_set->key);
+        }
+        if (t_set->headers) {
+            free_encoded_header_templates(&(t_set->headers));
+        }
+        if (t_set->ccpayloads) {
+            free_encoded_header_templates(&(t_set->ccpayloads));
+        }
+        if (t_set->iripayloads) {
+            free_encoded_header_templates(&(t_set->iripayloads));
+        }
+        free(t_set);
+        JSLN(pval, tplates, index);
+    }
+    JSLFA(rcw, tplates);
+
+}
+
 encoded_header_template_t *encode_templated_psheader(
         wandder_encoder_t *encoder, Pvoid_t *headermap,
         wandder_encode_job_t *preencoded, uint32_t seqno,
