@@ -125,6 +125,7 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 collector/etsiencoding/tripayload.c \
                 collector/etsiencoding/hi1notification.c \
                 collector/etsiencoding/encryptcontainer.c \
+                collector/etsiencoding/templating.c \
                 coreserver.c coreserver.h
 openlimediator_LDADD = @ADD_LIBS@
 openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@

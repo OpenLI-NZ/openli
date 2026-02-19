@@ -32,6 +32,7 @@
 #include <zmq.h>
 #include <openssl/evp.h>
 #include <openssl/err.h>
+#include "etsiencoding.h"
 #include "netcomms.h"
 #include "openli_tls.h"
 #include "med_epoll.h"

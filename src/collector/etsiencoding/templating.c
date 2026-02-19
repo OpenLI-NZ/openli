@@ -26,6 +26,7 @@
 
 #include <Judy.h>
 
+#include "etsiencoding.h"
 #include "etsili_core.h"
 #include "logger.h"
 
@@ -48,7 +49,7 @@ void free_encoded_header_templates(Pvoid_t *headers) {
     JLFA(rcint, *headers);
 }
 
-void destroy_all_saved_encoding_templates(saved_encoding_templates_t *tplates) {
+void destroy_all_saved_encoding_templates(Pvoid_t tplates) {
     PWord_t pval;
     uint8_t index[1000];
     Word_t rcw;
