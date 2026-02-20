@@ -49,6 +49,18 @@ typedef enum {
     OPENLI_DIGEST_HASH_ALGO_SHA512 = 4,
 } openli_integrity_hash_method_t;
 
+typedef struct liagency_digest_config {
+    openli_timestamp_encoding_fmt_t time_fmt;
+
+    openli_integrity_hash_method_t hash_method;
+    openli_integrity_hash_method_t sign_method;
+    uint8_t required;
+    uint32_t hash_timeout;
+    uint32_t hash_pdulimit;
+    uint32_t sign_timeout;
+    uint32_t sign_hashlimit;
+} liagency_digest_config_t;
+
 typedef struct liagency {
 
     char *hi2_ipstr;
@@ -61,16 +73,8 @@ typedef struct liagency {
     uint32_t keepalivewait;
     uint16_t handover_retry;
     uint32_t resend_window_kbs;
-    openli_timestamp_encoding_fmt_t time_fmt;
 
-    openli_integrity_hash_method_t digest_hash_method;
-    openli_integrity_hash_method_t digest_sign_method;
-    uint8_t digest_required;
-    uint32_t digest_hash_timeout;
-    uint32_t digest_hash_pdulimit;
-    uint32_t digest_sign_timeout;
-    uint32_t digest_sign_hashlimit;
-
+    liagency_digest_config_t digest;
     payload_encryption_method_t encrypt;
     uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
     size_t encryptkey_len;
@@ -86,16 +90,16 @@ typedef struct liagency {
      a->keepalivewait == b->keepalivewait && \
      a->handover_retry == b->handover_retry && \
      a->resend_window_kbs == b->resend_window_kbs && \
-     a->digest_required == b->digest_required && \
+     a->digest.required == b->digest.required && \
      a->encryptkey_len == b->encryptkey_len && \
-     a->time_fmt == b->time_fmt && \
-         ((!a->digest_required) || ( \
-             a->digest_hash_timeout == b->digest_hash_timeout && \
-             a->digest_hash_pdulimit == b->digest_hash_pdulimit && \
-             a->digest_sign_timeout == b->digest_sign_timeout && \
-             a->digest_sign_hashlimit == b->digest_sign_hashlimit && \
-             a->digest_sign_method == b->digest_sign_method && \
-             a->digest_hash_method == b->digest_hash_method)) && \
+     a->digest.time_fmt == b->digest.time_fmt && \
+         ((!a->digest.required) || ( \
+             a->digest.hash_timeout == b->digest.hash_timeout && \
+             a->digest.hash_pdulimit == b->digest.hash_pdulimit && \
+             a->digest.sign_timeout == b->digest.sign_timeout && \
+             a->digest.sign_hashlimit == b->digest.sign_hashlimit && \
+             a->digest.sign_method == b->digest.sign_method && \
+             a->digest.hash_method == b->digest.hash_method)) && \
      ((a->agencycc == NULL && b->agencycc == NULL) || \
         (a->agencycc != NULL && b->agencycc != NULL && \
          strcmp(a->agencycc, b->agencycc) == 0)) && \
@@ -103,6 +107,17 @@ typedef struct liagency {
          memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len) == 0) \
      )
 
+#define agency_digest_equal(a, b) \
+    (a->digest.required == b->digest.required && \
+     a->digest.time_fmt == b->digest.time_fmt && \
+     ((!a->digest.required) || ( \
+         a->digest.hash_timeout == b->digest.hash_timeout && \
+         a->digest.hash_pdulimit == b->digest.hash_pdulimit && \
+         a->digest.sign_timeout == b->digest.sign_timeout && \
+         a->digest.sign_hashlimit == b->digest.sign_hashlimit && \
+         a->digest.sign_method == b->digest.sign_method && \
+         a->digest.hash_method == b->digest.hash_method)) \
+    )
 
 openli_integrity_hash_method_t map_digest_hash_method_string(char *str);
 void free_liagency(liagency_t *ag);

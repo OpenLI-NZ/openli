@@ -403,11 +403,16 @@ static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
         if (!newequiv) {
             /* Agency has been withdrawn entirely */
             withdraw_agency_from_mediators(state, lea);
+            withdraw_agency_from_collectors(state, lea);
         } else if (agency_equal(lea->ag, newequiv->ag)) {
             newequiv->announcereq = 0;
         } else {
+            if (agency_digest_equal(lea->ag, newequiv->ag)) {
+                newequiv->digestchanged = 0;
+            } else {
+                newequiv->digestchanged = 1;
+            }
             /* Agency has changed, re-announce the new version */
-            //withdraw_agency_from_mediators(state, lea);
             newequiv->announcereq = 1;
         }
     }
@@ -417,6 +422,10 @@ static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
             announce_lea_to_mediators(state, lea);
             update_inherited_encryption_settings(state, lea->ag);
             lea->announcereq = 0;
+        }
+        if (lea->digestchanged) {
+            announce_digest_config_to_collectors(state, lea);
+            lea->digestchanged = 0;
         }
     }
 

@@ -757,7 +757,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
                 lea->hi2_ipstr, lea->hi2_portstr, lea->hi3_ipstr,
                 lea->hi3_portstr);
         logger(LOG_INFO, "OpenLI Mediator: integrity checks: %s",
-                lea->digest_required ? "enabled" : "disabled");
+                lea->digest.required ? "enabled" : "disabled");
     }
 
     HASH_FIND(hh, state->agency_threads.threads, lea->agencyid,

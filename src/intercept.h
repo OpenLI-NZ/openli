@@ -162,7 +162,7 @@ typedef struct intercept_common {
     time_t toend_time;
     intercept_outputs_t tomediate;
     payload_encryption_method_t encrypt;
-    uint8_t encrypt_inherited;      // only used by provisioner
+    uint8_t encrypt_inherited;
     openli_timestamp_encoding_fmt_t time_fmt;
     uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
     size_t encryptkey_len;   /* set to 24 when valid */

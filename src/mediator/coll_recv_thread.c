@@ -796,7 +796,7 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     if (found->digest_config && found->digest_config->config &&
             !found->digest_config->disabled &&
-            found->digest_config->config->digest_required) {
+            found->digest_config->config->digest.required) {
 
         integrity_res = update_integrity_check_state(&(col->integrity_state),
                 found, msgbody, msglen,

@@ -313,6 +313,8 @@ static int emit_basic_collector_options(collector_global_t *conf,
 
     YAML_EMIT_BOOLEAN(event, "cisconoradius",
             conf->sharedinfo.cisco_noradius);
+    YAML_EMIT_BOOLEAN(event, "encryptionalwaysrequestbytecounter",
+            conf->sharedinfo.always_request_encrypt_bytecounter);
 
     YAML_EMIT_BOOLEAN(event, "RMQenabled", conf->RMQ_conf.enabled);
     YAML_EMIT_STRING(event, "RMQname", conf->RMQ_conf.name);

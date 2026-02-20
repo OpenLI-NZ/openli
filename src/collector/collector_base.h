@@ -210,6 +210,12 @@ typedef struct collector_identity {
     int networkelemid_len;
     int intpointid_len;
 
+    /* If not set, encryption for intercepts that have a dedicated key
+     * will keep track of their byteCounter in the encoding thread itself.
+     * This is faster as long as the LIID is going to be observed at a single
+     * collector only, which should be true in almost all cases.
+     */
+    uint8_t always_request_encrypt_bytecounter;
     uint8_t cisco_noradius;
 } collector_identity_t;
 
@@ -254,7 +260,7 @@ typedef struct seqtracker_thread_data {
     removed_intercept_t *removedints;
     uint8_t encoding_method;
     halt_info_t *haltinfo;
-
+    size_t rr_next_encoder_assign;
 
 } seqtracker_thread_data_t;
 
@@ -309,6 +315,89 @@ typedef struct forwarding_thread_data {
 
 } forwarding_thread_data_t;
 
+typedef struct agency_digest_config agency_digest_config_t;
+
+typedef struct digest_map_key {
+    uint64_t key_cin;
+    const char *keystring;
+
+    UT_hash_handle hh;
+} digest_map_key_t;
+
+struct agency_digest_config {
+    char *agencyid;
+    liagency_digest_config_t *config;
+    uint8_t disabled;
+    UT_hash_handle hh;
+};
+
+typedef struct encoder_liid_state {
+    char *liid_key;
+    uint8_t no_agency_map_warning;
+    time_t last_agency_check;
+    agency_digest_config_t *digest_config;
+    digest_map_key_t *digest_cin_keys;
+
+    uint64_t encryptedByteCounter;
+    uint8_t requestByteCounter;
+
+    UT_hash_handle hh;
+} encoder_liid_state_t;
+
+typedef struct integrity_check_state integrity_check_state_t;
+
+typedef struct ics_sign_request {
+
+    integrity_check_state_t *chain;
+
+    uint8_t attempts;
+
+    int64_t seqno;
+    int64_t *signing_seqnos;
+    size_t signing_seqno_array_size;
+
+    //med_epoll_ev_t *reply_timer;
+    unsigned char *digest;
+    unsigned int digest_len;
+    UT_hash_handle hh;
+} ics_sign_request_t;
+
+struct integrity_check_state {
+
+    char *key;
+    char *liid_key;
+    openli_liid_format_t liid_format;
+    uint32_t cin;
+    openli_proto_msgtype_t msgtype;
+
+    agency_digest_config_t *agency;
+
+    //med_epoll_ev_t *hash_timer;
+    //med_epoll_ev_t *sign_timer;
+
+    ics_sign_request_t *sign_jobs;
+
+    uint32_t pdus_since_last_hashrec;
+    uint32_t hashes_since_last_signrec;
+
+    EVP_MD_CTX *hash_ctx;
+    EVP_MD_CTX *signature_ctx;
+
+    int64_t *hashed_seqnos;
+    size_t seqno_array_size;
+    size_t seqno_next_index;
+
+    int64_t *signing_seqnos;
+    size_t signing_seqno_array_size;
+    size_t signing_seqno_next_index;
+
+    int64_t self_seqno_hash;
+    int64_t self_seqno_sign;
+
+    uint8_t awaiting_final_signature;
+    UT_hash_handle hh;
+};
+
 typedef struct encoder_state {
     void *zmq_ctxt;
     void **zmq_recvjob;
@@ -330,6 +419,24 @@ typedef struct encoder_state {
     openli_encoded_result_t **result_array;
     size_t *result_batch;
 
+    /** The set of LEAs that have been announced by the provisioner, and
+     *  their corresponding configuration for calculating integrity checks
+     */
+    agency_digest_config_t *known_agencies;
+
+    /** Per LIID state required for integrity check generation and
+     *  encryption.
+     */
+    encoder_liid_state_t known_liids;
+
+    /** The "integrity check" state for all observed "LIID + CIN + HI" streams
+     *  going to agencies that require integrity check messages to be
+     *  provided.
+     */
+    integrity_check_state_t *integrity_state;
+
+
+    int seqtrackers;
     int forwarders;
     uint8_t halted;
 } openli_encoder_t;

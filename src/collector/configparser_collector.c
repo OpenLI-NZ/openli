@@ -724,6 +724,16 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     }
 
     if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "encryptionalwaysrequestbytecounter") == 0) {
+
+        glob->sharedinfo.always_request_encrypt_bytecounter =
+                config_check_onoff((char *)value->data.scalar.value);
+        return 0;
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value,
                     "emailsessiontimeouts") == 0) {

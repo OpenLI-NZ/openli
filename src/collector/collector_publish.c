@@ -70,6 +70,7 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     expmsg->data.cept.authcc = strdup(common->authcc);
     expmsg->data.cept.delivcc = strdup(common->delivcc);
     expmsg->data.cept.encryptmethod = common->encrypt;
+    expmsg->data.cept.encrypt_inherited = common->encrypt_inherited;
     expmsg->data.cept.cepttype = cepttype;
     expmsg->data.cept.targetagency = strdup(common->targetagency);
     expmsg->data.cept.timefmt = common->time_fmt;
