@@ -198,7 +198,7 @@ static int emit_agency_integrity_config(yaml_emitter_t *emitter,
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
 
-    if (ag->digest_required) {
+    if (ag->digest.required) {
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"yes", strlen("yes"),
                 1, 0, YAML_PLAIN_SCALAR_STYLE);
@@ -215,7 +215,7 @@ static int emit_agency_integrity_config(yaml_emitter_t *emitter,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    hashmethod = agency_integrity_hash_method_to_string(ag->digest_hash_method);
+    hashmethod = agency_integrity_hash_method_to_string(ag->digest.hash_method);
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)hashmethod, strlen(hashmethod),
@@ -227,20 +227,20 @@ static int emit_agency_integrity_config(yaml_emitter_t *emitter,
             YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-    signmethod = agency_integrity_hash_method_to_string(ag->digest_sign_method);
+    signmethod = agency_integrity_hash_method_to_string(ag->digest.sign_method);
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)signmethod, strlen(signmethod),
             1, 0, YAML_PLAIN_SCALAR_STYLE);
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 
 
-    if (emit_u32_scalar(emitter, "hashtimeout", &(ag->digest_hash_timeout))
+    if (emit_u32_scalar(emitter, "hashtimeout", &(ag->digest.hash_timeout))
             < 0) return -1;
-    if (emit_u32_scalar(emitter, "datapducount", &(ag->digest_hash_pdulimit))
+    if (emit_u32_scalar(emitter, "datapducount", &(ag->digest.hash_pdulimit))
             < 0) return -1;
-    if (emit_u32_scalar(emitter, "signtimeout", &(ag->digest_sign_timeout))
+    if (emit_u32_scalar(emitter, "signtimeout", &(ag->digest.sign_timeout))
             < 0) return -1;
-    if (emit_u32_scalar(emitter, "hashpducount", &(ag->digest_sign_hashlimit))
+    if (emit_u32_scalar(emitter, "hashpducount", &(ag->digest.sign_hashlimit))
             < 0) return -1;
 
     yaml_mapping_end_event_initialize(&event);
@@ -387,12 +387,12 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
                 1, 0, YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
 
-        if (ag->ag->time_fmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+        if (ag->ag->digest.time_fmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,
                     (yaml_char_t *)"generalized", strlen("generalized"), 1, 0,
                     YAML_PLAIN_SCALAR_STYLE);
-        } else if (ag->ag->time_fmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
+        } else if (ag->ag->digest.time_fmt == OPENLI_ENCODED_TIMESTAMP_MICROSECONDS) {
             yaml_scalar_event_initialize(&event, NULL,
                     (yaml_char_t *)YAML_STR_TAG,
                     (yaml_char_t *)"microseconds", strlen("microseconds"), 1, 0,

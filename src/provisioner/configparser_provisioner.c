@@ -516,14 +516,14 @@ static int parse_integrity_check_options(liagency_t *newag,
 
         if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
                 !strcasecmp((char *)key->data.scalar.value, "enabled")) {
-            newag->digest_required =
+            newag->digest.required =
                     config_check_onoff((char *)value->data.scalar.value);
         }
 
         if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
                 !strcasecmp((char *)key->data.scalar.value, "hashtimeout")) {
             errno = 0;
-            newag->digest_hash_timeout = strtoul(
+            newag->digest.hash_timeout = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
             if (errno) {
                 logger(LOG_INFO,
@@ -535,7 +535,7 @@ static int parse_integrity_check_options(liagency_t *newag,
         if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
                 !strcasecmp((char *)key->data.scalar.value, "signtimeout")) {
             errno = 0;
-            newag->digest_sign_timeout = strtoul(
+            newag->digest.sign_timeout = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
             if (errno) {
                 logger(LOG_INFO,
@@ -546,7 +546,7 @@ static int parse_integrity_check_options(liagency_t *newag,
         if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
                 !strcasecmp((char *)key->data.scalar.value, "datapducount")) {
             errno = 0;
-            newag->digest_hash_pdulimit = strtoul(
+            newag->digest.hash_pdulimit = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
             if (errno) {
                 logger(LOG_INFO,
@@ -558,7 +558,7 @@ static int parse_integrity_check_options(liagency_t *newag,
         if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
                 !strcasecmp((char *)key->data.scalar.value, "hashpducount")) {
             errno = 0;
-            newag->digest_sign_hashlimit = strtoul(
+            newag->digest.sign_hashlimit = strtoul(
                     (char *)value->data.scalar.value, NULL, 10);
             if (errno) {
                 logger(LOG_INFO,
@@ -570,16 +570,16 @@ static int parse_integrity_check_options(liagency_t *newag,
         if (key->type == YAML_SCALAR_NODE && value->type == YAML_SCALAR_NODE &&
                 !strcasecmp((char *)key->data.scalar.value, "hashmethod")) {
             if (strcasecmp((char *)value->data.scalar.value, "sha-1") == 0) {
-                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
+                newag->digest.hash_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
             } else if (strcasecmp((char *)value->data.scalar.value,
                     "sha-256") == 0) {
-                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
+                newag->digest.hash_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
             } else if (strcasecmp((char *)value->data.scalar.value,
                     "sha-384") == 0) {
-                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
+                newag->digest.hash_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
             } else if (strcasecmp((char *)value->data.scalar.value,
                     "sha-512") == 0) {
-                newag->digest_hash_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
+                newag->digest.hash_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
             } else {
                 logger(LOG_INFO,
                         "OpenLI provisioner: unsupported hashmethod '%s' specified in integrity check configuration for agency",
@@ -592,16 +592,16 @@ static int parse_integrity_check_options(liagency_t *newag,
                 !strcasecmp((char *)key->data.scalar.value,
                         "signedhashmethod")) {
             if (strcasecmp((char *)value->data.scalar.value, "sha-1") == 0) {
-                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
+                newag->digest.sign_method = OPENLI_DIGEST_HASH_ALGO_SHA1;
             } else if (strcasecmp((char *)value->data.scalar.value,
                     "sha-256") == 0) {
-                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
+                newag->digest.sign_method = OPENLI_DIGEST_HASH_ALGO_SHA256;
             } else if (strcasecmp((char *)value->data.scalar.value,
                     "sha-384") == 0) {
-                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
+                newag->digest.sign_method = OPENLI_DIGEST_HASH_ALGO_SHA384;
             } else if (strcasecmp((char *)value->data.scalar.value,
                     "sha-512") == 0) {
-                newag->digest_sign_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
+                newag->digest.sign_method = OPENLI_DIGEST_HASH_ALGO_SHA512;
             } else {
                 logger(LOG_INFO,
                         "OpenLI provisioner: unsupported signedhashmethod '%s' specified in integrity check configuration for agency",
@@ -637,14 +637,14 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->keepalivewait = 0;
         newag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
         newag->resend_window_kbs = DEFAULT_AGENCY_RESEND_WINDOW;
-        newag->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
-        newag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
-        newag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
-        newag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
-        newag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
-        newag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
-        newag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
-        newag->digest_required = 0;
+        newag->digest.time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
+        newag->digest.hash_method = DEFAULT_DIGEST_HASH_METHOD;
+        newag->digest.sign_method = DEFAULT_DIGEST_HASH_METHOD;
+        newag->digest.hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+        newag->digest.hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+        newag->digest.sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+        newag->digest.sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+        newag->digest.required = 0;
         newag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NONE;
         memset(newag->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
         newag->encryptkey_len = 0;
@@ -752,10 +752,10 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                             "timestampformat") == 0) {
                 if (strcasecmp((char *)value->data.scalar.value,
                         "generalized") == 0) {
-                    newag->time_fmt = OPENLI_ENCODED_TIMESTAMP_GENERALIZED;
+                    newag->digest.time_fmt = OPENLI_ENCODED_TIMESTAMP_GENERALIZED;
                 } else if (strcasecmp((char *)value->data.scalar.value,
                         "microseconds") == 0) {
-                    newag->time_fmt = OPENLI_ENCODED_TIMESTAMP_MICROSECONDS;
+                    newag->digest.time_fmt = OPENLI_ENCODED_TIMESTAMP_MICROSECONDS;
                 }
             }
 
@@ -836,6 +836,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
             prov_ag = (prov_agency_t *)malloc(sizeof(prov_agency_t));
             prov_ag->ag = newag;
             prov_ag->announcereq = 1;
+            prov_ag->digestchanged = 1;
             HASH_ADD_KEYPTR(hh, state->leas, prov_ag->ag->agencyid,
                     strlen(prov_ag->ag->agencyid), prov_ag);
 
@@ -1586,7 +1587,7 @@ static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
         if (!ag) {
             continue;
         }
-        ipint->common.time_fmt = ag->ag->time_fmt;
+        ipint->common.time_fmt = ag->ag->digest.time_fmt;
     }
 
     HASH_ITER(hh_liid, conf->voipintercepts, vint, vinttmp) {
@@ -1595,7 +1596,7 @@ static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
         if (!ag) {
             continue;
         }
-        vint->common.time_fmt = ag->ag->time_fmt;
+        vint->common.time_fmt = ag->ag->digest.time_fmt;
     }
 
     HASH_ITER(hh_liid, conf->emailintercepts, em, emtmp) {
@@ -1604,7 +1605,7 @@ static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
         if (!ag) {
             continue;
         }
-        em->common.time_fmt = ag->ag->time_fmt;
+        em->common.time_fmt = ag->ag->digest.time_fmt;
     }
 
 }

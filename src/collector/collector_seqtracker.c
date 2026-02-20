@@ -48,6 +48,7 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->delivcc) {
         free(msg->delivcc);
     }
+    openli_free_encryptkey_ptr(&(msg->encryptkey), msg->encryptkey_len);
 }
 
 static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
@@ -228,6 +229,17 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
 
+    if (seqdata->colident->always_request_encrypt_bytecounter) {
+        // set this to 1 to force encoders to request their byteCounter
+        // value from the provisioner
+        intstate->details.encrypt_inherited = 1;
+    }
+    /* Otherwise, byteCounter requests only occur for LIIDs whose
+     * encryption keys are inherited from the agency-level config. If the
+     * key is LIID-specific, then the encoder can simply track the
+     * byteCounter locally.
+     */
+
     intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
             sizeof(wandder_encode_job_t));
     etsili_preencode_static_fields(intstate->preencoded, &intdetails);
@@ -248,6 +260,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         remove_preencoded(seqdata, intstate);
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
+        openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
+                intstate->details.encryptkey_len);
 
         /* leave the CIN seqno state as is for now */
         intstate->details.authcc = strdup(cept->authcc);
@@ -255,9 +269,6 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.authcc_len = strlen(cept->authcc);
         intstate->details.delivcc_len = strlen(cept->delivcc);
 
-        intstate->details.encryptmethod = cept->encryptmethod;
-        intstate->details.timefmt = cept->timefmt;
-        intstate->details.liid_format = cept->liid_format;
         intstate->version ++;
 
     } else {
@@ -265,21 +276,29 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate = (exporter_intercept_state_t *)malloc(
                 sizeof(exporter_intercept_state_t));
         intstate->details.liid = strdup(cept->liid);
-        intstate->details.authcc = strdup(cept->authcc);
-        intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.liid_len = strlen(cept->liid);
-        intstate->details.authcc_len = strlen(cept->authcc);
-        intstate->details.delivcc_len = strlen(cept->delivcc);
-        intstate->details.timefmt = cept->timefmt;
-        intstate->details.liid_format = cept->liid_format;
-        intstate->details.encryptmethod = cept->encryptmethod;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
-
+        intstate->encoder_index = seqdata->rr_next_encoder_assign;
+        seqdata->rr_next_encoder_assign ++;
+        if (seqdata->rr_next_encoder_assign >= seqdata->encoders) {
+            seqdata->rr_next_encoder_assign %= seqdata->encoders;
+        }
         HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
                 intstate->details.liid_len, intstate);
     }
 
+    intstate->details.authcc = strdup(cept->authcc);
+    intstate->details.delivcc = strdup(cept->delivcc);
+    intstate->details.authcc_len = strlen(cept->authcc);
+    intstate->details.delivcc_len = strlen(cept->delivcc);
+    intstate->details.encryptmethod = cept->encryptmethod;
+    intstate->details.encrypt_inherited = cept->encrypt_inherited;
+    intstate->details.encryptkey = openli_dup_encryptkey_ptr(
+            cept->encryptkey, cept->encryptkey_len);
+    intstate->details.encryptkey_len = cept->encryptkey_len;
+    intstate->details.timefmt = cept->timefmt;
+    intstate->details.liid_format = cept->liid_format;
     preencode_etsi_fields(seqdata, intstate);
 }
 
@@ -325,6 +344,9 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.authcc = strdup(msg->authcc);
     intstate->details.authcc_len = strlen(msg->authcc);
 
+    openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
+            intstate->details.encryptkey_len);
+
     if (intstate->details.delivcc) {
         free(intstate->details.delivcc);
     }
@@ -333,6 +355,10 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.liid_format = msg->liid_format;
     intstate->details.timefmt = msg->timefmt;
     intstate->details.encryptmethod = msg->encryptmethod;
+    intstate->details.encrypt_inherited = msg->encrypt_inherited;
+    intstate->details.encryptkey = openli_dup_encryptkey_ptr(msg->encryptkey,
+            msg->encryptkey_len);
+    intstate->details.encryptkey_len = msg->encryptkey_len;
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
     intstate->version ++;
@@ -376,6 +402,11 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     job.cin = (int64_t)cinseq->cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
+    job.encryptkey = openli_dup_encryptkey_ptr(intstate->details.encryptkey,
+            intstate->details.encryptkey_len);
+    job.encryptkey_len = intstate->details.encryptkey_len;
+    job.need_enc_bc_request = intstate->details.encrypt_inherited;
+
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;
 
@@ -383,8 +414,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
      * encryption and integrity check state so we don't have to re-calculate
      * it every time
      */
-    index = hash_liid(job.liid) % seqdata->encoders;
-
+    index = intstate->encoder_index;
     (*seqno)++;
 
     while (1) {

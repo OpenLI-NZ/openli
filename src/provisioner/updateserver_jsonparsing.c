@@ -751,6 +751,7 @@ int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
     if (found) {
         HASH_DEL(state->interceptconf.leas, found);
         withdraw_agency_from_mediators(state, found);
+        withdraw_agency_from_collectors(state, found);
         free_liagency(found->ag);
         free(found);
         logger(LOG_INFO, "OpenLI: removed agency '%s' via update socket.",
@@ -1344,9 +1345,9 @@ static int parse_agency_integrity_options(liagency_t *newag,
     if (enabled) {
         json_bool isset = json_object_get_boolean(enabled);
         if (isset) {
-            newag->digest_required = 1;
+            newag->digest.required = 1;
         } else {
-            newag->digest_required = 0;
+            newag->digest.required = 0;
         }
     }
 
@@ -1355,7 +1356,7 @@ static int parse_agency_integrity_options(liagency_t *newag,
         EXTRACT_JSON_STRING_PARAM("hashmethod", "Agency Digest Hash method",
                 hash_method, hashmethodstr, &parseerr, false);
         if (hashmethodstr) {
-            newag->digest_hash_method =
+            newag->digest.hash_method =
                     map_digest_hash_method_string(hashmethodstr);
             free(hashmethodstr);
         }
@@ -1367,23 +1368,23 @@ static int parse_agency_integrity_options(liagency_t *newag,
                 "Agency Signature Hash method",
                 sign_method, hashmethodstr, &parseerr, false);
         if (hashmethodstr) {
-            newag->digest_sign_method =
+            newag->digest.sign_method =
                     map_digest_hash_method_string(hashmethodstr);
             free(hashmethodstr);
         }
     }
 
     EXTRACT_JSON_INT_PARAM("hashtimeout", "Agency Digest Hash timeout",
-            hash_timeout, newag->digest_hash_timeout, &parseerr, 1,
+            hash_timeout, newag->digest.hash_timeout, &parseerr, 1,
             1000000, false);
     EXTRACT_JSON_INT_PARAM("datapducount", "Agency Digest Hash PDU limit",
-            hash_pdulimit, newag->digest_hash_pdulimit, &parseerr, 1,
+            hash_pdulimit, newag->digest.hash_pdulimit, &parseerr, 1,
             1000000, false);
     EXTRACT_JSON_INT_PARAM("signtimeout", "Agency Digest Signature timeout",
-            sign_timeout, newag->digest_sign_timeout, &parseerr, 1,
+            sign_timeout, newag->digest.sign_timeout, &parseerr, 1,
             1000000, false);
     EXTRACT_JSON_INT_PARAM("hashpducount", "Agency Digest Signature hash limit",
-            sign_hashlimit, newag->digest_sign_hashlimit, &parseerr, 1,
+            sign_hashlimit, newag->digest.sign_hashlimit, &parseerr, 1,
             1000000, false);
 
     if (parseerr) {
@@ -2825,13 +2826,13 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     nag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
     nag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
-    nag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
-    nag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
-    nag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
-    nag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
-    nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
-    nag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
-    nag->digest_required = 0;
+    nag->digest.hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest.sign_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest.hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    nag->digest.hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    nag->digest.sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    nag->digest.sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+    nag->digest.required = 0;
     nag->encryptkey_len = 0;
     memset(nag->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     nag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
@@ -2883,7 +2884,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (timefmtstring) {
-        nag->time_fmt = map_timestamp_format_string(timefmtstring);
+        nag->digest.time_fmt = map_timestamp_format_string(timefmtstring);
         free(timefmtstring);
     }
 
@@ -2896,6 +2897,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     lea = calloc(1, sizeof(prov_agency_t));
     lea->ag = nag;
     lea->announcereq = 1;
+    lea->digestchanged = 1;
 
     HASH_FIND(hh, state->interceptconf.leas, nag->agencyid,
             strlen(nag->agencyid), found);
@@ -2910,6 +2912,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh, state->interceptconf.leas, nag->agencyid,
             strlen(nag->agencyid), lea);
     announce_lea_to_mediators(state, lea);
+    announce_digest_config_to_collectors(state, lea);
 
     logger(LOG_INFO, "OpenLI: %s agency '%s' via update socket.",
             verb, nag->agencyid);
@@ -2945,7 +2948,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int parseerr = 0;
     liagency_t modified;
     int changed = 0;
-    int medchanged = 0;
+    int medchanged = 0, colchanged = 0;
     int encryptchanged = 0;
     char *encstr = NULL;
 
@@ -2965,16 +2968,16 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.keepalivewait = 0xffffffff;
     modified.handover_retry = 0xffff;
     modified.resend_window_kbs = 0xffffffff;
-    modified.digest_required = 0xff;
-    modified.digest_hash_method = 0xff;
-    modified.digest_sign_method = 0xff;
-    modified.digest_hash_timeout = 0xffffffff;
-    modified.digest_hash_pdulimit = 0xffffffff;
-    modified.digest_sign_timeout = 0xffffffff;
-    modified.digest_sign_hashlimit = 0xffffffff;
+    modified.digest.required = 0xff;
+    modified.digest.hash_method = 0xff;
+    modified.digest.sign_method = 0xff;
+    modified.digest.hash_timeout = 0xffffffff;
+    modified.digest.hash_pdulimit = 0xffffffff;
+    modified.digest.sign_timeout = 0xffffffff;
+    modified.digest.sign_hashlimit = 0xffffffff;
     modified.encrypt = 0xff;
     modified.encryptkey_len = 0xffffffff;
-    modified.time_fmt = 0xff;
+    modified.digest.time_fmt = 0xff;
 
     extract_agency_json_objects(&agjson, parsed);
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -3023,7 +3026,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (timefmtstring) {
-        modified.time_fmt = map_timestamp_format_string(timefmtstring);
+        modified.digest.time_fmt = map_timestamp_format_string(timefmtstring);
         free(timefmtstring);
     }
 
@@ -3081,66 +3084,74 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         found->ag->encrypt = modified.encrypt;
     }
 
-    if (modified.time_fmt != 0xff &&
-            modified.time_fmt != found->ag->time_fmt) {
+    if (modified.digest.time_fmt != 0xff &&
+            modified.digest.time_fmt != found->ag->digest.time_fmt) {
         update_intercept_timeformats(state, found->ag->agencyid,
-                modified.time_fmt);
-        found->ag->time_fmt = modified.time_fmt;
+                modified.digest.time_fmt);
+        found->ag->digest.time_fmt = modified.digest.time_fmt;
         changed = 1;
         medchanged = 1;
+        colchanged = 1;
     }
 
-    if (modified.digest_required != 0xff &&
-                modified.digest_required != found->ag->digest_required) {
+    if (modified.digest.required != 0xff &&
+                modified.digest.required != found->ag->digest.required) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_required = modified.digest_required;
+        colchanged = 1;
+        found->ag->digest.required = modified.digest.required;
     }
 
-    if (modified.digest_hash_method != 0xff &&
-                modified.digest_hash_method != found->ag->digest_hash_method) {
+    if (modified.digest.hash_method != 0xff &&
+                modified.digest.hash_method != found->ag->digest.hash_method) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_hash_method = modified.digest_hash_method;
+        colchanged = 1;
+        found->ag->digest.hash_method = modified.digest.hash_method;
     }
 
-    if (modified.digest_sign_method != 0xff &&
-                modified.digest_sign_method != found->ag->digest_sign_method) {
+    if (modified.digest.sign_method != 0xff &&
+                modified.digest.sign_method != found->ag->digest.sign_method) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_sign_method = modified.digest_sign_method;
+        colchanged = 1;
+        found->ag->digest.sign_method = modified.digest.sign_method;
     }
 
-    if (modified.digest_hash_timeout != 0xffffffff &&
-                modified.digest_hash_timeout !=
-                        found->ag->digest_hash_timeout) {
+    if (modified.digest.hash_timeout != 0xffffffff &&
+                modified.digest.hash_timeout !=
+                        found->ag->digest.hash_timeout) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_hash_timeout = modified.digest_hash_timeout;
+        colchanged = 1;
+        found->ag->digest.hash_timeout = modified.digest.hash_timeout;
     }
 
-    if (modified.digest_hash_pdulimit != 0xffffffff &&
-                modified.digest_hash_pdulimit !=
-                        found->ag->digest_hash_pdulimit) {
+    if (modified.digest.hash_pdulimit != 0xffffffff &&
+                modified.digest.hash_pdulimit !=
+                        found->ag->digest.hash_pdulimit) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_hash_pdulimit = modified.digest_hash_pdulimit;
+        colchanged = 1;
+        found->ag->digest.hash_pdulimit = modified.digest.hash_pdulimit;
     }
 
-    if (modified.digest_sign_timeout != 0xffffffff &&
-                modified.digest_sign_timeout !=
-                        found->ag->digest_sign_timeout) {
+    if (modified.digest.sign_timeout != 0xffffffff &&
+                modified.digest.sign_timeout !=
+                        found->ag->digest.sign_timeout) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_sign_timeout = modified.digest_sign_timeout;
+        colchanged = 1;
+        found->ag->digest.sign_timeout = modified.digest.sign_timeout;
     }
 
-    if (modified.digest_sign_hashlimit != 0xffffffff &&
-                modified.digest_sign_hashlimit !=
-                        found->ag->digest_sign_hashlimit) {
+    if (modified.digest.sign_hashlimit != 0xffffffff &&
+                modified.digest.sign_hashlimit !=
+                        found->ag->digest.sign_hashlimit) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_sign_hashlimit = modified.digest_sign_hashlimit;
+        colchanged = 1;
+        found->ag->digest.sign_hashlimit = modified.digest.sign_hashlimit;
     }
 
     if (modified.keepalivefreq != 0xffffffff &&
@@ -3172,11 +3183,17 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (medchanged) {
+        /* TODO exclude digest config from "medchanged" */
         announce_lea_to_mediators(state, found);
         logger(LOG_INFO,
                 "OpenLI: modified existing agency '%s' via update socket.",
                 found->ag->agencyid);
     }
+
+    if (colchanged) {
+        announce_digest_config_to_collectors(state, found);
+    }
+
     if (encryptchanged) {
         update_inherited_encryption_settings(state, found->ag);
         logger(LOG_INFO,

@@ -211,6 +211,22 @@ int compare_sip_targets(provision_state_t *currstate,
     }
 
 
+int announce_digest_config_to_collectors(provision_state_t *state,
+        prov_agency_t *lea) {
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_lea_digest_onto_net_buffer(sock->outgoing, lea->ag) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send LEA digest config for %s to collector '%s'.",
+                    lea->ag->agencyid, col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+
+    return 0;
+}
+
 int announce_lea_to_mediators(provision_state_t *state,
         prov_agency_t *lea) {
 
@@ -302,6 +318,26 @@ int announce_configuration_update_to_collector(provision_state_t *state,
     SEND_SINGLE_COLLECTOR_END
     return 1;
 }
+
+int withdraw_agency_from_collectors(provision_state_t *state,
+        prov_agency_t *lea) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+
+        if (push_lea_withdrawal_onto_net_buffer(sock->outgoing,
+                    lea->ag) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send withdrawal of LEA %s to collector '%s'.",
+                    lea->ag->agencyid, col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+
+    return 0;
+}
+
 
 int withdraw_agency_from_mediators(provision_state_t *state,
         prov_agency_t *lea) {

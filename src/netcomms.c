@@ -403,9 +403,82 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
     return (int)totallen;
 }
 
-/* Don't include the time_fmt -- we only need it at the provisioner level to
- * assign it to intercepts directly.
- */
+#define LEA_DIGEST_BODY_LEN(lea) \
+    (strlen(lea->agencyid) + sizeof(openli_timestamp_encoding_fmt_t) + \
+     (lea->digest.required ? (sizeof(openli_integrity_hash_method_t) + \
+        sizeof(openli_integrity_hash_method_t) + \
+        (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
+        (7 * 4)) : 0) + \
+	 (2 * 4)) /* each field has 4 bytes for the key, length of field and terminating \0 */
+
+int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
+    ii_header_t hdr;
+    uint16_t totallen;
+
+    totallen = LEA_DIGEST_BODY_LEN(lea);
+    populate_header(&hdr, OPENLI_PROTO_ANNOUNCE_LEA_DIGEST, totallen, 0);
+    if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
+            sizeof(ii_header_t)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(lea->agencyid),
+                strlen(lea->agencyid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
+                (uint8_t *)(&lea->digest.time_fmt),
+                sizeof(openli_timestamp_encoding_fmt_t)) == -1) {
+        return -1;
+    }
+
+    if (lea->digest.required) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
+                (uint8_t *)(&(lea->digest.required)), sizeof(uint8_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD,
+                (uint8_t *)(&(lea->digest.hash_method)),
+                sizeof(openli_integrity_hash_method_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD,
+                (uint8_t *)(&(lea->digest.sign_method)),
+                sizeof(openli_integrity_hash_method_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT,
+                (uint8_t *)(&(lea->digest.hash_timeout)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT,
+                (uint8_t *)(&(lea->digest.hash_pdulimit)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
+                (uint8_t *)(&(lea->digest.sign_timeout)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
+                (uint8_t *)(&(lea->digest.sign_hashlimit)),
+                sizeof(uint32_t)) == -1) {
+            return -1;
+        }
+    }
+
+    return (int)totallen;
+}
+
 #define LEA_BODY_LEN(lea) \
     (strlen(lea->agencyid) + \
      (lea->agencycc ? strlen(lea->agencycc) + 4 : 0)  + \
@@ -413,7 +486,7 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + \
      sizeof(uint32_t) + sizeof(openli_timestamp_encoding_fmt_t) + \
-     (lea->digest_required ? (sizeof(openli_integrity_hash_method_t) + \
+     (lea->digest.required ? (sizeof(openli_integrity_hash_method_t) + \
         sizeof(openli_integrity_hash_method_t) + \
         (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
         (7 * 4)) : 0) + \
@@ -484,7 +557,7 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
-                (uint8_t *)(&lea->time_fmt),
+                (uint8_t *)(&lea->digest.time_fmt),
                 sizeof(openli_timestamp_encoding_fmt_t)) == -1) {
         return -1;
     }
@@ -495,44 +568,44 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         return -1;
     }
 
-    if (lea->digest_required) {
+    if (lea->digest.required) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
-                (uint8_t *)(&(lea->digest_required)), sizeof(uint8_t)) == -1) {
+                (uint8_t *)(&(lea->digest.required)), sizeof(uint8_t)) == -1) {
             return -1;
         }
 
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD,
-                (uint8_t *)(&(lea->digest_hash_method)),
+                (uint8_t *)(&(lea->digest.hash_method)),
                 sizeof(openli_integrity_hash_method_t)) == -1) {
             return -1;
         }
 
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD,
-                (uint8_t *)(&(lea->digest_sign_method)),
+                (uint8_t *)(&(lea->digest.sign_method)),
                 sizeof(openli_integrity_hash_method_t)) == -1) {
             return -1;
         }
 
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT,
-                (uint8_t *)(&(lea->digest_hash_timeout)),
+                (uint8_t *)(&(lea->digest.hash_timeout)),
                 sizeof(uint32_t)) == -1) {
             return -1;
         }
 
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT,
-                (uint8_t *)(&(lea->digest_hash_pdulimit)),
+                (uint8_t *)(&(lea->digest.hash_pdulimit)),
                 sizeof(uint32_t)) == -1) {
             return -1;
         }
 
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT,
-                (uint8_t *)(&(lea->digest_sign_timeout)),
+                (uint8_t *)(&(lea->digest.sign_timeout)),
                 sizeof(uint32_t)) == -1) {
             return -1;
         }
 
         if (push_tlv(nb, OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
-                (uint8_t *)(&(lea->digest_sign_hashlimit)),
+                (uint8_t *)(&(lea->digest.sign_hashlimit)),
                 sizeof(uint32_t)) == -1) {
             return -1;
         }
@@ -566,8 +639,10 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          sizeof(common.time_fmt) + sizeof(common.liid_format) + \
+         sizeof(common.encrypt_inherited) + \
+         (common.encryptkey_len > 0 ? 4 + common.encryptkey_len : 0) + \
          (36 * common.xid_count) + \
-         ((11 + common.xid_count) * 4))
+         ((12 + common.xid_count) * 4))
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
@@ -643,6 +718,19 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
             (uint8_t *)&(common->encrypt),
             sizeof(common->encrypt)) == -1) {
         return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY_SCOPE,
+            (uint8_t *)&(common->encrypt_inherited),
+            sizeof(common->encrypt_inherited)) == -1) {
+        return -1;
+    }
+
+    if (common->encryptkey_len > 0) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY,
+                common->encryptkey, common->encryptkey_len) == -1) {
+            return -1;
+        }
     }
 
     for (i = 0; i < common->xid_count; i++) {
@@ -2030,6 +2118,7 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->encrypt = 0;
     memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     common->encryptkey_len = 0;
+    common->encrypt_inherited = 0;
     common->seqtrackerid = 0;
     common->xids = NULL;
     common->xid_count = 0;
@@ -2077,6 +2166,9 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION:
             common->encrypt = *((payload_encryption_method_t *)valptr);
+            break;
+        case OPENLI_PROTO_FIELD_ENCRYPTION_KEY_SCOPE:
+            common->encrypt_inherited = *(valptr);
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
             // shouldn't see this any more, but doesn't hurt to decode anyway
@@ -2893,6 +2985,69 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
     return 0;
 }
 
+int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **liid,
+        liagency_digest_config_t **digest) {
+
+    uint8_t *msgend = msgbody + len;
+
+    *digest = calloc(1, sizeof(liagency_digest_config_t));
+    (*digest)->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
+    (*digest)->required = 0;
+    (*digest)->hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    (*digest)->hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    (*digest)->hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    (*digest)->sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    (*digest)->sign_method = DEFAULT_DIGEST_HASH_METHOD;
+    (*digest)->sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+
+    while (msgbody < msgend) {
+        openli_proto_fieldtype_t f;
+        uint8_t *valptr;
+        uint16_t vallen;
+
+        if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
+            if (*liid) {
+                free(*liid);
+                *liid = NULL;
+            }
+            free(*digest);
+            *digest = NULL;
+            return -1;
+        }
+
+        if (f == OPENLI_PROTO_FIELD_LEAID) {
+            DECODE_STRING_FIELD(*liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT) {
+            (*digest)->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
+            (*digest)->hash_method =
+                    *((openli_integrity_hash_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD) {
+            (*digest)->sign_method =
+                    *((openli_integrity_hash_method_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_ENABLED) {
+            (*digest)->required = *((uint8_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT) {
+            (*digest)->hash_timeout = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT) {
+            (*digest)->hash_pdulimit = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT) {
+            (*digest)->sign_timeout = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT) {
+            (*digest)->sign_hashlimit = *((uint32_t *)valptr);
+        } else {
+            dump_buffer_contents(msgbody, len);
+            logger(LOG_INFO,
+                "OpenLI: invalid field in received LEA digest configuration: %d.",
+                f);
+            return -1;
+        }
+        msgbody += (vallen + 4);
+    }
+
+    return 0;
+}
+
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
 
     uint8_t *msgend = msgbody + len;
@@ -2907,14 +3062,14 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
     lea->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
     lea->resend_window_kbs = DEFAULT_AGENCY_RESEND_WINDOW;
-    lea->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
-    lea->digest_required = 0;
-    lea->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
-    lea->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
-    lea->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
-    lea->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
-    lea->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
-    lea->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+    lea->digest.time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
+    lea->digest.required = 0;
+    lea->digest.hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    lea->digest.sign_method = DEFAULT_DIGEST_HASH_METHOD;
+    lea->digest.hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    lea->digest.hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    lea->digest.sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    lea->digest.sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2944,25 +3099,25 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
         } else if (f == OPENLI_PROTO_FIELD_HANDOVER_RETRY) {
             lea->handover_retry = *((uint16_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT) {
-            lea->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
+            lea->digest.time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_WINDOW_SIZE) {
             lea->resend_window_kbs = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
-            lea->digest_hash_method =
+            lea->digest.hash_method =
                     *((openli_integrity_hash_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGNED_HASH_METHOD) {
-            lea->digest_sign_method =
+            lea->digest.sign_method =
                     *((openli_integrity_hash_method_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_ENABLED) {
-            lea->digest_required = *((uint8_t *)valptr);
+            lea->digest.required = *((uint8_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_TIMEOUT) {
-            lea->digest_hash_timeout = *((uint32_t *)valptr);
+            lea->digest.hash_timeout = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_PDULIMIT) {
-            lea->digest_hash_pdulimit = *((uint32_t *)valptr);
+            lea->digest.hash_pdulimit = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_TIMEOUT) {
-            lea->digest_sign_timeout = *((uint32_t *)valptr);
+            lea->digest.sign_timeout = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT) {
-            lea->digest_sign_hashlimit = *((uint32_t *)valptr);
+            lea->digest.sign_hashlimit = *((uint32_t *)valptr);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

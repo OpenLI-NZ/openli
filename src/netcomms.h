@@ -172,6 +172,7 @@ typedef enum {
     OPENLI_PROTO_UPDATE_COMPONENT_CONFIG,
     OPENLI_PROTO_WITHDRAW_X2X3LISTENER,
     OPENLI_PROTO_ANNOUNCE_X2X3LISTENER,
+    OPENLI_PROTO_ANNOUNCE_LEA_DIGEST,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -253,6 +254,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_ACL_PORT,
     OPENLI_PROTO_FIELD_UUID,
     OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
+    OPENLI_PROTO_FIELD_ENCRYPTION_KEY_SCOPE,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for
@@ -295,6 +297,7 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t wdtype);
 int push_intercept_modify_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t modtype);
+int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,

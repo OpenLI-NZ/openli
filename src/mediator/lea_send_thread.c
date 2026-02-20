@@ -75,7 +75,7 @@ static void init_mediator_agency(mediator_agency_t *agency,
     agency->disabled = 0;
     agency->disabled_msg = 0;
     agency->handover_retry = fromprov->handover_retry;
-    agency->timefmt = fromprov->time_fmt;
+    agency->timefmt = fromprov->digest.time_fmt;
 
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
             fromprov->hi2_portstr, HANDOVER_HI2, fromprov->keepalivefreq,
@@ -281,7 +281,7 @@ static void update_agency_handovers(mediator_agency_t *currag,
     set_export_buffer_ack_window(&(currag->hi3->ho_state->buf),
             newag->resend_window_kbs * 1024);
     currag->handover_retry = newag->handover_retry;
-    currag->timefmt = newag->time_fmt;
+    currag->timefmt = newag->digest.time_fmt;
 }
 
 /** Sends intercept records from a handover's local buffer to the

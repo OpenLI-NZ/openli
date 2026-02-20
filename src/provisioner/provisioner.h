@@ -203,6 +203,11 @@ typedef struct prov_agency {
      *  all mediators (i.e. after a config change) */
     uint8_t announcereq;
 
+    /** A flag indicating whether the digest configuration for the agency
+     *  has changed and therefore needs to be announced to all collectors
+     */
+    uint8_t digestchanged;
+
     UT_hash_handle hh;
 } prov_agency_t;
 
@@ -500,6 +505,8 @@ int announce_lea_to_mediators(provision_state_t *state,
         prov_agency_t *lea);
 int withdraw_agency_from_mediators(provision_state_t *state,
         prov_agency_t *lea);
+int withdraw_agency_from_collectors(provision_state_t *state,
+        prov_agency_t *lea);
 void add_new_staticip_range(provision_state_t *state,
         ipintercept_t *ipint, static_ipranges_t *ipr);
 void modify_existing_staticip_range(provision_state_t *state,
@@ -555,6 +562,8 @@ int announce_x2x3_listener_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
 int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
+int announce_digest_config_to_collectors(provision_state_t *state,
+        prov_agency_t *lea);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);
