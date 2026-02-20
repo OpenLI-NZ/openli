@@ -246,13 +246,15 @@ typedef struct seqtracker_thread_data {
     collector_identity_t *colident;
     pthread_rwlock_t *colident_mutex;
 
-    void *zmq_pushjobsock;
+    size_t encoders;
+    void **zmq_pushjobsocks;
     void *zmq_recvpublished;
 
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
     halt_info_t *haltinfo;
+
 
 } seqtracker_thread_data_t;
 
@@ -309,10 +311,9 @@ typedef struct forwarding_thread_data {
 
 typedef struct encoder_state {
     void *zmq_ctxt;
-    void **zmq_recvjobs;
+    void **zmq_recvjob;
     void **zmq_pushresults;
     void *zmq_control;
-    zmq_pollitem_t *topoll;
 
     pthread_t threadid;
     int workerid;
@@ -329,7 +330,6 @@ typedef struct encoder_state {
     openli_encoded_result_t **result_array;
     size_t *result_batch;
 
-    int seqtrackers;
     int forwarders;
     uint8_t halted;
 } openli_encoder_t;

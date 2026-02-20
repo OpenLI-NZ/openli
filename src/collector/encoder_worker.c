@@ -52,26 +52,22 @@ static int init_worker(openli_encoder_t *enc) {
     enc->freegenerics = create_etsili_generic_freelist(0);
     enc->halted = 0;
 
-    enc->zmq_recvjobs = calloc(enc->seqtrackers, sizeof(void *));
-    for (i = 0; i < enc->seqtrackers; i++) {
-        enc->zmq_recvjobs[i] = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
-        snprintf(sockname, 128, "inproc://openliseqpush-%d", i);
-        if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_LINGER, &zero,
+    enc->zmq_recvjob = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 128, "inproc://openliseqpush-%d", enc->workerid);
+    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
-            logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
-            return -1;
-        }
+        logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
+        return -1;
+    }
 
-        if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_RCVTIMEO, &rto,
+    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_RCVTIMEO, &rto,
                 sizeof(rto)) != 0) {
-            logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
-            return -1;
-        }
-        if (zmq_connect(enc->zmq_recvjobs[i], sockname) != 0) {
-            logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
-            return -1;
-        }
-
+        logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
+        return -1;
+    }
+    if (zmq_connect(enc->zmq_recvjob, sockname) != 0) {
+        logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
+        return -1;
     }
 
     enc->zmq_pushresults = calloc(enc->forwarders, sizeof(void *));
@@ -123,18 +119,6 @@ static int init_worker(openli_encoder_t *enc) {
         return -1;
     }
 
-    enc->topoll = calloc(enc->seqtrackers + 1, sizeof(zmq_pollitem_t));
-
-    enc->topoll[0].socket = enc->zmq_control;
-    enc->topoll[0].fd = 0;
-    enc->topoll[0].events = ZMQ_POLLIN;
-
-    for (i = 0; i < enc->seqtrackers; i++) {
-        enc->topoll[i + 1].socket = enc->zmq_recvjobs[i];
-        enc->topoll[i + 1].fd = 0;
-        enc->topoll[i + 1].events = ZMQ_POLLIN;
-    }
-
     return 0;
 
 }
@@ -151,7 +135,7 @@ static void free_mobileiri_parameters(etsili_generic_t *params) {
 }
 
 void destroy_encoder_worker(openli_encoder_t *enc) {
-    int x, i;
+    int x;
     openli_encoding_job_t job;
     uint32_t drained = 0;
 
@@ -168,38 +152,33 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         free_etsili_generics(enc->freegenerics);
     }
 
-    for (i = 0; i < enc->seqtrackers; i++) {
-        do {
-            x = zmq_recv(enc->zmq_recvjobs[i], &job,
-                    sizeof(openli_encoding_job_t), 0);
-            if (x < 0) {
-                if (errno == EAGAIN) {
-                    continue;
-                }
-                break;
+    do {
+        x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t), 0);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
             }
-            if (job.origreq) {
-                free_published_message(job.origreq);
-            }
-            if (job.liid) {
-                free(job.liid);
-            }
-            if (job.cinstr) {
-                free(job.cinstr);
-            }
-            drained ++;
+            break;
+        }
+        if (job.origreq) {
+            free_published_message(job.origreq);
+        }
+        if (job.liid) {
+            free(job.liid);
+        }
+        if (job.cinstr) {
+            free(job.cinstr);
+        }
+        drained ++;
 
-        } while (x > 0);
-        zmq_close(enc->zmq_recvjobs[i]);
-    }
+    } while (x > 0);
+    zmq_close(enc->zmq_recvjob);
 
     if (enc->zmq_control) {
         zmq_close(enc->zmq_control);
     }
 
-    free(enc->zmq_recvjobs);
     free(enc->zmq_pushresults);
-    free(enc->topoll);
 
 }
 
@@ -919,7 +898,6 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         if (job.liid == NULL) {
             goto encodejoberror;
         }
-
         index = hash_liid(job.liid) % enc->forwarders;
         assert(enc->forwarders > 0 && index < (size_t)enc->forwarders);
 
@@ -994,7 +972,7 @@ encodejoberror:
 }
 
 static inline void poll_nextjob(openli_encoder_t *enc) {
-    int x, i;
+    int x;
     int tmpbuf;
 
     x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), ZMQ_DONTWAIT);
@@ -1010,10 +988,7 @@ static inline void poll_nextjob(openli_encoder_t *enc) {
         return;
     }
 
-    /* TODO better error checking / handling for multiple seqtrackers */
-    for (i = 0; i < enc->seqtrackers; i++) {
-        x = process_job(enc, enc->topoll[i+1].socket);
-    }
+    x = process_job(enc, enc->zmq_recvjob);
 
     return;
 }

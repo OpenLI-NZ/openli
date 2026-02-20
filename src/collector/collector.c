@@ -2896,10 +2896,11 @@ int main(int argc, char *argv[]) {
         snprintf(name, 1024, "seqtracker-%d", i);
         glob->seqtrackers[i].zmq_ctxt = glob->zmq_ctxt;
         glob->seqtrackers[i].trackerid = i;
-        glob->seqtrackers[i].zmq_pushjobsock = NULL;
+        glob->seqtrackers[i].zmq_pushjobsocks = NULL;
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
-	glob->seqtrackers[i].haltinfo = NULL;
+    	glob->seqtrackers[i].haltinfo = NULL;
+        glob->seqtrackers[i].encoders = glob->encoding_threads;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);
         glob->seqtrackers[i].encoding_method = glob->encoding_method;
@@ -2913,7 +2914,7 @@ int main(int argc, char *argv[]) {
     for (i = 0; i < glob->encoding_threads; i++) {
         snprintf(name, 1024, "encoder-%d", i);
         glob->encoders[i].zmq_ctxt = glob->zmq_ctxt;
-        glob->encoders[i].zmq_recvjobs = NULL;
+        glob->encoders[i].zmq_recvjob = NULL;
         glob->encoders[i].zmq_pushresults = NULL;
         glob->encoders[i].zmq_control = NULL;
 
@@ -2928,7 +2929,6 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].encrypt.byte_counter = 0;
         glob->encoders[i].encrypt.byte_startts = 0;
         glob->encoders[i].encrypt.saved_encryption_templates = NULL;
-        glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;
 
         glob->encoders[i].result_array = calloc(glob->forwarding_threads,
