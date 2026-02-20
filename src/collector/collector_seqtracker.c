@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <assert.h>
 
+#include "util.h"
 #include "logger.h"
 #include "collector_base.h"
 #include "collector_publish.h"
@@ -365,6 +366,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 
     openli_encoding_job_t job;
     int ret = 1;
+    size_t index;
 
     job.seqno = *seqno;
 	job.preencoded = intstate->preencoded;
@@ -377,10 +379,16 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;
 
+    /* TODO we should be able to store this index per LIID, alongside its
+     * encryption and integrity check state so we don't have to re-calculate
+     * it every time
+     */
+    index = hash_liid(job.liid) % seqdata->encoders;
+
     (*seqno)++;
 
     while (1) {
-        if ((ret = zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
+        if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
                 sizeof(openli_encoding_job_t), 0)) < 0) {
             if (errno == EAGAIN) {
                 continue;
@@ -625,6 +633,7 @@ void *start_seqtracker_thread(void *data) {
     seqtracker_thread_data_t *seqdata = (seqtracker_thread_data_t *)data;
     openli_export_recv_t *job = NULL;
     int x, zero = 0, large=1000, sndtimeo=1000;
+    size_t i;
     exporter_intercept_state_t *intstate, *tmpexp;
 
     seqdata->zmq_recvpublished = zmq_socket(seqdata->zmq_ctxt, ZMQ_PULL);
@@ -645,34 +654,37 @@ void *start_seqtracker_thread(void *data) {
     }
 
 
-    seqdata->zmq_pushjobsock = zmq_socket(seqdata->zmq_ctxt, ZMQ_PUSH);
-    snprintf(sockname, 128, "inproc://openliseqpush-%d", seqdata->trackerid);
-    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_LINGER, &zero,
-                sizeof(zero)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to configure push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
-    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_SNDHWM, &large,
-                sizeof(large)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to configure push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
-    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_SNDTIMEO, &sndtimeo,
-                sizeof(sndtimeo)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to configure push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
-    if (zmq_bind(seqdata->zmq_pushjobsock, sockname) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to bind to push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
+    seqdata->zmq_pushjobsocks = calloc(seqdata->encoders, sizeof(void *));
+    for (i = 0; i < seqdata->encoders; i++) {
+        seqdata->zmq_pushjobsocks[i] = zmq_socket(seqdata->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliseqpush-%zu", i);
+        if (zmq_setsockopt(seqdata->zmq_pushjobsocks[i], ZMQ_LINGER, &zero,
+                    sizeof(zero)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
+        if (zmq_setsockopt(seqdata->zmq_pushjobsocks[i], ZMQ_SNDHWM, &large,
+                    sizeof(large)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
+        if (zmq_setsockopt(seqdata->zmq_pushjobsocks[i], ZMQ_SNDTIMEO,
+                &sndtimeo, sizeof(sndtimeo)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
+        if (zmq_bind(seqdata->zmq_pushjobsocks[i], sockname) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to bind to push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
     }
 
 	seqdata->removedints = NULL;
@@ -704,13 +716,20 @@ haltseqtracker:
     logger(LOG_INFO, "OpenLI: halting sequence tracker %d\n",
 		    seqdata->trackerid);
     zmq_close(seqdata->zmq_recvpublished);
-    zmq_close(seqdata->zmq_pushjobsock);
+    if (seqdata->zmq_pushjobsocks) {
+        for (i = 0; i < seqdata->encoders; i++) {
+            if (seqdata->zmq_pushjobsocks[i]) {
+                zmq_close(seqdata->zmq_pushjobsocks[i]);
+            }
+        }
+        free(seqdata->zmq_pushjobsocks);
+    }
 
     if (seqdata->haltinfo) {
-	pthread_mutex_lock(&(seqdata->haltinfo->mutex));
-	seqdata->haltinfo->halted ++;
-	pthread_cond_signal(&(seqdata->haltinfo->cond));
-	pthread_mutex_unlock(&(seqdata->haltinfo->mutex));
+        pthread_mutex_lock(&(seqdata->haltinfo->mutex));
+        seqdata->haltinfo->halted ++;
+        pthread_cond_signal(&(seqdata->haltinfo->cond));
+        pthread_mutex_unlock(&(seqdata->haltinfo->mutex));
     }
     pthread_exit(NULL);
 }
