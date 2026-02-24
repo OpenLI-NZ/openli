@@ -48,7 +48,7 @@ openlicollector_SOURCES=collector/collector.c \
 		collector/collector_sync.c collector/collector_sync.h \
         collector/configupdating.c \
         yaml_modifier.c yaml_modifier.h \
-		etsili_core.h export_buffer.h export_buffer.c \
+		etsili_core.h export_buffer.h export_buffer.c agency.c \
                 util.c util.h intercept.c intercept.h \
                 netcomms.c netcomms.h byteswap.c byteswap.h etsili_core.c \
                 collector/sipparsing.c collector/sipparsing.h \
@@ -97,6 +97,8 @@ openlicollector_SOURCES=collector/collector.c \
 				collector/sip_worker_redirection.h \
 				collector/x2x3_ingest.c collector/x2x3_ingest.h \
 				collector/x2x3_cond_attrs.c collector/udp_sink_worker.c \
+                collector/collector_integrity_check.c \
+                collector/collector_integrity_check.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 

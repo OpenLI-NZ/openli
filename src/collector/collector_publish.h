@@ -31,6 +31,7 @@
 #include <libtrace.h>
 #include <zmq.h>
 
+#include "agency.h"
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "intercept.h"
@@ -87,6 +88,7 @@ enum {
     OPENLI_EXPORT_UDP_SINK_ARGS = 27,
     OPENLI_EXPORT_FIRST_SEGMENT_FLAG = 28,
     OPENLI_EXPORT_LAST_SEGMENT_FLAG = 29,
+    OPENLI_EXPORT_AGENCY_DIGEST_CONFIG = 30,
 };
 
 typedef struct openli_ipcc_job {
@@ -270,6 +272,7 @@ struct openli_export_recv {
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
         udp_sink_worker_args_t udpargs;
+        liagency_digest_config_t digest;
     	halt_info_t *haltinfo;
     } data;
 };

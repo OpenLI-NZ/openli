@@ -2985,7 +2985,7 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
     return 0;
 }
 
-int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **liid,
+int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
         liagency_digest_config_t **digest) {
 
     uint8_t *msgend = msgbody + len;
@@ -3006,9 +3006,9 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **liid,
         uint16_t vallen;
 
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
-            if (*liid) {
-                free(*liid);
-                *liid = NULL;
+            if (*agencyid) {
+                free(*agencyid);
+                *agencyid = NULL;
             }
             free(*digest);
             *digest = NULL;
@@ -3016,7 +3016,7 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **liid,
         }
 
         if (f == OPENLI_PROTO_FIELD_LEAID) {
-            DECODE_STRING_FIELD(*liid, valptr, vallen);
+            DECODE_STRING_FIELD(*agencyid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT) {
             (*digest)->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
@@ -3040,6 +3040,12 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **liid,
             logger(LOG_INFO,
                 "OpenLI: invalid field in received LEA digest configuration: %d.",
                 f);
+            if (*agencyid) {
+                free(*agencyid);
+                *agencyid = NULL;
+            }
+            free(*digest);
+            *digest = NULL;
             return -1;
         }
         msgbody += (vallen + 4);

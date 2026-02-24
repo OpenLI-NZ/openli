@@ -49,6 +49,7 @@
 #include "umtsiri.h"
 #include "ipiri.h"
 #include "collector_util.h"
+#include "collector_integrity_check.h"
 
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
@@ -78,6 +79,12 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->sipconfig_mutex = &(glob->sipconfig_mutex);
     sync->glob_xinputs = &(glob->x_inputs);
     sync->xinput_mutex = &(glob->x_input_mutex);
+
+    sync->digest_config = &(glob->digest_config);
+    sync->digest_config_mutex = &(glob->digestconfig_mutex);
+
+    sync->liid_agency_map = &(glob->liid_to_agency);
+    sync->liid_agency_mutex = &(glob->liid_agency_mutex);
 
     sync->upcoming_intercept_events = NULL;
     sync->upcomingtimerfd = -1;
@@ -489,6 +496,48 @@ static int create_udp_sink_thread(collector_sync_t *sync,
         publish_openli_msg(sink->zmq_control, msg);
     }
 
+    return 0;
+}
+
+static int handle_lea_withdrawal(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    liagency_t *lea = calloc(1, sizeof(liagency_t));
+
+    if (decode_lea_withdrawal(provmsg, msglen, lea) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to decode agency withdrawal sent by the provisioner");
+        free_liagency(lea);
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(sync->digest_config_mutex);
+    remove_agency_digest_config(&(sync->digest_config->map), lea->agencyid);
+    pthread_rwlock_unlock(sync->digest_config_mutex);
+    free_liagency(lea);
+    return 0;
+}
+
+static int update_digest_config(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    char *agencyid = NULL;
+    liagency_digest_config_t *agdigest = NULL;
+
+    if (decode_lea_digest_config(provmsg, msglen, &agencyid, &agdigest) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: failed to decode agency digest configuration sent by the provisioner");
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(sync->digest_config_mutex);
+
+    update_agency_digest_config_map(&(sync->digest_config->map), agencyid,
+            agdigest);
+
+    pthread_rwlock_unlock(sync->digest_config_mutex);
+    // do NOT free agdigest, as this is now owned by the map
+    if (agencyid) free(agencyid);
     return 0;
 }
 
@@ -2655,6 +2704,19 @@ static int recv_from_provisioner(collector_sync_t *sync) {
 
             case OPENLI_PROTO_UPDATE_COMPONENT_CONFIG:
                 ret = update_collector_global_config(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+
+            case OPENLI_PROTO_ANNOUNCE_LEA_DIGEST:
+                ret = update_digest_config(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_WITHDRAW_LEA:
+                ret = handle_lea_withdrawal(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }

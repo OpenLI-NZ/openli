@@ -41,6 +41,7 @@
 #include "etsili_core.h"
 #include "encoder_worker.h"
 #include "intercept.h"
+#include "collector_integrity_check.h"
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;

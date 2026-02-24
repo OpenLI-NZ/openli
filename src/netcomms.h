@@ -390,6 +390,8 @@ int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
         emailintercept_t *mailint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
+int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
+        liagency_digest_config_t **digest);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, uint8_t *encryptkey, size_t *encryptlen,
         payload_encryption_method_t *method,

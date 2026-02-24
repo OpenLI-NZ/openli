@@ -217,6 +217,7 @@ typedef struct collector_identity {
      */
     uint8_t always_request_encrypt_bytecounter;
     uint8_t cisco_noradius;
+
 } collector_identity_t;
 
 typedef struct collector_sip_configuration {
@@ -331,6 +332,21 @@ struct agency_digest_config {
     UT_hash_handle hh;
 };
 
+typedef struct liid_to_agency {
+    char *liid;
+    char *agencyid;
+
+    UT_hash_handle hh;
+} liid_to_agency_mapping_t;
+
+typedef struct shared_agency_digest_config {
+    agency_digest_config_t *map;
+} shared_agency_digest_config_t;
+
+typedef struct shared_liid_to_agency_mapping {
+    liid_to_agency_mapping_t *map;
+} shared_liid_to_agency_mapping_t;
+
 typedef struct encoder_liid_state {
     char *liid_key;
     uint8_t no_agency_map_warning;
@@ -422,7 +438,11 @@ typedef struct encoder_state {
     /** The set of LEAs that have been announced by the provisioner, and
      *  their corresponding configuration for calculating integrity checks
      */
-    agency_digest_config_t *known_agencies;
+    shared_agency_digest_config_t *digest_config;
+    pthread_rwlock_t *digest_config_mutex;
+
+    shared_liid_to_agency_mapping_t *liid_agencies;
+    pthread_rwlock_t *liid_agency_mutex;
 
     /** Per LIID state required for integrity check generation and
      *  encryption.

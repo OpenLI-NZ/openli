@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2025 SearchLight Ltd, New Zealand.
+ * Copyright (c) 2026 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -29,11 +29,11 @@
 
 #include "logger.h"
 #include "agency.h"
-#include "coll_recv_thread.h"
-#include "liidmapping.h"
-#include "mediator_rmq.h"
-#include "etsiencoding.h"
+#include "etsiencoding/etsiencoding.h"
+#include "collector_base.h"
 
+
+#if 0
 void clear_digest_key_map(col_known_liid_t *known) {
     digest_map_key_t *k, *tmp;
 
@@ -45,17 +45,18 @@ void clear_digest_key_map(col_known_liid_t *known) {
         free(k);
     }
 }
+#endif
 
 int update_agency_digest_config_map(agency_digest_config_t **map,
-        liagency_t *lea) {
+        char *agencyid, liagency_digest_config_t *digest) {
 
     agency_digest_config_t *found = NULL;
 
-    HASH_FIND(hh, *map, lea->agencyid, strlen(lea->agencyid), found);
+    HASH_FIND(hh, *map, agencyid, strlen(agencyid), found);
 
     if (found) {
-        free_liagency(found->config);
-        found->config = lea;
+        free(found->config);
+        found->config = digest;
         found->disabled = 0;
 
         /* For now, I'll just let any current timers expire rather
@@ -67,9 +68,8 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
          return 0;
     }
 
-    found = calloc(1, sizeof(agency_digest_config_t));
-    found->agencyid = strdup(lea->agencyid);
-    found->config = lea;
+    found->agencyid = strdup(agencyid);
+    found->config = digest;
     found->disabled = 0;
 
     HASH_ADD_KEYPTR(hh, *map, found->agencyid, strlen(found->agencyid),
@@ -84,7 +84,7 @@ void free_agency_digest_config(agency_digest_config_t *dig) {
         free(dig->agencyid);
     }
     if (dig->config) {
-        free_liagency(dig->config);
+        free(dig->config);
     }
 
     free(dig);
@@ -107,6 +107,7 @@ void remove_agency_digest_config(agency_digest_config_t **map,
 
 }
 
+#if 0
 static inline void reset_hash_context(integrity_check_state_t *found) {
 
     if (found->hash_ctx == NULL) {
@@ -847,3 +848,5 @@ void handle_lea_withdrawal_within_integrity_check_state(
         }
     }
 }
+
+#endif
