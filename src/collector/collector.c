@@ -53,6 +53,7 @@
 #include "jmirror_parser.h"
 #include "cisco_parser.h"
 #include "util.h"
+#include "collector_integrity_check.h"
 
 volatile int collector_halt = 0;
 volatile int reload_config = 0;
@@ -1827,6 +1828,8 @@ static void destroy_collector_state(collector_global_t *glob) {
     colinput_t *inp;
     int i;
     colthread_local_t *loc, *tmp;
+    agency_digest_config_t *dig, *digtmp;
+    liid_to_agency_mapping_t *liidmap, *liidmaptmp;
 
     if (glob->expired_inputs) {
         libtrace_list_node_t *n;
@@ -1841,6 +1844,17 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
 	free_sync_thread_data(&(glob->syncip));
+
+    HASH_ITER(hh, glob->digest_config.map, dig, digtmp) {
+        HASH_DELETE(hh, glob->digest_config.map, dig);
+        free_agency_digest_config(dig);
+    }
+
+    HASH_ITER(hh, glob->liid_to_agency.map, liidmap, liidmaptmp) {
+        HASH_DELETE(hh, glob->liid_to_agency.map, liidmap);
+        // TODO implement the function below...
+        // free_liid_agency_map_entry(liidmap);
+    }
 
     if (glob->emailworkers) {
         free(glob->emailworkers);
@@ -1907,6 +1921,8 @@ static void destroy_collector_state(collector_global_t *glob) {
     pthread_rwlock_destroy(&glob->config_mutex);
     pthread_rwlock_destroy(&glob->x_input_mutex);
     pthread_rwlock_destroy(&glob->sipconfig_mutex);
+    pthread_rwlock_destroy(&glob->digestconfig_mutex);
+    pthread_rwlock_destroy(&glob->liid_agency_mutex);
     free(glob);
 }
 
@@ -2191,8 +2207,12 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
     pthread_rwlock_init(&glob->sipconfig_mutex, NULL);
+    pthread_rwlock_init(&glob->digestconfig_mutex, NULL);
+    pthread_rwlock_init(&glob->liid_agency_mutex, NULL);
     pthread_rwlock_init(&glob->x_input_mutex, NULL);
 
+    glob->digest_config.map = NULL;
+    glob->liid_to_agency.map = NULL;
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
@@ -2925,6 +2945,10 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].workerid = i;
         glob->encoders[i].shared = &(glob->sharedinfo);
         glob->encoders[i].shared_mutex = &(glob->config_mutex);
+        glob->encoders[i].digest_config = &(glob->digest_config);
+        glob->encoders[i].digest_config_mutex = &(glob->digestconfig_mutex);
+        glob->encoders[i].liid_agencies = &(glob->liid_to_agency);
+        glob->encoders[i].liid_agency_mutex = &(glob->liid_agency_mutex);
         glob->encoders[i].encoder = NULL;
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;

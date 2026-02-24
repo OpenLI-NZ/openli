@@ -55,6 +55,11 @@ typedef struct colsync_data {
     pthread_rwlock_t *info_mutex;
     collector_sip_config_t *sipconfig;
     pthread_rwlock_t *sipconfig_mutex;
+    shared_agency_digest_config_t *digest_config;
+    pthread_rwlock_t *digest_config_mutex;
+
+    shared_liid_to_agency_mapping_t *liid_agency_map;
+    pthread_rwlock_t *liid_agency_mutex;
 
     size_t pubsockcount;
     size_t forwardcount;
