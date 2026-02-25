@@ -280,9 +280,9 @@ uint8_t *wrap_etsili_preencryption(encrypt_encode_state_t *encrypt,
     uint8_t containerlen = 0;
     uint8_t *buf, *ptr;
     uint32_t bytecounter;
-    uint32_t bc_increase;
 
     *enclen = 0;
+    (void)header_len;
 
     if (payloadbody == NULL) {
         logger(LOG_INFO, "OpenLI: cannot encrypt an ETSI PDU that does not have valid encoded payload");
@@ -368,11 +368,6 @@ uint8_t *wrap_etsili_preencryption(encrypt_encode_state_t *encrypt,
     memcpy(ptr, &bytecounter, sizeof(uint32_t));
     ptr += sizeof(uint32_t);
 
-    /* Of course, byte counter has to be incremented based on the size
-     * of the "unencrypted" record, not the encrypted one...
-     */
-    bc_increase = calculate_pspdu_length(inplen + header_len);
-    encrypt->byte_counter += bc_increase;
 
     /* Put the body contents and any additional IP packet content into
      * the buffer
@@ -411,10 +406,10 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
      * encryption type must be set to None, so we end up with an
      * EncryptionContainer containing unencrypted data.
      *
-     * For CCs and IRIs, the mediator will need to use this fake PDU to
-     * generate a message digest in case the receiving agency wants us to send
+     * For CCs and IRIs, we will need to use this fake PDU to
+     * update the message digest in case the receiving agency wants us to send
      * Integrity Checks, and then the record will be re-encoded with encrypted
-     * content by the mediator itself.
+     * content afterwards.
      */
 
     buf = wrap_etsili_preencryption(encrypt, job->encryptmethod,
@@ -452,6 +447,13 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
         return -1;
     }
 
+    /* Of course, byte counter has to be incremented based on the size
+     * of the "unencrypted" record, not the encrypted one...
+     *
+     * TODO the encoder worker will be responsible for updating this in the
+     * near future...
+     */
+    encrypt->byte_counter += res->msgbody->len;
     free(buf);
     return 0;
 }

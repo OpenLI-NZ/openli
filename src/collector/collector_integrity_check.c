@@ -33,19 +33,80 @@
 #include "collector_base.h"
 
 
-#if 0
-void clear_digest_key_map(col_known_liid_t *known) {
+int update_liid_to_agency_map(liid_to_agency_mapping_t **map,
+        char *liid, char *agencyid) {
+
+    liid_to_agency_mapping_t *found = NULL;
+
+    if (!liid || !agencyid) {
+        return -1;
+    }
+
+    HASH_FIND(hh, *map, liid, strlen(liid), found);
+
+    if (found) {
+        if (found->agencyid) {
+            if (strcmp(found->agencyid, agencyid) == 0) {
+                return 0;
+            }
+            free(found->agencyid);
+        }
+        found->agencyid = strdup(agencyid);
+    } else {
+        found = calloc(1, sizeof(liid_to_agency_mapping_t));
+        found->liid = strdup(liid);
+        found->agencyid = strdup(agencyid);
+
+        HASH_ADD_KEYPTR(hh, *map, found->liid, strlen(found->liid), found);
+    }
+    return 1;
+}
+
+void remove_liid_to_agency_map_entry(liid_to_agency_mapping_t **map,
+        char *liid) {
+
+    liid_to_agency_mapping_t *found = NULL;
+    if (!liid) {
+        return;
+    }
+
+    HASH_FIND(hh, *map, liid, strlen(liid), found);
+    if (!found) {
+        return;
+    }
+
+    HASH_DELETE(hh, *map, found);
+    if (found->liid) {
+        free(found->liid);
+    }
+    if (found->agencyid) {
+        free(found->agencyid);
+    }
+    free(found);
+}
+
+void purge_liid_to_agency_map(liid_to_agency_mapping_t **map) {
+    liid_to_agency_mapping_t *lam, *tmp;
+
+    HASH_ITER(hh, *map, lam, tmp) {
+        HASH_DELETE(hh, *map, lam);
+        if (lam->liid) free(lam->liid);
+        if (lam->agencyid) free(lam->agencyid);
+        free(lam);
+    }
+}
+
+void clear_digest_key_map(digest_map_key_t **map) {
     digest_map_key_t *k, *tmp;
 
-    HASH_ITER(hh, known->digest_cin_keys, k, tmp) {
+    HASH_ITER(hh, *map, k, tmp) {
         if (k->keystring) {
             free((void *)k->keystring);
         }
-        HASH_DELETE(hh, known->digest_cin_keys, k);
+        HASH_DELETE(hh, *map, k);
         free(k);
     }
 }
-#endif
 
 int update_agency_digest_config_map(agency_digest_config_t **map,
         char *agencyid, liagency_digest_config_t *digest) {
@@ -67,7 +128,7 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
          */
          return 0;
     }
-
+    found = calloc(1, sizeof(agency_digest_config_t));
     found->agencyid = strdup(agencyid);
     found->config = digest;
     found->disabled = 0;
