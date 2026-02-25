@@ -43,6 +43,15 @@
 #include "intercept.h"
 #include "collector_integrity_check.h"
 
+static void destroy_known_liid(encoder_liid_state_t *known) {
+
+    if (known->liid_key) {
+        free(known->liid_key);
+    }
+    clear_digest_key_map(&(known->digest_cin_keys));
+    free(known);
+}
+
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
     int hwm = 1000;
@@ -139,10 +148,16 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     int x;
     openli_encoding_job_t job;
     uint32_t drained = 0;
+    encoder_liid_state_t *known, *tmp;
 
     destroy_all_saved_encoding_templates(enc->saved_intercept_templates);
 
     clear_global_templates(&(enc->saved_global_templates));
+
+    HASH_ITER(hh, enc->known_liids, known, tmp) {
+        HASH_DELETE(hh, enc->known_liids, known);
+        destroy_known_liid(known);
+    }
 
     etsili_destroy_encrypted_templates(enc->encrypt.saved_encryption_templates);
     if (enc->encoder) {
@@ -203,6 +218,92 @@ static inline void finalize_encoded_result(openli_encoded_result_t *res,
         res->origreq = job->origreq;
     }
 
+}
+
+#define AGENCY_MAPPING_CHECK_FREQ (5)
+
+static void check_agency_digest_config(openli_encoder_t *enc,
+        encoder_liid_state_t *found) {
+
+    liid_to_agency_mapping_t *agmap;
+    agency_digest_config_t *agdigest;
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec - found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
+        return;
+    }
+
+    found->last_agency_check = tv.tv_sec;
+
+    pthread_rwlock_rdlock(enc->liid_agency_mutex);
+    HASH_FIND(hh, enc->liid_agencies->map, found->liid_key,
+            strlen(found->liid_key), agmap);
+
+    if (!agmap) {
+        if (found->no_agency_map_warning == 0) {
+            logger(LOG_INFO, "OpenLI Collector: encoder worker %d does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
+                    enc->workerid, found->liid_key);
+            found->no_agency_map_warning = 1;
+        }
+        found->digest_config_disabled = 1;
+        memset(&found->digest_config, 0, sizeof(found->digest_config));
+        pthread_rwlock_unlock(enc->liid_agency_mutex);
+        return;
+    }
+
+    pthread_rwlock_rdlock(enc->digest_config_mutex);
+    HASH_FIND(hh, enc->digest_config->map, agmap->agencyid,
+            strlen(agmap->agencyid), agdigest);
+
+    if (!agdigest) {
+        if (found->no_agency_map_warning == 0) {
+            logger(LOG_INFO, "OpenLI Collector: encoder worker %d does not have digest configuration for agency %s, cannot produce integrity checks for LIID %s",
+                    enc->workerid, agmap->agencyid, found->liid_key);
+            found->no_agency_map_warning = 1;
+        }
+        found->digest_config_disabled = 1;
+        memset(&found->digest_config, 0, sizeof(found->digest_config));
+        pthread_rwlock_unlock(enc->digest_config_mutex);
+        pthread_rwlock_unlock(enc->liid_agency_mutex);
+        return;
+    }
+
+    if (agdigest->disabled) {
+        found->digest_config_disabled = 1;
+        memset(&found->digest_config, 0, sizeof(found->digest_config));
+    } else {
+        found->digest_config_disabled = 0;
+        memcpy(&found->digest_config, agdigest->config,
+                sizeof(liagency_digest_config_t));
+    }
+
+    pthread_rwlock_unlock(enc->digest_config_mutex);
+    pthread_rwlock_unlock(enc->liid_agency_mutex);
+}
+
+static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
+        char *liid) {
+
+    encoder_liid_state_t *found;
+
+    found = calloc(1, sizeof(encoder_liid_state_t));
+    found->liid_key = strdup(liid);
+    found->no_agency_map_warning = 0;
+    found->last_agency_check = 0;
+    memset(&found->digest_config, 0, sizeof(found->digest_config));
+    found->digest_cin_keys = NULL;
+    found->digest_config_disabled = 1;
+    found->encryptedByteCounter = 0;
+
+    found->fwd_index = hash_liid(liid) % enc->forwarders;
+
+    HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
+            strlen(found->liid_key), found);
+    logger(LOG_INFO,
+            "DEVDEBUG: LIID %s is now being handled by encoder worker %d\n",
+            found->liid_key, enc->workerid);
+    return found;
 }
 
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
@@ -737,6 +838,11 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
                 ipccjob->ipclen, job) < 0) {
             return -1;
         }
+
+        // TODO res->msgbody->len should be used to increment the byteCounter
+        // for this LIID
+
+
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
@@ -753,7 +859,8 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
 }
 
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
-        openli_encoded_result_t *resarray, size_t *next) {
+        encoder_liid_state_t *known, openli_encoded_result_t *resarray,
+        size_t *next) {
 
     int ret = -1;
     int enccount = 1;
@@ -784,6 +891,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     hdr_tplate = encode_templated_psheader(enc->encoder, &(t_set->headers),
             job->preencoded, job->seqno, tsptr, job->cin,
             job->cept_version, job->timefmt);
+
+    /* TODO remove */
+    (void)known;
 
     switch (job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
@@ -864,8 +974,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 static int process_job(openli_encoder_t *enc, void *socket) {
     int x, i;
     int encoded_total = 0;
-    size_t index, next;
+    size_t next;
     uint8_t fullbatch = 0;
+    encoder_liid_state_t *found = NULL;
 
     openli_encoding_job_t job;
 
@@ -899,11 +1010,16 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         if (job.liid == NULL) {
             goto encodejoberror;
         }
-        index = hash_liid(job.liid) % enc->forwarders;
-        assert(enc->forwarders > 0 && index < (size_t)enc->forwarders);
 
-        result = enc->result_array[index];
-        next = enc->result_batch[index];
+        HASH_FIND(hh, enc->known_liids, job.liid, strlen(job.liid), found);
+        if (!found) {
+            found = create_new_known_liid(enc, job.liid);
+        }
+
+        check_agency_digest_config(enc, found);
+
+        result = enc->result_array[found->fwd_index];
+        next = enc->result_batch[found->fwd_index];
 
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
             encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_SYNC);
@@ -915,7 +1031,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_IRI);
             x = 1;
         } else {
-            if ((x = encode_etsi(enc, &job, result, &next)) <= 0) {
+            if ((x = encode_etsi(enc, &job, found, result, &next)) <= 0) {
                 /* What do we do in the event of an error? */
                 if (x < 0) {
                     logger(LOG_INFO,
@@ -937,9 +1053,9 @@ encodejoberror:
         }
 
         encoded_total += x;
-        enc->result_batch[index] = next + 1;
+        enc->result_batch[found->fwd_index] = next + 1;
 
-        if (enc->result_batch[index] >= MAX_ENCODED_RESULT_BATCH) {
+        if (enc->result_batch[found->fwd_index] >= MAX_ENCODED_RESULT_BATCH) {
             fullbatch = 1;
         }
         if (job.cinstr) {

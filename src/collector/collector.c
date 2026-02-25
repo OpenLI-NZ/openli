@@ -1829,7 +1829,6 @@ static void destroy_collector_state(collector_global_t *glob) {
     int i;
     colthread_local_t *loc, *tmp;
     agency_digest_config_t *dig, *digtmp;
-    liid_to_agency_mapping_t *liidmap, *liidmaptmp;
 
     if (glob->expired_inputs) {
         libtrace_list_node_t *n;
@@ -1850,11 +1849,7 @@ static void destroy_collector_state(collector_global_t *glob) {
         free_agency_digest_config(dig);
     }
 
-    HASH_ITER(hh, glob->liid_to_agency.map, liidmap, liidmaptmp) {
-        HASH_DELETE(hh, glob->liid_to_agency.map, liidmap);
-        // TODO implement the function below...
-        // free_liid_agency_map_entry(liidmap);
-    }
+    purge_liid_to_agency_map(&(glob->liid_to_agency.map));
 
     if (glob->emailworkers) {
         free(glob->emailworkers);
@@ -2958,6 +2953,9 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].encrypt.byte_startts = 0;
         glob->encoders[i].encrypt.saved_encryption_templates = NULL;
         glob->encoders[i].forwarders = glob->forwarding_threads;
+
+        glob->encoders[i].known_liids = NULL;
+        glob->encoders[i].integrity_state = NULL;
 
         glob->encoders[i].result_array = calloc(glob->forwarding_threads,
                 sizeof(openli_encoded_result_t *));

@@ -351,11 +351,14 @@ typedef struct encoder_liid_state {
     char *liid_key;
     uint8_t no_agency_map_warning;
     time_t last_agency_check;
-    agency_digest_config_t *digest_config;
+    liagency_digest_config_t digest_config;
+    uint8_t digest_config_disabled;
     digest_map_key_t *digest_cin_keys;
 
     uint64_t encryptedByteCounter;
     uint8_t requestByteCounter;
+
+    size_t fwd_index;
 
     UT_hash_handle hh;
 } encoder_liid_state_t;
@@ -447,7 +450,7 @@ typedef struct encoder_state {
     /** Per LIID state required for integrity check generation and
      *  encryption.
      */
-    encoder_liid_state_t known_liids;
+    encoder_liid_state_t *known_liids;
 
     /** The "integrity check" state for all observed "LIID + CIN + HI" streams
      *  going to agencies that require integrity check messages to be

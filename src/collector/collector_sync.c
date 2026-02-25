@@ -1743,6 +1743,45 @@ static void announce_xid(collector_sync_t *sync, ipintercept_t *ipint) {
      */
 }
 
+static void update_liid_mapping_from_email_intercept(collector_sync_t *sync,
+        uint8_t *provmsg, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    emailintercept_t *decode;
+
+    decode = calloc(1, sizeof(voipintercept_t));
+
+    if (msgtype == OPENLI_PROTO_HALT_EMAILINTERCEPT) {
+        if (decode_emailintercept_halt(provmsg, msglen, decode) < 0) {
+            free_single_emailintercept(decode);
+            return;
+        }
+        pthread_rwlock_wrlock(sync->liid_agency_mutex);
+        remove_liid_to_agency_map_entry(&(sync->liid_agency_map->map),
+                decode->common.liid);
+        pthread_rwlock_unlock(sync->liid_agency_mutex);
+    } else if (msgtype == OPENLI_PROTO_MODIFY_EMAILINTERCEPT) {
+        if (decode_emailintercept_modify(provmsg, msglen, decode) < 0) {
+            free_single_emailintercept(decode);
+            return;
+        }
+        pthread_rwlock_wrlock(sync->liid_agency_mutex);
+        update_liid_to_agency_map(&(sync->liid_agency_map->map),
+                decode->common.liid, decode->common.targetagency);
+        pthread_rwlock_unlock(sync->liid_agency_mutex);
+    } else if (msgtype == OPENLI_PROTO_START_EMAILINTERCEPT) {
+        if (decode_emailintercept_start(provmsg, msglen, decode) < 0) {
+            free_single_emailintercept(decode);
+            return;
+        }
+        pthread_rwlock_wrlock(sync->liid_agency_mutex);
+        update_liid_to_agency_map(&(sync->liid_agency_map->map),
+                decode->common.liid, decode->common.targetagency);
+        pthread_rwlock_unlock(sync->liid_agency_mutex);
+
+    }
+    free_single_emailintercept(decode);
+}
+
 static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen, openli_proto_msgtype_t msgtype) {
 
@@ -1751,6 +1790,13 @@ static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
     voipintercept_t *decode;
     decode = calloc(1, sizeof(voipintercept_t));
 
+    /* XXX Updating the LIID to agency map here for VoIP intercepts to
+     * save on having to do a second decode in a separate function. It is
+     * a bit unintuitive, hence the note here in case somebody decides to
+     * mess with this code later on.
+     *
+     */
+
     if (msgtype == OPENLI_PROTO_HALT_VOIPINTERCEPT) {
 
         if (decode_voipintercept_halt(provmsg, msglen, decode) < 0) {
@@ -1758,16 +1804,29 @@ static int x2x3_sync_voipintercept(collector_sync_t *sync, uint8_t *provmsg,
             free_single_voipintercept(decode);
             return -1;
         }
+        pthread_rwlock_wrlock(sync->liid_agency_mutex);
+        remove_liid_to_agency_map_entry(&(sync->liid_agency_map->map),
+                decode->common.liid);
+        pthread_rwlock_unlock(sync->liid_agency_mutex);
     } else if (msgtype == OPENLI_PROTO_MODIFY_VOIPINTERCEPT) {
         if (decode_voipintercept_modify(provmsg, msglen, decode) < 0) {
             free_single_voipintercept(decode);
             return -1;
         }
+        pthread_rwlock_wrlock(sync->liid_agency_mutex);
+        update_liid_to_agency_map(&(sync->liid_agency_map->map),
+                decode->common.liid, decode->common.targetagency);
+        pthread_rwlock_unlock(sync->liid_agency_mutex);
+
     } else {
         if (decode_voipintercept_start(provmsg, msglen, decode) < 0) {
             free_single_voipintercept(decode);
             return -1;
         }
+        pthread_rwlock_wrlock(sync->liid_agency_mutex);
+        update_liid_to_agency_map(&(sync->liid_agency_map->map),
+                decode->common.liid, decode->common.targetagency);
+        pthread_rwlock_unlock(sync->liid_agency_mutex);
     }
 
     if (decode->common.liid == NULL) {
@@ -1883,6 +1942,11 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
     sync->glob->stats->ipintercepts_added_total ++;
     pthread_mutex_unlock(sync->glob->stats_mutex);
 
+    pthread_rwlock_wrlock(sync->liid_agency_mutex);
+    update_liid_to_agency_map(&(sync->liid_agency_map->map), cept->common.liid,
+            cept->common.targetagency);
+    pthread_rwlock_unlock(sync->liid_agency_mutex);
+
     expmsg = create_intercept_details_msg(&(cept->common),
             OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
@@ -1965,6 +2029,11 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     }
     pthread_mutex_unlock(&(sync->glob->mutex));
 
+    pthread_rwlock_wrlock(sync->liid_agency_mutex);
+    remove_liid_to_agency_map_entry(&(sync->liid_agency_map->map),
+            ipint->common.liid);
+    pthread_rwlock_unlock(sync->liid_agency_mutex);
+
     withdraw_xid(sync, ipint);
     publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid], expmsg);
     for (i = 0; i < sync->forwardcount; i++) {
@@ -2023,6 +2092,11 @@ static int update_modified_intercept(collector_sync_t *sync,
      */
     encodingchanged = update_modified_intercept_common(&(ipint->common),
             &(modified->common), OPENLI_INTERCEPT_TYPE_IP, &changed);
+
+    pthread_rwlock_wrlock(sync->liid_agency_mutex);
+    update_liid_to_agency_map(&(sync->liid_agency_map->map), ipint->common.liid,
+            ipint->common.targetagency);
+    pthread_rwlock_unlock(sync->liid_agency_mutex);
 
     if (ipint->accesstype != modified->accesstype) {
         ipint->accesstype = modified->accesstype;
@@ -2692,6 +2766,10 @@ static int recv_from_provisioner(collector_sync_t *sync) {
             case OPENLI_PROTO_START_EMAILINTERCEPT:
             case OPENLI_PROTO_HALT_EMAILINTERCEPT:
             case OPENLI_PROTO_MODIFY_EMAILINTERCEPT:
+                update_liid_mapping_from_email_intercept(sync, provmsg,
+                        msglen, msgtype);
+                __attribute__ ((fallthrough));
+
             case OPENLI_PROTO_ANNOUNCE_EMAIL_TARGET:
             case OPENLI_PROTO_WITHDRAW_EMAIL_TARGET:
             case OPENLI_PROTO_ANNOUNCE_DEFAULT_EMAIL_COMPRESSION:
