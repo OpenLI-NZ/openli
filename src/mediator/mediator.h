@@ -101,9 +101,6 @@ typedef struct med_state {
     /** The collector receive threads that have been spawned */
     mediator_collector_t collector_threads;
 
-    /** The integrity check configuration for all known agencies */
-    agency_digest_config_t *saved_agencies;
-
     /** The LEA send threads that have been spawned */
     mediator_lea_t agency_threads;
 
@@ -118,10 +115,6 @@ typedef struct med_state {
 
     /** ZeroMQ context for creating ZMQ sockets */
     void *zmq_ctxt;
-
-    /** ZeroMQ socket for receiving requests from collector threads */
-    void *zmq_request_collrecv;
-
 
 } mediator_state_t;
 

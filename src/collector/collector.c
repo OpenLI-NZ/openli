@@ -2949,9 +2949,6 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].saved_intercept_templates = NULL;
         glob->encoders[i].saved_global_templates = NULL;
 
-        glob->encoders[i].encrypt.byte_counter = 0;
-        glob->encoders[i].encrypt.byte_startts = 0;
-        glob->encoders[i].encrypt.saved_encryption_templates = NULL;
         glob->encoders[i].forwarders = glob->forwarding_threads;
 
         glob->encoders[i].known_liids = NULL;

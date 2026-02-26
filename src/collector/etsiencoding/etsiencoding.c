@@ -33,7 +33,7 @@
 #include "util.h"
 
 static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
-        uint32_t contentsize, char *liid) {
+        uint32_t contentsize, char *liid, uint16_t *preamblen) {
 
     uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);
     int i;
@@ -55,6 +55,7 @@ static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
         l += 2;     // add the length field itself to l
         space += l;
     }
+    *preamblen = l;
 
     *space = (uint8_t)((WANDDER_CLASS_UNIVERSAL_CONSTRUCT << 5) |
             WANDDER_TAG_SEQUENCE);
@@ -276,12 +277,13 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
 
     uint8_t pspdu[108];
     uint8_t pspdu_len;
+    uint16_t preamblen;
 
     /* Create a msgbody by concatenating hdr_tplate and body, plus
      * a preceding pS-PDU sequence with the appropriate length...
      */
     pspdu_len = encode_pspdu_sequence(pspdu, sizeof(pspdu),
-            hdr_tplate->header_len + bodylen, liid);
+            hdr_tplate->header_len + bodylen, liid, &preamblen);
 
     if (pspdu_len == 0) {
         return -1;
@@ -289,6 +291,7 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
 
     res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
     res->msgbody->encoder = NULL;
+    res->preamblen = preamblen;
     res->msgbody->len = pspdu_len + hdr_tplate->header_len + bodylen;
 
     res->msgbody->encoded = malloc(res->msgbody->len);
