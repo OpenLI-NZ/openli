@@ -48,8 +48,32 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->liid_key) {
         free(known->liid_key);
     }
+    etsili_destroy_encrypted_templates(
+            known->encrypt_cc.saved_encryption_templates);
+    etsili_destroy_encrypted_templates(
+            known->encrypt_iri.saved_encryption_templates);
     clear_digest_key_map(&(known->digest_cin_keys));
     free(known);
+}
+
+static void destroy_encoding_job(openli_encoding_job_t *job,
+        uint8_t free_request) {
+
+    if (!job) {
+        return;
+    }
+    if (job->cinstr) {
+        free(job->cinstr);
+    }
+    if (job->liid) {
+        free(job->liid);
+    }
+    if (job->encryptkey) {
+        free(job->encryptkey);
+    }
+    if (job->origreq && free_request) {
+        free_published_message(job->origreq);
+    }
 }
 
 static int init_worker(openli_encoder_t *enc) {
@@ -61,6 +85,9 @@ static int init_worker(openli_encoder_t *enc) {
     enc->encoder = init_wandder_encoder();
     enc->freegenerics = create_etsili_generic_freelist(0);
     enc->halted = 0;
+
+    enc->evp_ctx = EVP_CIPHER_CTX_new();
+    enc->etsidecoder = wandder_create_etsili_decoder();
 
     enc->zmq_recvjob = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 128, "inproc://openliseqpush-%d", enc->workerid);
@@ -159,9 +186,12 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         destroy_known_liid(known);
     }
 
-    etsili_destroy_encrypted_templates(enc->encrypt.saved_encryption_templates);
     if (enc->encoder) {
         free_wandder_encoder(enc->encoder);
+    }
+
+    if (enc->etsidecoder) {
+        wandder_free_etsili_decoder(enc->etsidecoder);
     }
 
     if (enc->freegenerics) {
@@ -176,15 +206,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
             }
             break;
         }
-        if (job.origreq) {
-            free_published_message(job.origreq);
-        }
-        if (job.liid) {
-            free(job.liid);
-        }
-        if (job.cinstr) {
-            free(job.cinstr);
-        }
+        destroy_encoding_job(&job, 1);
         drained ++;
 
     } while (x > 0);
@@ -196,9 +218,12 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
     free(enc->zmq_pushresults);
 
+    if (enc->evp_ctx) {
+        EVP_CIPHER_CTX_free(enc->evp_ctx);
+    }
 }
 
-static inline void finalize_encoded_result(openli_encoded_result_t *res,
+static inline int finalize_encoded_result(openli_encoded_result_t *res,
         openli_encoding_job_t *job, openli_encoder_t *enc, uint8_t type) {
 
     res->cinstr = strdup(job->cinstr);
@@ -216,8 +241,23 @@ static inline void finalize_encoded_result(openli_encoded_result_t *res,
         res->origreq = NULL;
     } else {
         res->origreq = job->origreq;
+        job->origreq = NULL;
     }
 
+
+    // TODO update digest state
+
+
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (encrypt_payload_container_aes_192_cbc(enc->evp_ctx,
+                enc->etsidecoder, res->msgbody->encoded + res->preamblen,
+                res->msgbody->len - res->preamblen, job->encryptkey,
+                job->encryptkey_len) == NULL) {
+            return -1;
+        }
+    }
+
+    return 0;
 }
 
 #define AGENCY_MAPPING_CHECK_FREQ (5)
@@ -294,7 +334,6 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
     memset(&found->digest_config, 0, sizeof(found->digest_config));
     found->digest_cin_keys = NULL;
     found->digest_config_disabled = 1;
-    found->encryptedByteCounter = 0;
 
     found->fwd_index = hash_liid(liid) % enc->forwarders;
 
@@ -341,7 +380,8 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
 }
 
 static int encode_templated_ipiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     /* Doesn't really make sense to template the IPIRI payload itself, since
@@ -372,7 +412,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
@@ -396,7 +436,8 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
 }
 
 static int encode_templated_emailiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -419,7 +460,7 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
@@ -470,7 +511,8 @@ static inline void create_mobile_operator_identifier(openli_encoder_t *enc,
 }
 
 static int encode_templated_segflag(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res, uint8_t is_first) {
 
     wandder_encoded_result_t *body = NULL;
@@ -489,7 +531,7 @@ static int encode_templated_segflag(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
@@ -510,7 +552,8 @@ static int encode_templated_segflag(openli_encoder_t *enc,
 }
 
 static int encode_templated_epscc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -536,7 +579,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 body->encoded, body->len, epsccjob->ipcontent,
                 epsccjob->ipclen, job) < 0) {
@@ -561,7 +604,8 @@ static int encode_templated_epscc(openli_encoder_t *enc,
 
 
 static int encode_templated_epsiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -589,7 +633,7 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
 
@@ -611,7 +655,8 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
 }
 
 static int encode_templated_umtsiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -640,7 +685,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
 
@@ -662,8 +707,8 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
 }
 
 static int encode_templated_umtscc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res) {
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate, openli_encoded_result_t *res) {
 
     uint32_t key = 0;
     encoded_global_template_t *umtscc_tplate = NULL;
@@ -694,7 +739,7 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
      * this will not require updating */
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
                 umtscc_tplate->cc_content.cc_wrap_len,
@@ -718,7 +763,8 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
 
 
 static int encode_templated_emailcc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     uint32_t key = 0;
@@ -772,7 +818,7 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
@@ -791,16 +837,12 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
         }
     }
 
-    if (emailccjob->segflag == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
-
-    }
-    /* Success */
     return 1;
 }
 
 static int encode_templated_ipcc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res) {
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate, openli_encoded_result_t *res) {
 
     uint32_t key = 0;
     encoded_global_template_t *ipcc_tplate = NULL;
@@ -830,7 +872,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
@@ -838,11 +880,6 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
                 ipccjob->ipclen, job) < 0) {
             return -1;
         }
-
-        // TODO res->msgbody->len should be used to increment the byteCounter
-        // for this LIID
-
-
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
@@ -892,43 +929,41 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             job->preencoded, job->seqno, tsptr, job->cin,
             job->cept_version, job->timefmt);
 
-    /* TODO remove */
-    (void)known;
-
     switch (job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
             /* IPCC "header" can be templated */
-            ret = encode_templated_ipcc(enc, job, hdr_tplate, res);
+            ret = encode_templated_ipcc(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPMMCC:
-            ret = encode_templated_ipmmcc(enc->encoder, &enc->encrypt,
+            ret = encode_templated_ipmmcc(enc->encoder, &known->encrypt_cc,
                     job, hdr_tplate, res, &(enc->saved_global_templates));
             break;
         case OPENLI_EXPORT_UMTSCC:
-            ret = encode_templated_umtscc(enc, job, hdr_tplate, res);
+            ret = encode_templated_umtscc(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPIRI:
-            ret = encode_templated_ipiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_ipiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPMMIRI:
-            ret = encode_templated_ipmmiri(enc->encoder, &enc->encrypt,
+            ret = encode_templated_ipmmiri(enc->encoder, &known->encrypt_iri,
                     job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_UMTSIRI:
-            ret = encode_templated_umtsiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_umtsiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EPSIRI:
-            ret = encode_templated_epsiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_epsiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EMAILIRI:
-            ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_emailiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EMAILCC: {
             openli_emailcc_job_t *emailccjob;
             emailccjob = (openli_emailcc_job_t *)&(job->origreq->data.emailcc);
 
             if (emailccjob->segflag == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
-                ret = encode_templated_segflag(enc, job, hdr_tplate, res, 1);
+                ret = encode_templated_segflag(enc, job, known, hdr_tplate,
+                        res, 1);
                 if (ret < 0) {
                     return ret;
                 }
@@ -938,7 +973,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                 res = &(resarray[*next]);
                 enccount = 2;
             }
-            ret = encode_templated_emailcc(enc, job, hdr_tplate, res);
+            ret = encode_templated_emailcc(enc, job, known, hdr_tplate, res);
             if (ret < 0) {
                 return ret;
             }
@@ -946,7 +981,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                 finalize_encoded_result(res, job, enc, job->origreq->type);
                 (*next)++;
                 res = &(resarray[*next]);
-                ret = encode_templated_segflag(enc, job, hdr_tplate, res, 0);
+                ret = encode_templated_segflag(enc, job, known, hdr_tplate,
+                        res, 0);
                 finalize_encoded_result(res, job, enc,
                         OPENLI_EXPORT_LAST_SEGMENT_FLAG);
                 // can fall through in every other case EXCEPT the one where
@@ -957,7 +993,7 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         }
         case OPENLI_EXPORT_EPSCC:
-            ret = encode_templated_epscc(enc, job, hdr_tplate, res);
+            ret = encode_templated_epscc(enc, job, known, hdr_tplate, res);
             break;
         default:
             ret = 0;
@@ -1039,15 +1075,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                             job.origreq->type);
                 }
 encodejoberror:
-                if (job.cinstr) {
-                    free(job.cinstr);
-                }
-                if (job.liid) {
-                    free(job.liid);
-                }
-                if (job.origreq) {
-                    free_published_message(job.origreq);
-                }
+                destroy_encoding_job(&job, 1);
                 continue;
             }
         }
@@ -1058,12 +1086,7 @@ encodejoberror:
         if (enc->result_batch[found->fwd_index] >= MAX_ENCODED_RESULT_BATCH) {
             fullbatch = 1;
         }
-        if (job.cinstr) {
-            free(job.cinstr);
-        }
-        if (job.liid) {
-            free(job.liid);
-        }
+        destroy_encoding_job(&job, 0);
     }
 
     /* If we have multiple forwarding threads, we will need to

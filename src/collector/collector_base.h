@@ -355,8 +355,8 @@ typedef struct encoder_liid_state {
     uint8_t digest_config_disabled;
     digest_map_key_t *digest_cin_keys;
 
-    uint64_t encryptedByteCounter;
-    uint8_t requestByteCounter;
+    encrypt_encode_state_t encrypt_cc;
+    encrypt_encode_state_t encrypt_iri;
 
     size_t fwd_index;
 
@@ -428,12 +428,11 @@ typedef struct encoder_state {
     collector_identity_t *shared;
     pthread_rwlock_t *shared_mutex;
     wandder_encoder_t *encoder;
+    wandder_etsispec_t *etsidecoder;
     etsili_generic_freelist_t *freegenerics;
 
     Pvoid_t saved_intercept_templates;
     Pvoid_t saved_global_templates;
-
-    encrypt_encode_state_t encrypt;
 
     openli_encoded_result_t **result_array;
     size_t *result_batch;
@@ -458,6 +457,7 @@ typedef struct encoder_state {
      */
     integrity_check_state_t *integrity_state;
 
+    EVP_CIPHER_CTX *evp_ctx;
 
     int seqtrackers;
     int forwarders;

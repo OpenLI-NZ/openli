@@ -389,7 +389,6 @@ uint8_t *wrap_etsili_preencryption(encrypt_encode_state_t *encrypt,
 
 }
 
-
 int create_preencrypted_message_body(wandder_encoder_t *encoder,
                 encrypt_encode_state_t *encrypt,
                 openli_encoded_result_t *res,
@@ -450,10 +449,11 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
     /* Of course, byte counter has to be incremented based on the size
      * of the "unencrypted" record, not the encrypted one...
      *
-     * TODO the encoder worker will be responsible for updating this in the
-     * near future...
+     * msgbody->len includes the non-ETSI preamble (i.e. the LIID) that
+     * we put in front of the encoded message to make things easier for
+     * the mediator, so subtract that before updating the byte counter.
      */
-    encrypt->byte_counter += res->msgbody->len;
+    encrypt->byte_counter += (res->msgbody->len - res->preamblen);
     free(buf);
     return 0;
 }
