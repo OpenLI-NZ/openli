@@ -189,7 +189,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
 /*    json_object *encryptkey, *xids; */
     json_object *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
-    json_object *encrypt_inherited;
     char uuid[64];
 
     if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
@@ -228,7 +227,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
     agencyid = json_object_new_string(common->targetagency);
     mediator = json_object_new_int(common->destid);
     tomediate = json_object_new_int(common->tomediate);
-    encrypt_inherited = json_object_new_boolean(common->encrypt_inherited);
     encryption = json_object_new_string(encrypt_str);
 
     json_object_object_add(jobj, "liid", liid);
@@ -237,7 +235,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
-    json_object_object_add(jobj, "encrypt_inherited", encrypt_inherited);
     json_object_object_add(jobj, "payloadencryption", encryption);
 	json_object_object_add(jobj, "has_encryptionkey",
 			json_object_new_boolean(common->encryptkey_len == OPENLI_AES192_KEY_LEN));

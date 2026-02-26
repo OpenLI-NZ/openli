@@ -591,45 +591,25 @@ static int update_intercept_common(intercept_common_t *parsed,
         timers->start_hi1_sent = 0;
     }
 
-    if (existing->encrypt_inherited) {
-        if (parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-            existing->encrypt = parsed->encrypt;
-            encryptchanged = 1;
-            existing->encrypt_inherited = 0;
-            existing->encryptkey_len = parsed->encryptkey_len;
-            if (parsed->encryptkey_len > 0) {
-                memcpy(existing->encryptkey, parsed->encryptkey,
-                        parsed->encryptkey_len);
-                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
-                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
-                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
-                }
-            }
-        } else if (*agencychanged) {
-            apply_intercept_encryption_settings(&(state->interceptconf),
-                    existing);
-        }
-    } else {
-        if (parsed->encrypt != existing->encrypt &&
-                parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-            encryptchanged = 1;
-            existing->encrypt = parsed->encrypt;
-        }
+    if (parsed->encrypt != existing->encrypt &&
+            parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+        encryptchanged = 1;
+        existing->encrypt = parsed->encrypt;
+    }
 
-        /* If a new key was provided (len==24) and it differs, copy it in */
-        if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
-            if (existing->encryptkey_len != parsed->encryptkey_len ||
-                    memcmp(existing->encryptkey, parsed->encryptkey,
-                            parsed->encryptkey_len) != 0) {
-                memcpy(existing->encryptkey, parsed->encryptkey,
-                        parsed->encryptkey_len);
-                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
-                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
-                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
-                }
-                existing->encryptkey_len = parsed->encryptkey_len;
-                encryptchanged = 1;
+    /* If a new key was provided (len==24) and it differs, copy it in */
+    if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+        if (existing->encryptkey_len != parsed->encryptkey_len ||
+                memcmp(existing->encryptkey, parsed->encryptkey,
+                    parsed->encryptkey_len) != 0) {
+            memcpy(existing->encryptkey, parsed->encryptkey,
+                    parsed->encryptkey_len);
+            if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                        OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
             }
+            existing->encryptkey_len = parsed->encryptkey_len;
+            encryptchanged = 1;
         }
     }
 
@@ -1694,8 +1674,6 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mailint->common.liid, mailint->common.liid_len, mailint);
 
 
-    apply_intercept_encryption_settings(&(state->interceptconf),
-            &(mailint->common));
     new_intercept_liidmapping(state, &(mailint->common));
 
     if (announce_single_intercept(state, (void *)mailint,
@@ -1827,8 +1805,6 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
             vint->common.liid, vint->common.liid_len, vint);
 
-    apply_intercept_encryption_settings(&(state->interceptconf),
-            &(vint->common));
     new_intercept_liidmapping(state, &(vint->common));
 
     if (announce_single_intercept(state, (void *)vint,
@@ -1998,9 +1974,6 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
             ipint->common.liid, ipint->common.liid_len, ipint);
-
-    apply_intercept_encryption_settings(&(state->interceptconf),
-            &(ipint->common));
 
     new_intercept_liidmapping(state, &(ipint->common));
 
@@ -2949,7 +2922,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     liagency_t modified;
     int changed = 0;
     int medchanged = 0, colchanged = 0;
-    int encryptchanged = 0;
     char *encstr = NULL;
 
     memset(&modified, 0, sizeof(modified));
@@ -3040,7 +3012,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.encryptkey_len != 0xffffffff) {
         if (modified.encryptkey_len != found->ag->encryptkey_len) {
             changed = 1;
-            encryptchanged = 1;
             if (modified.encryptkey_len > 0) {
                 memcpy(found->ag->encryptkey, modified.encryptkey,
                         modified.encryptkey_len);
@@ -3056,16 +3027,9 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                         modified.encryptkey_len)) {
             // new key, same length as before but different bytes
             changed = 1;
-            encryptchanged = 1;
             memcpy(found->ag->encryptkey, modified.encryptkey,
                     modified.encryptkey_len);
         }
-    }
-
-    // check for change in encryption key first, so we can set the
-    // encryptchanged flag based on the fact that "changed" has been set
-    if (changed) {
-        encryptchanged = 1;
     }
 
     MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
@@ -3079,7 +3043,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.encrypt != 0xff &&
             modified.encrypt != found->ag->encrypt) {
         changed = 1;
-        encryptchanged = 1;
         medchanged = 1;
         found->ag->encrypt = modified.encrypt;
     }
@@ -3194,13 +3157,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         announce_digest_config_to_collectors(state, found);
     }
 
-    if (encryptchanged) {
-        update_inherited_encryption_settings(state, found->ag);
-        logger(LOG_INFO,
-                "OpenLI: updated encryption options for intercepts destined for agency '%s' via update socket.",
-                found->ag->agencyid);
-        announce_all_updated_liidmappings_to_mediators(state);
-    }
     if (!changed) {
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",

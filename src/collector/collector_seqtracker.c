@@ -229,17 +229,6 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
 
-    if (seqdata->colident->always_request_encrypt_bytecounter) {
-        // set this to 1 to force encoders to request their byteCounter
-        // value from the provisioner
-        intstate->details.encrypt_inherited = 1;
-    }
-    /* Otherwise, byteCounter requests only occur for LIIDs whose
-     * encryption keys are inherited from the agency-level config. If the
-     * key is LIID-specific, then the encoder can simply track the
-     * byteCounter locally.
-     */
-
     intstate->preencoded = calloc(OPENLI_PREENCODE_LAST,
             sizeof(wandder_encode_job_t));
     etsili_preencode_static_fields(intstate->preencoded, &intdetails);
@@ -293,7 +282,6 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.authcc_len = strlen(cept->authcc);
     intstate->details.delivcc_len = strlen(cept->delivcc);
     intstate->details.encryptmethod = cept->encryptmethod;
-    intstate->details.encrypt_inherited = cept->encrypt_inherited;
     intstate->details.encryptkey = openli_dup_encryptkey_ptr(
             cept->encryptkey, cept->encryptkey_len);
     intstate->details.encryptkey_len = cept->encryptkey_len;
@@ -355,7 +343,6 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.liid_format = msg->liid_format;
     intstate->details.timefmt = msg->timefmt;
     intstate->details.encryptmethod = msg->encryptmethod;
-    intstate->details.encrypt_inherited = msg->encrypt_inherited;
     intstate->details.encryptkey = openli_dup_encryptkey_ptr(msg->encryptkey,
             msg->encryptkey_len);
     intstate->details.encryptkey_len = msg->encryptkey_len;
@@ -370,6 +357,10 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
+    size_t index;
+    int ret = 1;
+    openli_encoding_job_t job;
+
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (!intstate) {
@@ -378,12 +369,29 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         return -1;
     }
 
-    /* TODO All encoders need to know that they should clear all templates
-     * for this particular intercept, somehow?
-     */
+    /* Tell the encoder that the intercept is over -- signal with a NULL
+     * origreq */
+    memset(&job, 0, sizeof(openli_encoding_job_t));
+	job.liid = strdup(msg->liid);
+
+    index = intstate->encoder_index;
+    while (1) {
+        if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
+                sizeof(openli_encoding_job_t), 0)) < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "Error while pushing encoding job to worker threads: %s",
+                    strerror(errno));
+            return -1;
+        }
+        break;
+    }
+
     HASH_DELETE(hh, seqdata->intercepts, intstate);
     free_intercept_state(seqdata, intstate);
-    return 1;
+    return ret;
 }
 
 static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
@@ -405,7 +413,6 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     job.encryptkey = openli_dup_encryptkey_ptr(intstate->details.encryptkey,
             intstate->details.encryptkey_len);
     job.encryptkey_len = intstate->details.encryptkey_len;
-    job.need_enc_bc_request = intstate->details.encrypt_inherited;
 
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;

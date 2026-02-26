@@ -202,20 +202,17 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
-        apply_intercept_encryption_settings(conf, &(ipint->common));
         add_liid_mapping(conf, &(ipint->common));
     }
 
     /* Now do the VOIP intercepts */
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        apply_intercept_encryption_settings(conf, &(vint->common));
         add_liid_mapping(conf, &(vint->common));
     }
 
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
-        apply_intercept_encryption_settings(conf, &(mailint->common));
         add_liid_mapping(conf, &(mailint->common));
     }
 

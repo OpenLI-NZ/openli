@@ -420,7 +420,6 @@ static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
     HASH_ITER(hh, latest->leas, lea, tmp) {
         if (lea->announcereq) {
             announce_lea_to_mediators(state, lea);
-            update_inherited_encryption_settings(state, lea->ag);
             lea->announcereq = 0;
         }
         if (lea->digestchanged) {
@@ -605,7 +604,6 @@ static int update_reconfigured_intercept(provision_state_t *currstate,
     }
 
     if (agencychanged || encryptchanged) {
-        apply_intercept_encryption_settings(intconf, new_common);
         add_liid_mapping(intconf, new_common);
     }
 
