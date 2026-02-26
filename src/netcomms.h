@@ -254,7 +254,6 @@ typedef enum {
     OPENLI_PROTO_FIELD_ACL_PORT,
     OPENLI_PROTO_FIELD_UUID,
     OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
-    OPENLI_PROTO_FIELD_ENCRYPTION_KEY_SCOPE,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for

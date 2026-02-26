@@ -339,9 +339,6 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
 
     HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
             strlen(found->liid_key), found);
-    logger(LOG_INFO,
-            "DEVDEBUG: LIID %s is now being handled by encoder worker %d\n",
-            found->liid_key, enc->workerid);
     return found;
 }
 
@@ -1048,6 +1045,20 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         HASH_FIND(hh, enc->known_liids, job.liid, strlen(job.liid), found);
+
+        if (job.origreq == NULL) {
+            /* This is a message to tell us that the intercept is no
+             * longer active
+             */
+            /* TODO remove integrity check state as well */
+            if (found) {
+                HASH_DELETE(hh, enc->known_liids, found);
+                destroy_known_liid(found);
+            }
+            destroy_encoding_job(&job, 0);
+            continue;
+        }
+
         if (!found) {
             found = create_new_known_liid(enc, job.liid);
         }

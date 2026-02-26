@@ -234,7 +234,6 @@ typedef struct published_intercept_msg {
     openli_liid_format_t liid_format;
     uint8_t *encryptkey;
     size_t encryptkey_len;
-    uint8_t encrypt_inherited;
     uuid_t *xids;
     size_t xid_count;
     openli_intercept_types_t cepttype;

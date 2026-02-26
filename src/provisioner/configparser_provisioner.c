@@ -972,7 +972,6 @@ static inline void init_intercept_common(intercept_common_t *common,
 
     common->xids = NULL;
     common->xid_count = 0;
-    common->encrypt_inherited = 0;
     common->time_fmt = DEFAULT_AGENCY_TIMESTAMP_FORMAT;
 
     local = (prov_intercept_data_t *)(common->local);

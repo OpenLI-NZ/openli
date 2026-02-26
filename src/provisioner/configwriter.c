@@ -674,8 +674,7 @@ static int emit_intercept_common(intercept_common_t *intcom,
 
 
 
-    if (!intcom->encrypt_inherited &&
-            intcom->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+    if (intcom->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"payloadencryption", strlen("payloadencryption"),
                 1, 0, YAML_PLAIN_SCALAR_STYLE);
@@ -700,11 +699,9 @@ static int emit_intercept_common(intercept_common_t *intcom,
         if (!yaml_emitter_emit(emitter, &event)) return -1;
     }
 
-    if (!intcom->encrypt_inherited) {
-        if (emit_encryption_key(emitter, intcom->encryptkey,
-                intcom->encryptkey_len) < 0) {
-            return -1;
-        }
+    if (emit_encryption_key(emitter, intcom->encryptkey,
+            intcom->encryptkey_len) < 0) {
+        return -1;
     }
 
     if (intcom->xid_count != 0) {

@@ -639,10 +639,9 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          sizeof(common.time_fmt) + sizeof(common.liid_format) + \
-         sizeof(common.encrypt_inherited) + \
          (common.encryptkey_len > 0 ? 4 + common.encryptkey_len : 0) + \
          (36 * common.xid_count) + \
-         ((12 + common.xid_count) * 4))
+         ((11 + common.xid_count) * 4))
 
 #define IPINTERCEPT_BODY_LEN(ipint) \
         (INTERCEPT_COMMON_LEN(ipint->common) + \
@@ -717,12 +716,6 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
     if (push_tlv(nb, OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION,
             (uint8_t *)&(common->encrypt),
             sizeof(common->encrypt)) == -1) {
-        return -1;
-    }
-
-    if (push_tlv(nb, OPENLI_PROTO_FIELD_ENCRYPTION_KEY_SCOPE,
-            (uint8_t *)&(common->encrypt_inherited),
-            sizeof(common->encrypt_inherited)) == -1) {
         return -1;
     }
 
@@ -2118,7 +2111,6 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->encrypt = 0;
     memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     common->encryptkey_len = 0;
-    common->encrypt_inherited = 0;
     common->seqtrackerid = 0;
     common->xids = NULL;
     common->xid_count = 0;
@@ -2166,9 +2158,6 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION:
             common->encrypt = *((payload_encryption_method_t *)valptr);
-            break;
-        case OPENLI_PROTO_FIELD_ENCRYPTION_KEY_SCOPE:
-            common->encrypt_inherited = *(valptr);
             break;
         case OPENLI_PROTO_FIELD_ENCRYPTION_KEY:
             // shouldn't see this any more, but doesn't hurt to decode anyway
