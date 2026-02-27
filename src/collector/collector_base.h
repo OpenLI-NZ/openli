@@ -53,8 +53,9 @@
 #include "openli_tls.h"
 #include "etsiencoding/etsiencoding.h"
 #include "yaml_modifier.h"
+#include "openli_epoll.h"
 
-#define MAX_ENCODED_RESULT_BATCH 50
+#define MAX_ENCODED_RESULT_BATCH 10
 
 typedef struct sync_epoll {
     uint8_t fdtype;
@@ -375,7 +376,7 @@ typedef struct ics_sign_request {
     int64_t *signing_seqnos;
     size_t signing_seqno_array_size;
 
-    //med_epoll_ev_t *reply_timer;
+    openli_epoll_ev_t *reply_timer;
     unsigned char *digest;
     unsigned int digest_len;
     UT_hash_handle hh;
@@ -389,10 +390,10 @@ struct integrity_check_state {
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
 
-    agency_digest_config_t *agency;
+    liagency_digest_config_t *agency;
 
-    //med_epoll_ev_t *hash_timer;
-    //med_epoll_ev_t *sign_timer;
+    openli_epoll_ev_t *hash_timer;
+    openli_epoll_ev_t *sign_timer;
 
     ics_sign_request_t *sign_jobs;
 
@@ -458,6 +459,12 @@ typedef struct encoder_state {
     integrity_check_state_t *integrity_state;
 
     EVP_CIPHER_CTX *evp_ctx;
+
+    int epoll_fd;
+    openli_epoll_ev_t *zmq_job_ev;
+    openli_epoll_ev_t *zmq_control_ev;
+    int yield_fd;
+    openli_epoll_ev_t *zmq_yield_ev;
 
     int seqtrackers;
     int forwarders;

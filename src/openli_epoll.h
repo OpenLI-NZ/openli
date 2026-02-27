@@ -124,6 +124,15 @@ enum {
      */
     OPENLI_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER,
 
+    /** An encoding job is available for processing in the collector */
+    OPENLI_EPOLL_ENCODING_JOB,
+
+    /** A control message is available for a collector encoder worker */
+    OPENLI_EPOLL_ENCODING_CONTROL,
+
+    /** A signal that there may be more messages in a ZMQ that we had to
+     *  stop reading from for some reason. */
+    OPENLI_EPOLL_ZMQ_YIELD,
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.

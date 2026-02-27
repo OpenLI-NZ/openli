@@ -50,4 +50,18 @@ void free_agency_digest_config(agency_digest_config_t *dig);
 void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);
 
+
+uint8_t update_integrity_check_state(integrity_check_state_t **map,
+        encoder_liid_state_t *known, uint8_t *msgbody, uint16_t msglen,
+        openli_proto_msgtype_t msgtype, openli_encoding_job_t *job,
+        int epoll_fd, integrity_check_state_t **chain);
+
+int integrity_hash_timer_callback(openli_encoder_t *enc,
+        openli_epoll_ev_t *mev);
+int integrity_sign_timer_callback(openli_encoder_t *enc,
+        openli_epoll_ev_t *mev);
+
+void free_integrity_check_state(integrity_check_state_t *integ);
+void destroy_integrity_sign_job(ics_sign_request_t *job);
+
 #endif
