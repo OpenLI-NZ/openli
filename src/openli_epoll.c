@@ -167,7 +167,7 @@ void destroy_openli_timer(openli_epoll_ev_t *timerev) {
  *
  *  @param epoll_fd			The global epoll fd being used by the openli
  *  @param state			A pointer to the state to save with the timer
- *  @param timertype		The type of timer to create, e.g. MED_EPOLL_KA_TIMER
+ *  @param timertype		The type of timer to create, e.g. OPENLI_EPOLL_KA_TIMER
  *  @param duration			The duration of the timer, in seconds. If zero,
  *							the epoll event is created but no timer is started.
  *
@@ -206,7 +206,7 @@ openli_epoll_ev_t *create_openli_timer(int epoll_fd, void *state,
  *  @param epoll_fd			The global epoll fd being used by the openli.
  *  @param state			A pointer to the state to save with the timer.
  *  @param fdtype			The purpose of the file descriptor, e.g.
- * 							MED_EPOLL_PROVISIONER.
+ * 							OPENLI_EPOLL_PROVISIONER.
  *	@param fd				The file descriptor to create an event for.
  *  @param events			The epoll events to apply to the fd, as a bitmask.
  *							An example would be EPOLLIN | EPOLLOUT.
@@ -286,7 +286,12 @@ int remove_openli_fdevent(openli_epoll_ev_t *remev) {
 
 	if (remev && remev->fd != -1) {
         ret = epoll_ctl(remev->epoll_fd, EPOLL_CTL_DEL, remev->fd, &ev);
-		close(remev->fd);
+
+        // don't try to close ZMQ fds
+        if (remev->fdtype != OPENLI_EPOLL_ENCODING_JOB &&
+                remev->fdtype != OPENLI_EPOLL_ENCODING_CONTROL) {
+    		close(remev->fd);
+        }
 	}
     if (remev) {
         free(remev);
