@@ -27,7 +27,6 @@
 #include <unistd.h>
 #include <sys/epoll.h>
 
-#include "med_epoll.h"
 #include "mediator_prov.h"
 #include "netcomms.h"
 #include "logger.h"
@@ -69,11 +68,11 @@ void init_provisioner_instance(mediator_prov_t *prov, SSL_CTX **ctx) {
 static inline void setup_provisioner_reconnect_timer(mediator_prov_t *prov) {
 
 	if (prov->provreconnect == NULL) {
-		prov->provreconnect = create_mediator_timer(prov->epoll_fd,
-				NULL, MED_EPOLL_PROVRECONNECT, 0);
+		prov->provreconnect = create_openli_timer(prov->epoll_fd,
+				NULL, OPENLI_EPOLL_PROVRECONNECT, 0);
 	}
     prov->tryconnect = 0;
-    start_mediator_timer(prov->provreconnect, 1);
+    start_openli_timer(prov->provreconnect, 1);
 }
 
 /** Disconnects the TCP session to a provisioner and resets any state
@@ -97,7 +96,7 @@ void disconnect_provisioner(mediator_prov_t *prov, int enable_reconnect) {
     }
 
     /* Remove the provisioner socket from our epoll event set */
-    if (remove_mediator_fdevent(prov->provev) == -1) {
+    if (remove_openli_fdevent(prov->provev) == -1) {
         logger(LOG_INFO,
                 "OpenLI Mediator: problem removing provisioner fd from epoll: %s.",
                 strerror(errno));
@@ -180,7 +179,7 @@ int send_ics_signing_request_to_provisioner(mediator_prov_t *prov,
      * outgoing buffer so make sure it is enabled again to send this queued
      * message.
      */
-    if (modify_mediator_fdevent(prov->provev,
+    if (modify_openli_fdevent(prov->provev,
             EPOLLIN | EPOLLOUT | EPOLLRDHUP) < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: failed to re-enable transmit on provisioner socket: %s.",
@@ -236,7 +235,7 @@ int send_mediator_details_to_provisioner(mediator_prov_t *prov,
      * outgoing buffer so make sure it is enabled again to send this queued
      * message.
      */
-    if (modify_mediator_fdevent(prov->provev,
+    if (modify_openli_fdevent(prov->provev,
             EPOLLIN | EPOLLOUT | EPOLLRDHUP) < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: failed to re-enable transmit on provisioner socket: %s.",
@@ -312,8 +311,8 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
      * this socket for an epoll write event (as well as read, of course).
      */
     if (prov->provev == NULL) {
-        prov->provev = create_mediator_fdevent(prov->epoll_fd,
-                prov, MED_EPOLL_PROVISIONER, sock,
+        prov->provev = create_openli_fdevent(prov->epoll_fd,
+                prov, OPENLI_EPOLL_PROVISIONER, sock,
                 EPOLLIN | EPOLLOUT | EPOLLRDHUP);
 
     }
@@ -414,7 +413,7 @@ int transmit_provisioner(mediator_prov_t *prov) {
 
     if (ret == 0) {
         /* No more outstanding data, remove EPOLLOUT event */
-        if (modify_mediator_fdevent(prov->provev, EPOLLIN | EPOLLRDHUP) < 0) {
+        if (modify_openli_fdevent(prov->provev, EPOLLIN | EPOLLRDHUP) < 0) {
             if (prov->disable_log == 0) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: error disabling EPOLLOUT for provisioner fd: %s.",

@@ -112,9 +112,9 @@ static void init_mediator_agency(mediator_agency_t *agency,
 static inline void start_shutdown_timer(lea_thread_state_t *state,
         uint16_t timeout) {
 
-    halt_mediator_timer(state->cleanse_liids);
-    halt_mediator_timer(state->shutdown_wait);
-    if (start_mediator_timer(state->shutdown_wait, timeout) == -1) {
+    halt_openli_timer(state->cleanse_liids);
+    halt_openli_timer(state->shutdown_wait);
+    if (start_openli_timer(state->shutdown_wait, timeout) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: unable to set shutdown timer for agency thread %s", state->agencyid);
     }
 
@@ -392,8 +392,8 @@ static int consume_available_rmq_records(handover_t *ho,
      * will have been handled when we consumed just earlier.
      */
     if (ho->rmq_consumer) {
-        halt_mediator_timer(state->rmqhb);
-        start_mediator_timer(state->rmqhb, state->rmq_hb_freq);
+        halt_openli_timer(state->rmqhb);
+        start_openli_timer(state->rmqhb, state->rmq_hb_freq);
     }
 
     /* If our earlier "consume" got us some intercept records, try to send
@@ -459,8 +459,8 @@ static int set_unconfirmed_liid_as_withdrawn(liid_map_entry_t *m, void *arg) {
  *  @return 0 if the triggering timer is unable to be reset, 1 otherwise.
  */
 int agency_thread_action_rmqcheck_timer(lea_thread_state_t *state,
-        med_epoll_ev_t *mev) {
-    halt_mediator_timer(mev);
+        openli_epoll_ev_t *mev) {
+    halt_openli_timer(mev);
     /* service RMQ connections */
     check_handover_rmq_status(state->agency.hi2, state->agencyid);
     check_handover_rmq_status(state->agency.hi3, state->agencyid);
@@ -470,7 +470,7 @@ int agency_thread_action_rmqcheck_timer(lea_thread_state_t *state,
             (void *)(&(state->agency)),
             purge_empty_withdrawn_liid_queues);
 
-    if (start_mediator_timer(mev, state->rmq_hb_freq) < 0) {
+    if (start_openli_timer(mev, state->rmq_hb_freq) < 0) {
         logger(LOG_INFO, "OpenLI Mediator: unable to reset RMQ heartbeat timer in agency thread for %s: %s", state->agencyid, strerror(errno));
         return 0;
     }
@@ -489,7 +489,7 @@ int agency_thread_action_rmqcheck_timer(lea_thread_state_t *state,
  *  @return 0 always
  */
 int agency_thread_action_cease_liid_timer(lea_thread_state_t *state) {
-    halt_mediator_timer(state->cleanse_liids);
+    halt_openli_timer(state->cleanse_liids);
     foreach_liid_agency_mapping(&(state->active_liids), state,
             set_unconfirmed_liid_as_withdrawn);
     return 0;
@@ -507,12 +507,12 @@ int agency_thread_action_cease_liid_timer(lea_thread_state_t *state) {
 static int agency_thread_epoll_event(lea_thread_state_t *state,
         struct epoll_event *ev) {
 
-    med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+    openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
     handover_t *ho;
 
     switch (mev->fdtype) {
-        case MED_EPOLL_SIGCHECK_TIMER:
+        case OPENLI_EPOLL_SIGCHECK_TIMER:
             if (ev->events & EPOLLIN) {
                 /* Time to check for messages from the parent thread again;
                  * force the epoll loop to break */
@@ -522,22 +522,22 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
                 ret = 0;
             }
             break;
-        case MED_EPOLL_RMQCHECK_TIMER:
+        case OPENLI_EPOLL_RMQCHECK_TIMER:
             /* timer to perform regular RMQ "maintenance" tasks */
             ret = agency_thread_action_rmqcheck_timer(state, mev);
             break;
-        case MED_EPOLL_SHUTDOWN_LEA_THREAD:
+        case OPENLI_EPOLL_SHUTDOWN_LEA_THREAD:
             /* shutdown timer has expired, end this LEA thread */
             logger(LOG_INFO, "OpenLI Mediator: shutdown timer expired for agency thread %s", state->agencyid);
             ret = -1;
             break;
 
-        case MED_EPOLL_CEASE_LIID_TIMER:
+        case OPENLI_EPOLL_CEASE_LIID_TIMER:
             /* remove any unconfirmed LIIDs in our LIID set */
             ret = agency_thread_action_cease_liid_timer(state);
             break;
 
-        case MED_EPOLL_KA_TIMER:
+        case OPENLI_EPOLL_KA_TIMER:
             /* we are due to send a keep alive */
             ho = (handover_t *)(mev->state);
             trigger_handover_keepalive(ho, state->mediator_id,
@@ -545,10 +545,10 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
                     state->agency.timefmt);
             ret = 0;
             break;
-        case MED_EPOLL_KA_RESPONSE_TIMER:
+        case OPENLI_EPOLL_KA_RESPONSE_TIMER:
             /* we've gone too long without a response to our last keep alive */
             ho = (handover_t *)(mev->state);
-            halt_mediator_timer(mev);
+            halt_openli_timer(mev);
             trigger_handover_ka_failure(ho);
             /* Pause briefly to allow the other end to realise we're gone
              * before we try to reconnect the handover
@@ -556,7 +556,7 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             usleep(500000);
             ret = 1;       // force main thread loop to restart
             break;
-        case MED_EPOLL_LEA:
+        case OPENLI_EPOLL_LEA:
             ho = (handover_t *)(mev->state);
             /* the handover is available for either writing or reading */
             if (ev->events & EPOLLRDHUP) {
@@ -781,8 +781,8 @@ int create_agency_thread_timers(lea_thread_state_t *state) {
     /* timer to shutdown the LEA send thread if the provisioner goes
      * missing for a while
      */
-    state->shutdown_wait = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_SHUTDOWN_LEA_THREAD, 0);
+    state->shutdown_wait = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_SHUTDOWN_LEA_THREAD, 0);
 
     if (state->shutdown_wait == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create shutdown timer in agency thread for %s", state->agencyid);
@@ -790,8 +790,8 @@ int create_agency_thread_timers(lea_thread_state_t *state) {
     }
 
     /* timer for purging unconfirmed LIIDs after a provisioner reconnect */
-    state->cleanse_liids = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_CEASE_LIID_TIMER, 0);
+    state->cleanse_liids = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_CEASE_LIID_TIMER, 0);
 
     if (state->cleanse_liids == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create LIID cleansing timer in agency thread for %s", state->agencyid);
@@ -801,18 +801,18 @@ int create_agency_thread_timers(lea_thread_state_t *state) {
     /* regular once-per-second timer to break out of the epoll loop and check
      * for new messages or signals from the main thread
      */
-    state->timerev = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_SIGCHECK_TIMER, 0);
+    state->timerev = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_SIGCHECK_TIMER, 0);
     if (state->timerev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create main loop timer in agency thread for %s", state->agencyid);
         return -1;
     }
 
     /* timer for performing RMQ maintenance tasks */
-    state->rmqhb = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_RMQCHECK_TIMER, 0);
+    state->rmqhb = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_RMQCHECK_TIMER, 0);
 
-    if (start_mediator_timer(state->rmqhb, state->rmq_hb_freq) < 0) {
+    if (start_openli_timer(state->rmqhb, state->rmq_hb_freq) < 0) {
         logger(LOG_INFO,"OpenLI Mediator: failed to add RMQHB timer to epoll in agency thread for %s", state->agencyid);
         return -1;
     }
@@ -968,7 +968,7 @@ static int process_agency_messages(lea_thread_state_t *state) {
              */
 
             /* If a shutdown timer is running, halt it */
-            halt_mediator_timer(state->shutdown_wait);
+            halt_openli_timer(state->shutdown_wait);
 
             /* If a handover has changed, disconnect it */
             update_agency_handovers(&(state->agency),
@@ -983,8 +983,8 @@ static int process_agency_messages(lea_thread_state_t *state) {
             /* Set a timer which upon expiry will declare any
              * remaining unconfirmed LIIDs to be withdrawn.
              */
-            halt_mediator_timer(state->cleanse_liids);
-            if (start_mediator_timer(state->cleanse_liids, 30) < 0) {
+            halt_openli_timer(state->cleanse_liids);
+            if (start_openli_timer(state->cleanse_liids, 30) < 0) {
                 logger(LOG_INFO, "OpenLI Mediator: failed to add timer to remove unconfirmed LIID mappings in agency thread %s", state->agencyid);
             }
 
@@ -1117,7 +1117,7 @@ static void *run_agency_thread(void *params) {
         /* Start the once-per-second timer, so we can check for messages
          * regularly regardless of how busy our epoll socket is
          */
-        if (start_mediator_timer(state->timerev, 1) < 0) {
+        if (start_openli_timer(state->timerev, 1) < 0) {
             logger(LOG_INFO,"OpenLI Mediator: failed to add timer to epoll in agency thread for %s", state->agencyid);
             break;
         }
@@ -1149,7 +1149,7 @@ static void *run_agency_thread(void *params) {
 
         }
 
-        halt_mediator_timer(state->timerev);
+        halt_openli_timer(state->timerev);
     }
 threadexit:
     logger(LOG_INFO, "OpenLI Mediator: ending agency thread for %s",
@@ -1165,10 +1165,10 @@ threadexit:
  *  @param state        The state object for the LEA send thread
  */
 void destroy_agency_thread_state(lea_thread_state_t *state) {
-    destroy_mediator_timer(state->timerev);
-    destroy_mediator_timer(state->rmqhb);
-    destroy_mediator_timer(state->shutdown_wait);
-    destroy_mediator_timer(state->cleanse_liids);
+    destroy_openli_timer(state->timerev);
+    destroy_openli_timer(state->rmqhb);
+    destroy_openli_timer(state->shutdown_wait);
+    destroy_openli_timer(state->cleanse_liids);
 
     destroy_agency(&(state->agency));
     if (state->operator_id) {

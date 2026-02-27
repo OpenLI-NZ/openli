@@ -30,7 +30,7 @@
 #include <libtrace/message_queue.h>
 #include "netcomms.h"
 #include "openli_tls.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "handover.h"
 #include "agency.h"
 #include "liidmapping.h"
@@ -185,14 +185,14 @@ typedef struct lea_thread_state {
     /** The ID string for this agency */
     char *agencyid;
 
-    /** Mediator epoll event for the shutdown timer */
-    med_epoll_ev_t *shutdown_wait;
-    /** Mediator epoll event for the message queue checking timer */
-    med_epoll_ev_t *timerev;
-    /** Mediator epoll event for the RMQ maintenance timer */
-    med_epoll_ev_t *rmqhb;
-    /** Mediator epoll event for a timer to remove unconfirmed LIID mappings */
-    med_epoll_ev_t *cleanse_liids;
+    /** epoll event for the shutdown timer */
+    openli_epoll_ev_t *shutdown_wait;
+    /** epoll event for the message queue checking timer */
+    openli_epoll_ev_t *timerev;
+    /** epoll event for the RMQ maintenance timer */
+    openli_epoll_ev_t *rmqhb;
+    /** epoll event for a timer to remove unconfirmed LIID mappings */
+    openli_epoll_ev_t *cleanse_liids;
 
 
     /** Used for tracking persistent state required for encrypting
@@ -304,13 +304,13 @@ void destroy_med_agency_config(mediator_lea_config_t *config);
  *  Should be called periodically using a epoll timer event.
  *
  *  @param state        The state object for this LEA send thread
- *  @param mev          The mediator epoll timer event that fired to trigger
+ *  @param mev          The epoll timer event that fired to trigger
  *                      this function being called
  *
  *  @return 0 if the triggering timer is unable to be reset, 1 otherwise.
  */
 int agency_thread_action_rmqcheck_timer(lea_thread_state_t *state,
-        med_epoll_ev_t *mev);
+        openli_epoll_ev_t *mev);
 
 /** Loops over the set of known LIIDs and withdraws any that have not been
  *  confirmed by the provisioner since it last (re-)connected.

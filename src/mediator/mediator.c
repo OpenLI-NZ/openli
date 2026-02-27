@@ -52,7 +52,7 @@
 #include "etsili_core.h"
 #include "openli_tls.h"
 #include "handover.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "pcapthread.h"
 #include "coll_recv_thread.h"
 #include "lea_send_thread.h"
@@ -354,8 +354,8 @@ static void prepare_mediator_state(mediator_state_t *state) {
     sigaddset(&sigmask, SIGINT);
     sigaddset(&sigmask, SIGHUP);
 
-    state->signalev = (med_epoll_ev_t *)malloc(sizeof(med_epoll_ev_t));
-    state->signalev->fdtype = MED_EPOLL_SIGNAL;
+    state->signalev = (openli_epoll_ev_t *)malloc(sizeof(openli_epoll_ev_t));
+    state->signalev->fdtype = OPENLI_EPOLL_SIGNAL;
     state->signalev->fd = signalfd(-1, &sigmask, 0);
     state->signalev->epoll_fd = state->epoll_fd;
     state->signalev->state = NULL;
@@ -467,8 +467,8 @@ static int start_collector_listener(mediator_state_t *state) {
     }
 
     /* Create and register an epoll event for the listening socket */
-    state->listenerev = create_mediator_fdevent(state->epoll_fd,
-            NULL, MED_EPOLL_COLL_CONN, sockfd, EPOLLIN);
+    state->listenerev = create_openli_fdevent(state->epoll_fd,
+            NULL, OPENLI_EPOLL_COLL_CONN, sockfd, EPOLLIN);
 
     if (state->listenerev == NULL) {
         close(sockfd);
@@ -920,12 +920,12 @@ static int receive_provisioner(mediator_state_t *state) {
  */
 static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
-	med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+	openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
     char colname[INET6_ADDRSTRLEN];
 
 	switch(mev->fdtype) {
-		case MED_EPOLL_SIGCHECK_TIMER:
+		case OPENLI_EPOLL_SIGCHECK_TIMER:
             /* Time to stop epolling and do some housekeeping */
 			if (ev->events & EPOLLIN) {
 				return 1;
@@ -933,35 +933,35 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 			logger(LOG_INFO,
                     "OpenLI Mediator: main epoll timer has failed.");
             return -1;
-        case MED_EPOLL_CLEAN_DEAD_COLRECV:
+        case OPENLI_EPOLL_CLEAN_DEAD_COLRECV:
             assert(ev->events == EPOLLIN);
-            halt_mediator_timer(mev);
+            halt_openli_timer(mev);
             mediator_clean_collectors(&(state->collector_threads));
-            ret = start_mediator_timer(state->col_clean_timerev, 30);
+            ret = start_openli_timer(state->col_clean_timerev, 30);
             break;
-        case MED_EPOLL_SIGNAL:
+        case OPENLI_EPOLL_SIGNAL:
             /* we got a signal that needs to be handled */
             ret = process_signal(mev->fd);
             break;
-        case MED_EPOLL_COLL_CONN:
+        case OPENLI_EPOLL_COLL_CONN:
             /* a connection is occuring on our listening socket */
             ret = mediator_accept_collector_connection(
                     &(state->collector_threads), state->listenerev->fd,
                     colname, INET6_ADDRSTRLEN);
             break;
-        case MED_EPOLL_CEASE_LIID_TIMER:
+        case OPENLI_EPOLL_CEASE_LIID_TIMER:
             /* an LIID->agency mapping can now be safely removed */
             assert(ev->events == EPOLLIN);
             //ret = remove_mediator_liid_mapping(state, mev);
             break;
-        case MED_EPOLL_PROVRECONNECT:
+        case OPENLI_EPOLL_PROVRECONNECT:
             /* we're due to try reconnecting to a lost provisioner */
             assert(ev->events == EPOLLIN);
-            halt_mediator_timer(mev);
+            halt_openli_timer(mev);
             state->provisioner.tryconnect = 1;
             break;
 
-        case MED_EPOLL_PROVISIONER:
+        case OPENLI_EPOLL_PROVISIONER:
             /* the provisioner socket is available for reading or writing */
             if (ev->events & EPOLLRDHUP) {
                 ret = -1;
@@ -1059,7 +1059,7 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
     mediator_disconnect_all_collectors(&(currstate->collector_threads));
 
     /* Close listen socket and disable epoll event */
-    remove_mediator_fdevent(currstate->listenerev);
+    remove_openli_fdevent(currstate->listenerev);
     currstate->listenerev = NULL;
 }
 
@@ -1384,21 +1384,21 @@ static void run(mediator_state_t *state) {
 	int timerexpired = 0;
 	struct epoll_event evs[64];
     int provfail = 0;
-    med_epoll_ev_t *signalev;
+    openli_epoll_ev_t *signalev;
 
     /* Register the epoll event for received signals */
-    signalev = create_mediator_fdevent(state->epoll_fd, NULL,
-            MED_EPOLL_SIGNAL, state->signalev->fd, EPOLLIN);
+    signalev = create_openli_fdevent(state->epoll_fd, NULL,
+            OPENLI_EPOLL_SIGNAL, state->signalev->fd, EPOLLIN);
 
     logger(LOG_INFO,
             "OpenLI Mediator: pcap output file rotation frequency is set to %d minutes.",
             state->pcaprotatefreq);
 
-    state->timerev = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_SIGCHECK_TIMER, 0);
+    state->timerev = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_SIGCHECK_TIMER, 0);
 
-    state->col_clean_timerev = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_CLEAN_DEAD_COLRECV, 0);
+    state->col_clean_timerev = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_CLEAN_DEAD_COLRECV, 0);
 
     if (state->timerev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create main loop timer");
@@ -1411,7 +1411,7 @@ static void run(mediator_state_t *state) {
         goto runfailure;
     }
 
-    if (start_mediator_timer(state->col_clean_timerev, 30) < 0) {
+    if (start_openli_timer(state->col_clean_timerev, 30) < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: failed to start collector cleanup timer");
         goto runfailure;
@@ -1463,7 +1463,7 @@ static void run(mediator_state_t *state) {
          * Otherwise, if we're very busy, we may never respond to a halt
          * request.
          */
-        if (start_mediator_timer(state->timerev, 1) < 0) {
+        if (start_openli_timer(state->timerev, 1) < 0) {
             logger(LOG_INFO,
                 "OpenLI Mediator: Failed to add timer to epoll in mediator.");
             break;
@@ -1505,7 +1505,7 @@ static void run(mediator_state_t *state) {
         /* Remove the old 1 second timer, but it will get replaced if we
          * go around again.
          */
-        halt_mediator_timer(state->timerev);
+        halt_openli_timer(state->timerev);
     }
 
 runfailure:
@@ -1516,7 +1516,7 @@ runfailure:
     mediator_halt = true;
 
     if (signalev) {
-        remove_mediator_fdevent(signalev);
+        remove_openli_fdevent(signalev);
     }
 }
 

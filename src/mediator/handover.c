@@ -32,7 +32,7 @@
 #include "netcomms.h"
 #include "etsiencoding.h"
 #include "handover.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "config.h"
 #include "mediator_rmq.h"
 
@@ -83,9 +83,9 @@ int xmit_handover_keepalive(handover_t *ho) {
         logger(LOG_INFO, "successfully sent keep alive to %s:%s HI%d",
                 ho->ipstr, ho->portstr, ho->handover_type);
         */
-        halt_mediator_timer(ho->aliverespev);
+        halt_openli_timer(ho->aliverespev);
         /* Start the timer for the response */
-        if (start_mediator_timer(ho->aliverespev,
+        if (start_openli_timer(ho->aliverespev,
                 ho->ho_state->kawait) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
@@ -142,8 +142,8 @@ int xmit_handover_records(handover_t *ho, uint32_t maxsend) {
     gettimeofday(&tv, NULL);
     if (ho->aliveev && ho->ho_state->kafreq != 0 &&
             ho->ho_state->katimer_setsec < tv.tv_sec) {
-        halt_mediator_timer(ho->aliveev);
-        if (start_mediator_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
+        halt_openli_timer(ho->aliveev);
+        if (start_openli_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
             if (ho->disconnect_msg == 0) {
                 logger(LOG_INFO,
                     "OpenLI Mediator: error while trying to disable xmit for handover %s:%s HI%d -- %s",
@@ -169,8 +169,8 @@ static int restart_handover_keepalive(handover_t *ho) {
 	int ret = 0;
 	pthread_mutex_lock(&(ho->ho_state->ho_mutex));
 
-	halt_mediator_timer(ho->aliveev);
-	if (start_mediator_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
+	halt_openli_timer(ho->aliveev);
+	if (start_openli_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
 		if (ho->disconnect_msg == 0) {
 			logger(LOG_INFO,
                 "OpenLI Mediator: unable to reset keepalive timer for  %s:%s HI%d :s",
@@ -196,7 +196,7 @@ void trigger_handover_ka_failure(handover_t *ho) {
                 ho->ipstr, ho->portstr, ho->handover_type);
     }
 
-    halt_mediator_timer(ho->aliverespev);
+    halt_openli_timer(ho->aliverespev);
     disconnect_handover(ho);
 }
 
@@ -320,16 +320,16 @@ void disconnect_handover(handover_t *ho) {
 				ho->ipstr, ho->portstr, ho->handover_type);
 	}
 
-	if (remove_mediator_fdevent(ho->outev) < 0 && ho->disconnect_msg == 0) {
+	if (remove_openli_fdevent(ho->outev) < 0 && ho->disconnect_msg == 0) {
 		logger(LOG_INFO, "OpenLI Mediator: unable to remove handover fd from epoll: %s.", strerror(errno));
 	}
 	ho->outev = NULL;
 
-	if (halt_mediator_timer(ho->aliveev) < 0 && ho->disconnect_msg == 0) {
+	if (halt_openli_timer(ho->aliveev) < 0 && ho->disconnect_msg == 0) {
 		logger(LOG_INFO, "OpenLI Mediator: unable to remove keepalive timer fd from epoll: %s.", strerror(errno));
 	}
 
-	if (halt_mediator_timer(ho->aliverespev) < 0 && ho->disconnect_msg == 0) {
+	if (halt_openli_timer(ho->aliverespev) < 0 && ho->disconnect_msg == 0) {
 		logger(LOG_INFO, "OpenLI Mediator: unable to remove keepalive response timer fd from epoll: %s.", strerror(errno));
 	}
 
@@ -384,8 +384,8 @@ void free_handover(handover_t *ho) {
     /* This should close all of our sockets and halt any running timers */
     disconnect_handover(ho);
 
-    destroy_mediator_timer(ho->aliveev);
-    destroy_mediator_timer(ho->aliverespev);
+    destroy_openli_timer(ho->aliveev);
+    destroy_openli_timer(ho->aliverespev);
 
     if (ho->rmq_consumer) {
         amqp_destroy_connection(ho->rmq_consumer);
@@ -586,7 +586,7 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
     /* Enable both epoll reading and writing for this handover */
     epollev = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
 
-	ho->outev = create_mediator_fdevent(epoll_fd, ho, MED_EPOLL_LEA,
+	ho->outev = create_openli_fdevent(epoll_fd, ho, OPENLI_EPOLL_LEA,
 			outsock, epollev);
 
 	if (ho->outev == NULL) {
@@ -601,11 +601,11 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
 	}
 
     if (ho->aliveev) {
-        halt_mediator_timer(ho->aliveev);
+        halt_openli_timer(ho->aliveev);
     }
 
     /* Start a keep alive timer */
-    if (start_mediator_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
+    if (start_openli_timer(ho->aliveev, ho->ho_state->kafreq) == -1) {
         if (ho->disconnect_msg == 0) {
             logger(LOG_INFO,
                 "OpenLI Mediator: unable to start keepalive timer for  %s:%s HI%d %s",
@@ -675,7 +675,7 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     /* Keep alive frequency of 0 (or less) will mean that no keep alives are
      * sent (this may necessary for some agencies).
      */
-    ho->aliveev = create_mediator_timer(epoll_fd, ho, MED_EPOLL_KA_TIMER,
+    ho->aliveev = create_openli_timer(epoll_fd, ho, OPENLI_EPOLL_KA_TIMER,
             0);
     if (ho->aliveev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: unable to create keep alive timer for agency %s:%s", ipstr, portstr);
@@ -684,8 +684,8 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     /* If keep alive wait is 0 (or less), then we will not require a response
      * for a successful keep alive.
      */
-    ho->aliverespev = create_mediator_timer(epoll_fd, ho,
-            MED_EPOLL_KA_RESPONSE_TIMER, 0);
+    ho->aliverespev = create_openli_timer(epoll_fd, ho,
+            OPENLI_EPOLL_KA_RESPONSE_TIMER, 0);
     if (ho->aliverespev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: unable to create keep alive response timer for agency %s:%s", ipstr, portstr);
     }
@@ -794,7 +794,7 @@ int receive_handover(handover_t *ho) {
                     recvseq, ho->ipstr, ho->portstr,
                     ho->handover_type);
             */
-            halt_mediator_timer(ho->aliverespev);
+            halt_openli_timer(ho->aliverespev);
             libtrace_scb_advance_read(ho->ho_state->incoming, reclen);
 
             /* Successful KA response is a good indicator that the

@@ -28,7 +28,7 @@
 #define OPENLI_MEDIATOR_PROV_H_
 
 #include <inttypes.h>
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "netcomms.h"
 #include "openli_tls.h"
 
@@ -36,11 +36,11 @@
 typedef struct mediator_provisioner {
 
     /** Epoll event for the socket when the connection is active */
-    med_epoll_ev_t *provev;
+    openli_epoll_ev_t *provev;
 
     /** Epoll timer event for attempting to reconnect to the provisioner
      *  when the connection has failed */
-    med_epoll_ev_t *provreconnect;
+    openli_epoll_ev_t *provreconnect;
 
     /** Netcomms buffer for sending messages to the provisioner */
     net_buffer_t *outgoing;

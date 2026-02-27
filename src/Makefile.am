@@ -99,6 +99,7 @@ openlicollector_SOURCES=collector/collector.c \
 				collector/x2x3_cond_attrs.c collector/udp_sink_worker.c \
                 collector/collector_integrity_check.c \
                 collector/collector_integrity_check.h \
+                openli_epoll.c openli_epoll.h \
                 $(PLUGIN_SRCS)
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
@@ -113,9 +114,9 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
 		configparser_common.c configparser_common.h \
 		mediator/pcapthread.c mediator/pcapthread.h \
                 mediator/handover.c mediator/handover.h \
-                mediator/med_epoll.c mediator/liidmapping.c \
+                openli_epoll.c mediator/liidmapping.c \
                 mediator/liidmapping.h mediator/mediator_prov.c \
-                mediator/med_epoll.h mediator/mediator_prov.h \
+                openli_epoll.h mediator/mediator_prov.h \
                 mediator/coll_recv_thread.c mediator/coll_recv_thread.h \
                 mediator/lea_send_thread.c mediator/lea_send_thread.h \
                 mediator/mediator_rmq.c mediator/mediator_rmq.h \
