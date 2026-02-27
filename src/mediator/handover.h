@@ -40,7 +40,7 @@
 #endif
 
 #include "export_buffer.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "liidmapping.h"
 
 /** Possible handover types */
@@ -85,9 +85,9 @@ typedef struct handover {
     amqp_connection_state_t rmq_consumer;
     int amqp_log_failure;
     uint8_t rmq_registered;
-    med_epoll_ev_t *outev;
-    med_epoll_ev_t *aliveev;
-    med_epoll_ev_t *aliverespev;
+    openli_epoll_ev_t *outev;
+    openli_epoll_ev_t *aliveev;
+    openli_epoll_ev_t *aliverespev;
     per_handover_state_t *ho_state;
     uint8_t disconnect_msg;
 

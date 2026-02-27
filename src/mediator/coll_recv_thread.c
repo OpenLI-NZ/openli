@@ -33,7 +33,7 @@
 #include "coll_recv_thread.h"
 #include "lea_send_thread.h"
 #include "mediator_rmq.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "etsili_core.h"
 
 #define COLL_OUTSTANDING_PUB_CONFIRMS(col) \
@@ -213,7 +213,7 @@ static void destroy_rmq_colev(coll_recv_t *col) {
     if (col->amqp_state) {
         amqp_destroy_connection(col->amqp_state);
     }
-    remove_mediator_fdevent(col->rmq_colev);
+    remove_openli_fdevent(col->rmq_colev);
     col->rmq_colev = NULL;
     col->amqp_state = NULL;
     col->incoming_rmq = NULL;
@@ -268,9 +268,9 @@ int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
  *
  *  @param col      The state object for this collector receive thread
  *
- *  @return -1 if an error occurs, MED_EPOLL_COLLECTOR_HANDSHAKE if the
+ *  @return -1 if an error occurs, OPENLI_EPOLL_COLLECTOR_HANDSHAKE if the
  *          connection is established but TLS handshake is incomplete,
- *          MED_EPOLL_COLLECTOR if the connection is established and the
+ *          OPENLI_EPOLL_COLLECTOR if the connection is established and the
  *          TLS handshake has completed.
  */
 static int start_collector_ssl(coll_recv_t *col) {
@@ -299,10 +299,10 @@ static int start_collector_ssl(coll_recv_t *col) {
 
     col->using_tls = 1;
     if (r == OPENLI_SSL_CONNECT_WAITING) {
-        return MED_EPOLL_COLLECTOR_HANDSHAKE;
+        return OPENLI_EPOLL_COLLECTOR_HANDSHAKE;
     }
     col->lastsslerror = 0;
-    return MED_EPOLL_COLLECTOR;
+    return OPENLI_EPOLL_COLLECTOR;
 }
 
 /** Connects to the RMQ queue for this mediator on the collector and
@@ -317,10 +317,10 @@ static int start_collector_ssl(coll_recv_t *col) {
  *          epoll event structure that was successfully created by this
  *          function.
  */
-static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
+static openli_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
         int epoll_fd) {
 
-    med_epoll_ev_t *rmqev = NULL;
+    openli_epoll_ev_t *rmqev = NULL;
     int rmq_sock = -1;
 
     /* method defined in mediator_rmq.c -- establishes the RMQ connection */
@@ -351,7 +351,7 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
     col->incoming_rmq = create_net_buffer(NETBUF_RECV, 0, NULL);
 
     /* Create an epoll event and add it to our epoll FD set */
-    rmqev = create_mediator_fdevent(epoll_fd, col, MED_EPOLL_COL_RMQ, rmq_sock,
+    rmqev = create_openli_fdevent(epoll_fd, col, OPENLI_EPOLL_COL_RMQ, rmq_sock,
             EPOLLIN | EPOLLRDHUP);
     if (rmqev == NULL) {
         if (!col->disabled_log) {
@@ -381,10 +381,10 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
  *          epoll event structure that was successfully created by this
  *          function.
  */
-static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
+static openli_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
         int epoll_fd) {
 
-    med_epoll_ev_t *colev = NULL;
+    openli_epoll_ev_t *colev = NULL;
     int fdtype;
 
     /* If we are supposed to be using TLS, establish a TLS session */
@@ -392,12 +392,12 @@ static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
         fdtype = start_collector_ssl(col);
     } else {
         /* Otherwise, we can use the existing socket as is */
-        fdtype = MED_EPOLL_COLLECTOR;
+        fdtype = OPENLI_EPOLL_COLLECTOR;
         col->using_tls = 0;
     }
 
     /* Create an epoll event and add it to our epoll FD set */
-    colev = create_mediator_fdevent(epoll_fd, col, fdtype, col->col_fd,
+    colev = create_openli_fdevent(epoll_fd, col, fdtype, col->col_fd,
             EPOLLIN | EPOLLRDHUP);
     if (colev == NULL && col->disabled_log == 0) {
         logger(LOG_INFO,
@@ -433,7 +433,7 @@ static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
  *  @return -1 if an error occurs, 0 if the handshake remains incomplete, 1
  *          if the handshake is now complete
  */
-static int continue_collector_handshake(coll_recv_t *col, med_epoll_ev_t *mev) {
+static int continue_collector_handshake(coll_recv_t *col, openli_epoll_ev_t *mev) {
 
     int ret = SSL_accept(col->ssl);
 
@@ -449,7 +449,7 @@ static int continue_collector_handshake(coll_recv_t *col, med_epoll_ev_t *mev) {
     }
     logger(LOG_INFO, "OpenLI Mediator: Pending SSL handshake for collector %s completed", col->ipaddr);
     col->lastsslerror = 0;
-    mev->fdtype = MED_EPOLL_COLLECTOR;
+    mev->fdtype = OPENLI_EPOLL_COLLECTOR;
 
     return 1;
 }
@@ -753,7 +753,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
  *
  *  @return -1 if an error occurs, 0 otherwise
  */
-static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
+static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
 
     uint8_t *msgbody = NULL;
     uint16_t msglen = 0;
@@ -779,7 +779,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
     do {
         /* Read the next available message -- see netcomms.c for the
          * implementation of these methods */
-        if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+        if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
             msgtype = receive_RMQ_buffer(col->incoming_rmq, col->amqp_state,
                     &msgbody, &msglen, &internalid);
         } else {
@@ -792,7 +792,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                 nb_log_receive_error(msgtype);
                 logger(LOG_INFO, "OpenLI Mediator: error receiving message from collector %s.", col->ipaddr);
             }
-            if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+            if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
                 destroy_rmq_colev(col);
                 return 0;
             }
@@ -877,11 +877,11 @@ processacks:
 static int collector_thread_epoll_event(coll_recv_t *col,
         struct epoll_event *ev) {
 
-    med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+    openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
 
     switch(mev->fdtype) {
-        case MED_EPOLL_SIGCHECK_TIMER:
+        case OPENLI_EPOLL_SIGCHECK_TIMER:
             /* Time to check for control messages -- fires once per second */
             if (ev->events & EPOLLIN) {
                 ret = 1;
@@ -892,13 +892,13 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 ret = -1;
             }
             break;
-        case MED_EPOLL_QUEUE_EXPIRE_TIMER:
+        case OPENLI_EPOLL_QUEUE_EXPIRE_TIMER:
             /* Time to purge any state for inactive LIIDs */
-            halt_mediator_timer(mev);
+            halt_openli_timer(mev);
 
             remove_expired_liid_queues(col);
 
-            if (start_mediator_timer(mev, 120) < 0) {
+            if (start_openli_timer(mev, 120) < 0) {
                 logger(LOG_INFO, "OpenLI Mediator: unable to reset queue expiry timer in collector thread for %s: %s", col->ipaddr, strerror(errno));
                 ret =  -1;
             } else {
@@ -906,7 +906,7 @@ static int collector_thread_epoll_event(coll_recv_t *col,
             }
             break;
 
-        case MED_EPOLL_COLLECTOR_HANDSHAKE:
+        case OPENLI_EPOLL_COLLECTOR_HANDSHAKE:
             /* A socket with an incomplete SSL handshake is active -- try
              * to complete the handshake.
              */
@@ -915,10 +915,10 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 return -1;
             }
             break;
-        case MED_EPOLL_COLLECTOR:
-        case MED_EPOLL_COL_RMQ:
+        case OPENLI_EPOLL_COLLECTOR:
+        case OPENLI_EPOLL_COL_RMQ:
             if (ev->events & EPOLLRDHUP) {
-                if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+                if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
                     /* RMQ failed, but no need to trash the whole thread */
                     destroy_rmq_colev(col);
                     ret = 0;
@@ -950,7 +950,7 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     size_t i;
 
     if (col->colev) {
-        remove_mediator_fdevent(col->colev);
+        remove_openli_fdevent(col->colev);
     }
     if (col->incoming) {
         destroy_net_buffer(col->incoming, NULL);
@@ -1027,7 +1027,7 @@ static void cleanup_collector_thread(coll_recv_t *col) {
 static inline void move_thread_into_error_state(coll_recv_t *col, uint8_t log) {
 
     if (col->colev) {
-        remove_mediator_fdevent(col->colev);
+        remove_openli_fdevent(col->colev);
         col->colev = NULL;
     }
     if (col->rmq_colev) {
@@ -1054,7 +1054,7 @@ static void *start_collector_thread(void *params) {
     int is_halted = 0, i, r;
     col_thread_msg_t msg;
     int epoll_fd = -1, timerexpired, nfds;
-    med_epoll_ev_t *timerev, *queuecheck = NULL;
+    openli_epoll_ev_t *timerev, *queuecheck = NULL;
     struct epoll_event evs[64];
 
     if (col->ipaddr == NULL) {
@@ -1084,14 +1084,14 @@ static void *start_collector_thread(void *params) {
     /* timerev is used to regularly break from epoll_wait() so we can check
      * for incoming messages on our control socket.
      */
-    timerev = create_mediator_timer(epoll_fd, NULL, MED_EPOLL_SIGCHECK_TIMER, 0);
+    timerev = create_openli_timer(epoll_fd, NULL, OPENLI_EPOLL_SIGCHECK_TIMER, 0);
     if (timerev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create main loop timer in collector thread for %s", col->ipaddr);
         goto threadexit;
     }
 
-    queuecheck = create_mediator_timer(epoll_fd, NULL,
-            MED_EPOLL_QUEUE_EXPIRE_TIMER, 60);
+    queuecheck = create_openli_timer(epoll_fd, NULL,
+            OPENLI_EPOLL_QUEUE_EXPIRE_TIMER, 60);
 
     col->epoll_fd = epoll_fd;
     while (!is_halted) {
@@ -1144,7 +1144,7 @@ static void *start_collector_thread(void *params) {
                  */
                 if (col->using_tls != col->parentconfig->usingtls) {
                     if (col->colev) {
-                        remove_mediator_fdevent(col->colev);
+                        remove_openli_fdevent(col->colev);
                         col->colev = NULL;
                     }
                 }
@@ -1170,7 +1170,7 @@ static void *start_collector_thread(void *params) {
                  * epoll events to the new socket.
                  */
                 if (col->colev) {
-                    remove_mediator_fdevent(col->colev);
+                    remove_openli_fdevent(col->colev);
                     col->colev = NULL;
                 }
                 if (col->rmq_colev) {
@@ -1227,7 +1227,7 @@ static void *start_collector_thread(void *params) {
             col->colev = prepare_collector_receive_fd(col, epoll_fd);
         }
 
-        if (col->colev && col->colev->fdtype == MED_EPOLL_COLLECTOR &&
+        if (col->colev && col->colev->fdtype == OPENLI_EPOLL_COLLECTOR &&
                 col->rmqenabled && col->forwarder_using_rmq &&
                 col->rmq_colev == NULL) {
             col->rmq_colev = prepare_collector_receive_rmq(col, epoll_fd);
@@ -1236,7 +1236,7 @@ static void *start_collector_thread(void *params) {
         /* Start our timer to break out and check for control messages once
          * per second.
          */
-        if (start_mediator_timer(timerev, 1) < 0) {
+        if (start_openli_timer(timerev, 1) < 0) {
             logger(LOG_INFO, "OpenLI Mediator: failed to add timer to epoll in collector thread for %s", col->ipaddr);
             break;
         }
@@ -1273,13 +1273,13 @@ static void *start_collector_thread(void *params) {
         /* If we get here, the message timer expired -- loop around and
          * check for new messages.
          */
-        halt_mediator_timer(timerev);
+        halt_openli_timer(timerev);
     }
 
 threadexit:
 
-    destroy_mediator_timer(queuecheck);
-    destroy_mediator_timer(timerev);
+    destroy_openli_timer(queuecheck);
+    destroy_openli_timer(timerev);
     cleanup_collector_thread(col);
 
     close(epoll_fd);

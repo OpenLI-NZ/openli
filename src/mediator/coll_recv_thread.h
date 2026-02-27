@@ -35,7 +35,7 @@
 #include "etsiencoding.h"
 #include "netcomms.h"
 #include "openli_tls.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "liidmapping.h"
 
 /** This file defines public types and methods for interactive with a
@@ -228,13 +228,13 @@ struct single_coll_receiver {
      */
     uint8_t using_tls;
 
-    /** A mediator epoll event for reading from a TCP connection to the
+    /** An epoll event for reading from a TCP connection to the
      *  collector.
      */
-    med_epoll_ev_t *colev;
+    openli_epoll_ev_t *colev;
 
-    /** A mediator epoll event for reading from RabbitMQ */
-    med_epoll_ev_t *rmq_colev;
+    /** An epoll event for reading from RabbitMQ */
+    openli_epoll_ev_t *rmq_colev;
 
     /** The AMQP connection state for the connection to the collector RMQ */
     amqp_connection_state_t amqp_state;

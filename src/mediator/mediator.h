@@ -36,7 +36,7 @@
 #include "export_buffer.h"
 #include "util.h"
 #include "openli_tls.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "pcapthread.h"
 #include "liidmapping.h"
 #include "mediator_prov.h"
@@ -84,16 +84,16 @@ typedef struct med_state {
     int epoll_fd;
 
     /** The epoll event for the socket listening for collectors */
-    med_epoll_ev_t *listenerev;
+    openli_epoll_ev_t *listenerev;
 
     /** The epoll event for the socket watching for signals */
-    med_epoll_ev_t *signalev;
+    openli_epoll_ev_t *signalev;
 
     /** The epoll event for the epoll loop timer */
-    med_epoll_ev_t *timerev;
+    openli_epoll_ev_t *timerev;
 
     /** The epoll event for the collector receiver cleanup timer */
-    med_epoll_ev_t *col_clean_timerev;
+    openli_epoll_ev_t *col_clean_timerev;
 
     /** State for managing the connection back to the provisioner */
     mediator_prov_t provisioner;

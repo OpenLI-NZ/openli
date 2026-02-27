@@ -885,8 +885,8 @@ int handle_pcap_thread_messages(lea_thread_state_t *state,
             /* Set a timer which upon expiry will declare any
              * remaining unconfirmed LIIDs to be withdrawn.
              */
-            halt_mediator_timer(state->cleanse_liids);
-            if (start_mediator_timer(state->cleanse_liids, 30) < 0) {
+            halt_openli_timer(state->cleanse_liids);
+            if (start_openli_timer(state->cleanse_liids, 30) < 0) {
                 logger(LOG_INFO, "OpenLI Mediator: failed to add timer to remove unconfirmed LIID mappings in pcap output thread");
             }
 
@@ -928,11 +928,11 @@ int handle_pcap_thread_messages(lea_thread_state_t *state,
 static int pcap_thread_epoll_event(lea_thread_state_t *state,
         pcap_thread_state_t *pstate, struct epoll_event *ev) {
 
-    med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+    openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
 
     switch (mev->fdtype) {
-        case MED_EPOLL_SIGCHECK_TIMER:
+        case OPENLI_EPOLL_SIGCHECK_TIMER:
             if (ev->events & EPOLLIN) {
                 /* Time to check the message queue again */
                 ret = 1;
@@ -941,26 +941,26 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
                 ret = 0;
             }
             break;
-        case MED_EPOLL_RMQCHECK_TIMER:
+        case OPENLI_EPOLL_RMQCHECK_TIMER:
             /* This should never fire in this thread, but just in case... */
             ret = agency_thread_action_rmqcheck_timer(state, mev);
             break;
-        case MED_EPOLL_CEASE_LIID_TIMER:
+        case OPENLI_EPOLL_CEASE_LIID_TIMER:
             /* Clean up any unconfirmed LIIDs */
             ret = agency_thread_action_cease_liid_timer(state);
             foreach_liid_agency_mapping(&(state->active_liids), pstate,
                     deregister_unconfirmed_pcap_liids);
             break;
-        case MED_EPOLL_PCAP_TIMER:
+        case OPENLI_EPOLL_PCAP_TIMER:
             /* halt the timer
              * for each active pcap output:
              *   check if we need to rotate the file
              *   otherwise, flush pending output to the file
              * restart the timer
              */
-            halt_mediator_timer(mev);
+            halt_openli_timer(mev);
             flush_pcap_outputs(state, pstate);
-            if (start_mediator_timer(mev, 60) < 0) {
+            if (start_openli_timer(mev, 60) < 0) {
                 logger(LOG_INFO, "OpenLI Mediator: unable to reset pcap flush timer in pcap output thread: %s", strerror(errno));
                 ret = -1;
             }
@@ -983,7 +983,7 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
  */
 static void *run_pcap_thread(void *params) {
     lea_thread_state_t *state = (lea_thread_state_t *)params;
-    med_epoll_ev_t *flushtimer = NULL;
+    openli_epoll_ev_t *flushtimer = NULL;
     struct epoll_event evs[64];
     int i, nfds, timerexpired = 0;
     int is_halted = 0;
@@ -1015,14 +1015,14 @@ static void *run_pcap_thread(void *params) {
     /* Don't need the RMQ check timer, since we're going to poll the
      * RMQ queues multiple times per second.
      */
-    halt_mediator_timer(state->rmqhb);
+    halt_openli_timer(state->rmqhb);
 
     /* Set up the flush / rotation timer for our output files */
     gettimeofday(&tv, NULL);
     firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
 
-    flushtimer = create_mediator_timer(state->epoll_fd, NULL,
-            MED_EPOLL_PCAP_TIMER, firstflush);
+    flushtimer = create_openli_timer(state->epoll_fd, NULL,
+            OPENLI_EPOLL_PCAP_TIMER, firstflush);
 
     if (flushtimer == NULL) {
         logger(LOG_INFO,
@@ -1038,7 +1038,7 @@ static void *run_pcap_thread(void *params) {
         }
 
         /* epoll */
-        if (start_mediator_ms_timer(state->timerev, 50) < 0) {
+        if (start_openli_ms_timer(state->timerev, 50) < 0) {
             logger(LOG_INFO,"OpenLI Mediator: failed to add timer to epoll in agency thread for %s", state->agencyid);
             break;
         }
@@ -1074,7 +1074,7 @@ static void *run_pcap_thread(void *params) {
         /* TODO error handling? */
         consume_pcap_packets(pstate.rawip_handover, &pstate);
 
-        halt_mediator_timer(state->timerev);
+        halt_openli_timer(state->timerev);
     }
 
 threadexit:
@@ -1093,7 +1093,7 @@ threadexit:
     }
 
     if (flushtimer) {
-        destroy_mediator_timer(flushtimer);
+        destroy_openli_timer(flushtimer);
     }
 
     logger(LOG_INFO, "OpenLI Mediator: ending pcap output thread");
