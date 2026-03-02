@@ -49,6 +49,9 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->liid_key) {
         free(known->liid_key);
     }
+    if (known->authcc) {
+        free(known->authcc);
+    }
     etsili_destroy_encrypted_templates(
             known->encrypt_cc.saved_encryption_templates);
     etsili_destroy_encrypted_templates(
@@ -153,27 +156,8 @@ static int init_worker(openli_encoder_t *enc) {
         }
     }
 
-    enc->zmq_control = zmq_socket(enc->zmq_ctxt, ZMQ_SUB);
-    if (zmq_connect(enc->zmq_control, "inproc://openliencodercontrol") != 0) {
-        logger(LOG_INFO, "OpenLI: error connecting to exporter control socket");
-        return -1;
-    }
-
-    if (zmq_setsockopt(enc->zmq_control, ZMQ_LINGER, &zero, sizeof(zero))
-            != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to exporter control socket");
-        return -1;
-    }
-
-    if (zmq_setsockopt(enc->zmq_control, ZMQ_SUBSCRIBE, "", 0) != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring subscription to exporter control socket");
-        return -1;
-    }
-
-    fdlen = sizeof(zmq_fd);
-    zmq_getsockopt(enc->zmq_control, ZMQ_FD, &zmq_fd, &fdlen);
     enc->zmq_control_ev = create_openli_fdevent(enc->epoll_fd, (void *)enc,
-            OPENLI_EPOLL_ENCODING_CONTROL, zmq_fd, EPOLLIN | EPOLLET);
+            OPENLI_EPOLL_ENCODING_CONTROL, enc->control_pipe[0], EPOLLIN);
 
     return 0;
 
@@ -237,10 +221,8 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     } while (x > 0);
     zmq_close(enc->zmq_recvjob);
 
-    if (enc->zmq_control) {
-        zmq_close(enc->zmq_control);
-    }
     remove_openli_fdevent(enc->zmq_job_ev);
+    // this should close control_pipe[0]?
     remove_openli_fdevent(enc->zmq_control_ev);
     remove_openli_fdevent(enc->zmq_yield_ev);
 
@@ -250,6 +232,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         EVP_CIPHER_CTX_free(enc->evp_ctx);
     }
 
+    close(enc->control_pipe[1]);
     close(enc->epoll_fd);
 }
 
@@ -279,11 +262,15 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     }
 
 
-    // TODO update digest state
+    if (known) {
+        fprintf(stderr, "finalize_encoded_result %u\n", known->digest_config_disabled);
+    }
+    // update digest state
     if (known && !known->digest_config_disabled) {
         integrity_res = update_integrity_check_state(&(enc->integrity_state),
                 known, res->msgbody->encoded + res->preamblen,
-                res->msgbody->len - res->preamblen, type, job, enc->epoll_fd,
+                res->msgbody->len - res->preamblen,
+                ntohs(res->header.intercepttype), job, enc->epoll_fd,
                 &chain);
     }
 
@@ -357,6 +344,7 @@ static void check_agency_digest_config(openli_encoder_t *enc,
         return;
     }
 
+    fprintf(stderr, "AGENCY DIGEST %s %u\n", agmap->agencyid, agdigest->disabled);
     if (agdigest->disabled) {
         found->digest_config_disabled = 1;
         memset(&found->digest_config, 0, sizeof(found->digest_config));
@@ -371,12 +359,13 @@ static void check_agency_digest_config(openli_encoder_t *enc,
 }
 
 static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
-        char *liid) {
+        char *liid, char *authcc) {
 
     encoder_liid_state_t *found;
 
     found = calloc(1, sizeof(encoder_liid_state_t));
     found->liid_key = strdup(liid);
+    found->authcc = strdup(authcc);
     found->no_agency_map_warning = 0;
     found->last_agency_check = 0;
     memset(&found->digest_config, 0, sizeof(found->digest_config));
@@ -1109,7 +1098,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         if (!found) {
-            found = create_new_known_liid(enc, job.liid);
+            found = create_new_known_liid(enc, job.liid, "NZ");
         }
 
         check_agency_digest_config(enc, found);
@@ -1186,38 +1175,96 @@ encodejoberror:
     return encoded_total;
 }
 
+static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics) {
+    openli_encoded_result_t res;
+    char *operatorid = NULL;
+    char *netelemid = NULL;
+    encoder_liid_state_t *found = NULL;
+    int ret = 0;
+
+    if (ics->pdus_since_last_hashrec == 0) {
+        goto exitcallback;
+    }
+
+    pthread_rwlock_rdlock(enc->shared_mutex);
+    if (enc->shared->operatorid) {
+        operatorid = strdup(enc->shared->operatorid);
+    }
+    if (enc->shared->networkelemid) {
+        netelemid = strdup(enc->shared->networkelemid);
+    }
+
+    pthread_rwlock_unlock(enc->shared_mutex);
+    fprintf(stderr, "%s\n", operatorid);
+
+    HASH_FIND(hh, enc->known_liids, ics->liid_key, strlen(ics->liid_key),
+            found);
+    if (!found) {
+        goto exitcallback;
+    }
+
+    memset(&res, 0, sizeof(res));
+    if (generate_integrity_check_hash_pdu(&res, ics, netelemid, operatorid,
+            enc->encoder, enc->etsidecoder) < 0) {
+        free_encoded_result(&res);
+        goto exitcallback;
+    }
+
+    zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
+
+    ics->pdus_since_last_hashrec = 0;
+    if (ics->hashes_since_last_signrec >= ics->agency->sign_hashlimit &&
+            ics->agency->sign_hashlimit > 0) {
+        // send signed hashes TODO
+    }
+
+exitcallback:
+    if (operatorid) free(operatorid);
+    if (netelemid) free(netelemid);
+
+    halt_openli_timer(ics->hash_timer);
+    return ret;
+}
+
+static int integrity_hash_timer_callback(openli_encoder_t *enc,
+        openli_epoll_ev_t *mev) {
+
+    integrity_check_state_t *ics;
+
+    if (mev == NULL) {
+        return -1;
+    }
+
+    ics = (integrity_check_state_t *)(mev->state);
+    if (ics == NULL) {
+        return 0;
+    }
+
+    fprintf(stderr, "HASH TIMER %s\n", ics->key);
+
+    return send_integrity_check_hash_pdu(enc, ics);
+}
+
 static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
 
     openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
-    int tmpbuf;
     int ret = 0;
 
     switch(mev->fdtype) {
         case OPENLI_EPOLL_ENCODING_CONTROL:
-            ret = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf),
-                    ZMQ_DONTWAIT);
-            if (ret < 0 && errno != EAGAIN) {
-                logger(LOG_INFO,
-                        "OpenLI: error reading ctrl msg in encoder worker %d",
-                        enc->workerid);
-                return -1;
-            } else if (ret >= 0) {
-                // Time to halt the worker
-                return -1;
-            }
-            // if we get here, we had EAGAIN on the control socket even
-            // though it triggered epoll -- not sure how to handle that, so
-            // maybe just halt the worker anyway??
+            // Time to halt the worker
             return -1;
-        case OPENLI_EPOLL_ENCODING_JOB:
         case OPENLI_EPOLL_ZMQ_YIELD:
+            __attribute__ ((fallthrough));
+        case OPENLI_EPOLL_ENCODING_JOB:
             ret = process_job(enc, enc->zmq_recvjob);
             break;
         case OPENLI_EPOLL_INTEGRITY_HASH_TIMER:
             ret = integrity_hash_timer_callback(enc, mev);
             break;
         case OPENLI_EPOLL_INTEGRITY_SIGN_TIMER:
-            ret = integrity_sign_timer_callback(enc, mev);
+            //ret = integrity_sign_timer_callback(enc, mev);
             break;
         case OPENLI_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER:
             // TODO
@@ -1234,15 +1281,17 @@ static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
 static inline void poll_nextjob(openli_encoder_t *enc) {
     int x, nfds, i;
     struct epoll_event evs[256];
+    uint32_t zmq_events;
+    size_t size = sizeof(zmq_events);
 
-    while (1) {
-        nfds = epoll_wait(enc->epoll_fd, evs, 256, -1);
+    while (!enc->halted) {
+        nfds = epoll_wait(enc->epoll_fd, evs, 256, 100);
         if (nfds < 0) {
             if (errno == EINTR) {
+                sched_yield();
                 continue;
             }
             logger(LOG_INFO, "OpenLI collector: error while waiting for epoll events in encoder worker %d: %s", enc->workerid, strerror(errno));
-            enc->halted = 1;
             break;
         }
         for (i = 0; i < nfds; i++) {
@@ -1252,13 +1301,31 @@ static inline void poll_nextjob(openli_encoder_t *enc) {
                 break;
             }
         }
+
+        if (nfds == 0) {
+            zmq_getsockopt(enc->zmq_recvjob, ZMQ_EVENTS, &zmq_events, &size);
+            if (zmq_events & ZMQ_POLLIN) {
+                fprintf(stderr, "process_job_manual\n");
+                process_job(enc, enc->zmq_recvjob);
+            }
+        }
     }
+    enc->halted = 1;
 }
 
 
 void *run_encoder_worker(void *encstate) {
     openli_encoder_t *enc = (openli_encoder_t *)encstate;
     int i;
+    sigset_t mask, verify;
+
+    sigfillset(&mask);
+    pthread_sigmask(SIG_SETMASK, &mask, NULL);
+
+    pthread_sigmask(SIG_SETMASK, NULL, &verify);
+    if (!sigismember(&verify, SIGINT)) {
+        logger(LOG_INFO, "Mask FAILED to stick immediately after setting!");
+    }
 
     if (init_worker(enc) == -1) {
         logger(LOG_INFO,

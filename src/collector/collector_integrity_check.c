@@ -222,23 +222,15 @@ static inline void printable_integrity_key(integrity_check_state_t *ics,
 
 }
 
-#if 0
 static inline void populate_integrity_check_pshdr_data(
         wandder_etsipshdr_data_t *hdrdata, integrity_check_state_t *ics,
-        uint32_t mediatorid, char *operatorid, char *netelemid) {
+        char *netelemid, char *operatorid) {
 
-    hdrdata->liid = ics->liid;
-    hdrdata->liid_len = strlen(ics->liid);
+    hdrdata->liid = ics->liid_key;
+    hdrdata->liid_len = strlen(ics->liid_key);
     hdrdata->liid_format = ics->liid_format;
-    if (ics->agency->config->agencycc &&
-            strlen(ics->agency->config->agencycc) == 2) {
-        hdrdata->authcc = ics->agency->config->agencycc;
-        hdrdata->delivcc = ics->agency->config->agencycc;
-    } else {
-        hdrdata->authcc = "--";
-        hdrdata->delivcc = "--";
-    }
-
+    hdrdata->authcc = ics->authcc;
+    hdrdata->delivcc = ics->authcc;
     hdrdata->authcc_len = strlen(hdrdata->authcc);
     hdrdata->delivcc_len = strlen(hdrdata->delivcc);
 
@@ -249,12 +241,11 @@ static inline void populate_integrity_check_pshdr_data(
     }
     hdrdata->operatorid_len = strlen(hdrdata->operatorid);
 
-    if (strcmp(hdrdata->authcc, "NL") == 0) {
-        snprintf(netelemid, 16, "%u", mediatorid);
+    if (netelemid) {
+        hdrdata->networkelemid = netelemid;
     } else {
-        snprintf(netelemid, 16, "med-%u", mediatorid);
+        hdrdata->networkelemid = "unspecified";
     }
-    hdrdata->networkelemid = netelemid;
     hdrdata->networkelemid_len = strlen(netelemid);
 
     hdrdata->intpointid = NULL;
@@ -275,11 +266,11 @@ static inline void update_signature_hash(integrity_check_state_t *found,
     if (icbody && icbodylen > 0) {
         EVP_DigestUpdate(found->signature_ctx, icbody, icbodylen);
         if (found->hashes_since_last_signrec == 0 &&
-                found->agency->config->digest.sign_hashlimit > 1 &&
-                found->agency->config->digest.sign_timeout > 0) {
+                found->agency->sign_hashlimit > 1 &&
+                found->agency->sign_timeout > 0) {
 
             if (start_openli_timer(found->sign_timer,
-                        found->agency->config->digest.sign_timeout) < 0) {
+                        found->agency->sign_timeout) < 0) {
                 /* what can we do here? */
             }
         }
@@ -296,6 +287,7 @@ static inline void update_signature_hash(integrity_check_state_t *found,
     }
 }
 
+#if 0
 static wandder_encoded_result_t *generate_integrity_check_signature_pdu(
         integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
         wandder_encoder_t *encoder, ics_sign_request_t *job,
@@ -322,37 +314,6 @@ static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
         integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
         wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder) {
 
-    wandder_encoded_result_t *ic_pdu = NULL;
-    uint8_t hashresult[EVP_MAX_MD_SIZE];
-    unsigned int hashlen;
-    wandder_etsipshdr_data_t hdrdata;
-    char netelemid[128];
-
-    EVP_DigestFinal_ex(ics->hash_ctx, hashresult, &hashlen);
-    populate_integrity_check_pshdr_data(&hdrdata, ics, mediatorid,
-            operatorid, netelemid);
-
-    reset_wandder_encoder(encoder);
-
-    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
-            ics->self_seqno_hash,
-            ics->agency->config->digest.hash_method, INTEGRITY_CHECK_SEND_HASH,
-            ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
-            ics->seqno_next_index, ics->agency->config->digest.time_fmt);
-
-    if (ic_pdu != NULL) {
-        /* update the signed hash using the contents of the IntegrityCheck
-         * PDU
-         */
-        update_signature_hash(ics, etsidecoder, ic_pdu);
-
-        // don't increment until AFTER update_signature_hash()
-        ics->self_seqno_hash ++;
-    }
-
-    ics->seqno_next_index = 0;
-    reset_hash_context(ics);
-    return ic_pdu;
 }
 
 #endif
@@ -369,6 +330,7 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     uint32_t cin = (uint32_t)job->cin;
     digest_map_key_t *dmk;
     uint64_t dmk_kval = 0;
+
 
     if (msgtype != OPENLI_PROTO_ETSI_IRI && msgtype != OPENLI_PROTO_ETSI_CC) {
         *chain = NULL;
@@ -400,6 +362,7 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->cin = cin;
         found->msgtype = msgtype;
         found->liid_key = strdup(known->liid_key);
+        found->authcc = strdup(known->authcc);
         found->hashed_seqnos = calloc(32, sizeof(int64_t));
         found->signing_seqnos = calloc(16, sizeof(int64_t));
         found->seqno_array_size = 32;
@@ -436,6 +399,8 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
 
     EVP_DigestUpdate(found->hash_ctx, msgbody, msglen);
 
+    fprintf(stderr, "%u %u %u %u\n", seqno, found->pdus_since_last_hashrec,
+            found->agency->hash_pdulimit, found->agency->hash_timeout);
     if (found->seqno_next_index == found->seqno_array_size) {
         found->hashed_seqnos = realloc(found->hashed_seqnos,
                 (found->seqno_array_size + 32) * sizeof(int64_t));
@@ -459,96 +424,77 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
             found->agency->hash_pdulimit != 0) {
         halt_openli_timer(found->hash_timer);
         action = INTEGRITY_CHECK_SEND_HASH;
-
+        fprintf(stderr, "HASH PDU: %s\n", found->key);
     }
     *chain = found;
     return action;
 
 }
 
-#if 0
+int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
+        integrity_check_state_t *ics, char *netelemid, char *operatorid,
+        wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder) {
 
-uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
-        integrity_check_state_t *ics) {
+    wandder_encoded_result_t *ic_pdu = NULL;
+    uint8_t hashresult[EVP_MAX_MD_SIZE];
+    unsigned int hashlen;
+    wandder_etsipshdr_data_t hdrdata;
+    uint16_t liidlen, l;
 
-    wandder_encoded_result_t *encres;
-    char *operatorid = NULL;
-    uint32_t medid;
-    col_known_liid_t *found;
-    int r = 0;
-    uint8_t ret = INTEGRITY_CHECK_NO_ACTION;
+    EVP_DigestFinal_ex(ics->hash_ctx, hashresult, &hashlen);
+    populate_integrity_check_pshdr_data(&hdrdata, ics, netelemid,
+            operatorid);
 
-    if (ics == NULL) {
-        return INTEGRITY_CHECK_NO_ACTION;
+    reset_wandder_encoder(encoder);
+
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
+            ics->self_seqno_hash,
+            ics->agency->hash_method, INTEGRITY_CHECK_SEND_HASH,
+            ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
+            ics->seqno_next_index, ics->agency->time_fmt);
+
+    if (ic_pdu != NULL) {
+        /* update the signed hash using the contents of the IntegrityCheck
+         * PDU
+         */
+        update_signature_hash(ics, etsidecoder, ic_pdu);
+
+        // don't increment until AFTER update_signature_hash()
+        ics->self_seqno_hash ++;
     }
 
-    if (ics->pdus_since_last_hashrec == 0) {
-        return INTEGRITY_CHECK_NO_ACTION;
-    }
+    ics->seqno_next_index = 0;
+    reset_hash_context(ics);
 
-    HASH_FIND(hh, col->known_liids, ics->liid, strlen(ics->liid), found);
-    if (!found) {
-        return INTEGRITY_CHECK_NO_ACTION;
-    }
+    liidlen = strlen(ics->liid_key);
+    l = htons(liidlen);
 
-    if (!found->declared_int_rmq) {
-        /* we don't have an RMQ to put this IC PDU into, so for now we'll
-         * just have to skip it */
-        ics->pdus_since_last_hashrec = 0;
-        return INTEGRITY_CHECK_NO_ACTION;
-    }
+    res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->preamblen = liidlen + 2;
+    res->msgbody->encoded = malloc(res->preamblen + ic_pdu->len);
 
-    /* Generate a hash digest record and push it into the appropriate
-     * RMQ for the LIID
-     */
+    memcpy(res->msgbody->encoded, &l, sizeof(uint16_t));
+    memcpy(res->msgbody->encoded + sizeof(uint16_t), ics->liid_key, liidlen);
+    memcpy(res->msgbody->encoded + sizeof(uint16_t) + liidlen,
+            ic_pdu->encoded, ic_pdu->len);
 
-    lock_med_collector_config(col->parentconfig);
-    if (col->parentconfig->operatorid) {
-        operatorid = strdup(col->parentconfig->operatorid);
-    }
-    medid = col->parentconfig->parent_mediatorid;
-    unlock_med_collector_config(col->parentconfig);
+    res->msgbody->len = ic_pdu->len + sizeof(uint16_t) + liidlen;
+    res->msgbody->alloced = res->msgbody->len;
+    res->msgbody->next = NULL;
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len);
+    res->header.intercepttype = htons(ics->msgtype);
+    res->header.internalid = 0;
 
-    encres = generate_integrity_check_hash_pdu(ics, medid, operatorid,
-            col->etsiencoder, col->etsidecoder);
-    if (collrecv_save_message(col, (unsigned char *)ics->liid, encres->encoded,
-            encres->len, ics->msgtype) < 0) {
-        wandder_release_encoded_result(col->etsiencoder, encres);
-        return -1;
-    }
+    wandder_release_encoded_result(encoder, ic_pdu);
 
-    if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
-        r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                encres->encoded, encres->len, found->liid,
-                found->queuenames[1], &(col->rmq_blocked));
-    } else if (ics->msgtype == OPENLI_PROTO_ETSI_IRI) {
-        r = publish_iri_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                encres->encoded, encres->len, found->liid,
-                found->queuenames[0], &(col->rmq_blocked));
-    }
-
-    if (r < 0) {
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
-    }
-    if (operatorid) {
-        free(operatorid);
-    }
-    wandder_release_encoded_result(col->etsiencoder, encres);
-    ics->pdus_since_last_hashrec = 0;
-
-    // don't restart the timer until we've seen at least one hashable PDU
-    halt_openli_timer(ics->hash_timer);
-
-    if (ics->hashes_since_last_signrec >=
-            ics->agency->config->digest.sign_hashlimit &&
-            ics->agency->config->digest.sign_hashlimit > 0) {
-        ret = INTEGRITY_CHECK_REQUEST_SIGN;
-    }
-
-    return ret;
+    return 0;
 }
 
+#if 0
 int send_integrity_check_sign_pdu(coll_recv_t *col,
         integrity_check_state_t *ics, ics_sign_request_t *job,
         struct ics_sign_response_message *resp) {
@@ -783,28 +729,6 @@ int send_integrity_check_signing_request(coll_recv_t *col,
 }
 #endif
 
-int integrity_hash_timer_callback(openli_encoder_t *enc UNUSED,
-        openli_epoll_ev_t *mev) {
-
-    integrity_check_state_t *ics;
-
-    if (mev == NULL) {
-        return -1;
-    }
-
-    ics = (integrity_check_state_t *)(mev->state);
-
-    fprintf(stderr, "HASH TIMER %s\n", ics->key);
-    /*
-    if (send_integrity_check_hash_pdu(col, ics) ==
-            INTEGRITY_CHECK_REQUEST_SIGN) {
-        return send_integrity_check_signing_request(col, ics);
-    }
-    */
-
-    return 0;
-}
-
 int integrity_sign_timer_callback(openli_encoder_t *enc UNUSED,
         openli_epoll_ev_t *mev) {
 
@@ -850,6 +774,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
 
     if (integ->key) free(integ->key);
     if (integ->liid_key) free(integ->liid_key);
+    if (integ->authcc) free(integ->authcc);
     if (integ->hash_ctx) EVP_MD_CTX_free(integ->hash_ctx);
     if (integ->signature_ctx) EVP_MD_CTX_free(integ->signature_ctx);
     if (integ->hash_timer) destroy_openli_timer(integ->hash_timer);

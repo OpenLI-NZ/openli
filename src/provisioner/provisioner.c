@@ -977,6 +977,24 @@ static int push_all_emailintercepts(emailintercept_t *mailintercepts,
     return 0;
 }
 
+static int push_all_agency_digest_configs(prov_agency_t *leas,
+        net_buffer_t *nb) {
+
+    prov_agency_t *ag, *tmp;
+
+    HASH_ITER(hh, leas, ag, tmp) {
+        if (push_lea_digest_onto_net_buffer(nb, ag->ag) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing digest config for agency %s onto buffer for writing to collector.",
+                    ag->ag->agencyid);
+            return -1;
+        }
+    }
+
+    return 0;
+
+}
+
 static int push_all_ipintercepts(ipintercept_t *ipintercepts,
         net_buffer_t *nb, prov_agency_t *agencies) {
 
@@ -1037,6 +1055,15 @@ static int respond_collector_auth(provision_state_t *state,
     if (push_all_mediators(state->mediators, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
+                pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_all_agency_digest_configs(state->interceptconf.leas,
+            outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue LEA digest configs to be sent to new collector on fd %d",
                 pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
@@ -1107,6 +1134,7 @@ static int respond_collector_auth(provision_state_t *state,
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
+
 
     if (push_all_ipintercepts(state->interceptconf.ipintercepts, outgoing,
                 state->interceptconf.leas) == -1) {
