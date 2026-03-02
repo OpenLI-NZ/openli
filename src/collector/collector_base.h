@@ -45,6 +45,7 @@
 #include <uthash.h>
 #include <libtrace.h>
 #include <openssl/evp.h>
+#include <signal.h>
 
 #include "export_shared.h"
 #include "etsili_core.h"
@@ -56,6 +57,8 @@
 #include "openli_epoll.h"
 
 #define MAX_ENCODED_RESULT_BATCH 10
+
+extern volatile sig_atomic_t collector_halt;
 
 typedef struct sync_epoll {
     uint8_t fdtype;
@@ -350,6 +353,7 @@ typedef struct shared_liid_to_agency_mapping {
 
 typedef struct encoder_liid_state {
     char *liid_key;
+    char *authcc;
     uint8_t no_agency_map_warning;
     time_t last_agency_check;
     liagency_digest_config_t digest_config;
@@ -386,6 +390,7 @@ struct integrity_check_state {
 
     char *key;
     char *liid_key;
+    char *authcc;
     openli_liid_format_t liid_format;
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
@@ -423,6 +428,8 @@ typedef struct encoder_state {
     void **zmq_recvjob;
     void **zmq_pushresults;
     void *zmq_control;
+
+    int control_pipe[2];
 
     pthread_t threadid;
     int workerid;
@@ -481,6 +488,8 @@ void *start_forwarding_thread(void *data);
 
 void *start_udp_sink_worker(void *arg);
 void destroy_colsync_udp_sink(colsync_udp_sink_t *sink);
+
+void free_encoded_result(openli_encoded_result_t *res);
 
 #endif
 

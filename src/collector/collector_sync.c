@@ -532,6 +532,7 @@ static int update_digest_config(collector_sync_t *sync, uint8_t *provmsg,
 
     pthread_rwlock_wrlock(sync->digest_config_mutex);
 
+    fprintf(stderr, "AGENCY DIGEST FOR %s\n", agencyid);
     update_agency_digest_config_map(&(sync->digest_config->map), agencyid,
             agdigest);
 

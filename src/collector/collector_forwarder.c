@@ -44,7 +44,7 @@
 #define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
 #define AMQP_FRAME_MAX 131072
 
-static inline void free_encoded_result(openli_encoded_result_t *res) {
+void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
         free(res->liid);
     }

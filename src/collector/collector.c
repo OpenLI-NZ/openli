@@ -55,9 +55,9 @@
 #include "util.h"
 #include "collector_integrity_check.h"
 
-volatile int collector_halt = 0;
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
+volatile sig_atomic_t collector_halt = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -2713,6 +2713,7 @@ int main(int argc, char *argv[]) {
     char name[1024];
     x_input_t *xinp, *xtmp;
 
+    collector_halt = 0;
     todaemon = 0;
     while (1) {
         int optind;
@@ -2797,8 +2798,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    sigemptyset(&sig_block_all);
-    if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
+
+    sigfillset(&sig_block_all);
+    if (pthread_sigmask(SIG_BLOCK, &sig_block_all, &sig_before) < 0) {
         logger(LOG_INFO, "Unable to disable signals before starting threads.");
         return 1;
     }
@@ -2937,6 +2939,9 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].zmq_pushresults = NULL;
         glob->encoders[i].zmq_control = NULL;
 
+        if (pipe(glob->encoders[i].control_pipe) < 0) {
+            logger(LOG_INFO, "OpenLI Collector: WARNING failed to create control pipe for encoder worker %d", i);
+        }
         glob->encoders[i].workerid = i;
         glob->encoders[i].shared = &(glob->sharedinfo);
         glob->encoders[i].shared_mutex = &(glob->config_mutex);
@@ -3059,20 +3064,13 @@ int main(int argc, char *argv[]) {
     pthread_rwlock_unlock(&(glob->x_input_mutex));
 
 
-    if (glob->zmq_encoder_ctrl) {
-        /* The only control message required for encoding threads is the
-         * "halt" message, so we can just send an empty message and the
-         * recipients should treat that as a "halt" command.
-         */
-        if (zmq_send(glob->zmq_encoder_ctrl, NULL, 0, 0) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error sending halt to encoding threads: %s",
-                    strerror(errno));
-        }
-    }
-
     if (glob->email_ingestor) {
         stop_email_mhd_daemon(glob->email_ingestor);
+    }
+    for (i = 0; i < glob->encoding_threads; i++) {
+        if (write(glob->encoders[i].control_pipe[1], "x", 1) < 0) {
+            logger(LOG_INFO, "OpenLI Collector: WARNING failed to send halt token to encoder worker %d", i);
+        }
     }
 
     pthread_join(glob->syncip.threadid, NULL);

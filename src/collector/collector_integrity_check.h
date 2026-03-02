@@ -56,10 +56,9 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         openli_proto_msgtype_t msgtype, openli_encoding_job_t *job,
         int epoll_fd, integrity_check_state_t **chain);
 
-int integrity_hash_timer_callback(openli_encoder_t *enc,
-        openli_epoll_ev_t *mev);
-int integrity_sign_timer_callback(openli_encoder_t *enc,
-        openli_epoll_ev_t *mev);
+int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
+        integrity_check_state_t *ics, char *netelemid, char *operatorid,
+        wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder);
 
 void free_integrity_check_state(integrity_check_state_t *integ);
 void destroy_integrity_sign_job(ics_sign_request_t *job);
