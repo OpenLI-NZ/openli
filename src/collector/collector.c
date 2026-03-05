@@ -1976,6 +1976,10 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->sharedinfo.jsonconfig) {
         free(glob->sharedinfo.jsonconfig);
     }
+    if (glob->sharedinfo.digestsigningkey) {
+        EVP_PKEY_free(glob->sharedinfo.digestsigningkey);
+    }
+
     if (glob->alumirrors) {
         free_coreserver_list(glob->alumirrors);
     }
@@ -2122,6 +2126,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.networkelemid_len = 0;
     glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
     glob->sharedinfo.always_request_encrypt_bytecounter = 0;
+    glob->sharedinfo.digestsigningkey = NULL;
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
