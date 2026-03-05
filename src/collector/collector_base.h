@@ -391,9 +391,12 @@ struct integrity_check_state {
     char *key;
     char *liid_key;
     char *authcc;
+    char *cinstr;
     openli_liid_format_t liid_format;
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
+
+    uint32_t destmediator;
 
     liagency_digest_config_t *agency;
 
