@@ -288,33 +288,7 @@ static inline void update_signature_hash(integrity_check_state_t *found,
 }
 
 #if 0
-static wandder_encoded_result_t *generate_integrity_check_signature_pdu(
-        integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
-        wandder_encoder_t *encoder, ics_sign_request_t *job,
-        unsigned char *signature, uint32_t signlen) {
 
-    wandder_encoded_result_t *ic_pdu = NULL;
-    wandder_etsipshdr_data_t hdrdata;
-    char netelemid[128];
-
-    populate_integrity_check_pshdr_data(&hdrdata, ics, mediatorid,
-            operatorid, netelemid);
-    reset_wandder_encoder(encoder);
-    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
-            job->seqno, ics->agency->config->digest.hash_method,
-            INTEGRITY_CHECK_REQUEST_SIGN,
-            ics->msgtype, signature, signlen, job->signing_seqnos,
-            job->signing_seqno_array_size,
-            ics->agency->config->digest.time_fmt);
-
-    return ic_pdu;
-}
-
-static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
-        integrity_check_state_t *ics, uint32_t mediatorid, char *operatorid,
-        wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder) {
-
-}
 
 #endif
 
@@ -407,8 +381,6 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
 
     EVP_DigestUpdate(found->hash_ctx, msgbody, msglen);
 
-    fprintf(stderr, "%u %u %u %u\n", seqno, found->pdus_since_last_hashrec,
-            found->agency->hash_pdulimit, found->agency->hash_timeout);
     if (found->seqno_next_index == found->seqno_array_size) {
         found->hashed_seqnos = realloc(found->hashed_seqnos,
                 (found->seqno_array_size + 32) * sizeof(int64_t));
@@ -432,11 +404,120 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
             found->agency->hash_pdulimit != 0) {
         halt_openli_timer(found->hash_timer);
         action = INTEGRITY_CHECK_SEND_HASH;
-        fprintf(stderr, "HASH PDU: %s\n", found->key);
     }
     *chain = found;
     return action;
 
+}
+
+int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
+        integrity_check_state_t *ics, char *netelemid, char *operatorid,
+        wandder_encoder_t *encoder, EVP_PKEY *signingkey) {
+
+    wandder_encoded_result_t *ic_pdu = NULL;
+    unsigned char digest[EVP_MAX_MD_SIZE + 1];
+    unsigned char *signature;
+    unsigned int digestlen = 0;
+    size_t signlen = 0;
+    wandder_etsipshdr_data_t hdrdata;
+    uint16_t liidlen, l;
+    EVP_PKEY_CTX *sign_ctx = NULL;
+    char err_msg[256];
+    unsigned long errcode;
+
+    sign_ctx = EVP_PKEY_CTX_new(signingkey, NULL);
+    if (!sign_ctx) {
+        errcode = ERR_get_error();
+        ERR_error_string_n(errcode, err_msg, sizeof(err_msg));
+
+        logger(LOG_INFO,
+                "OpenLI collector: failed to create signing context for integrity check signatures: %s", err_msg);
+        return -1;
+    }
+
+    if (EVP_PKEY_sign_init(sign_ctx) <= 0) {
+        errcode = ERR_get_error();
+        ERR_error_string_n(errcode, err_msg, sizeof(err_msg));
+
+        logger(LOG_INFO,
+                "OpenLI collector: failed to initialize integrity check signature: %s", err_msg);
+        return -1;
+    }
+
+    EVP_DigestFinal_ex(ics->signature_ctx, digest, &digestlen);
+
+    if (EVP_PKEY_sign(sign_ctx, NULL, &(signlen), digest, digestlen) <= 0) {
+        errcode = ERR_get_error();
+        ERR_error_string_n(errcode, err_msg, sizeof(err_msg));
+
+        logger(LOG_INFO,
+                "OpenLI collector: failed to derive length for integrity check signature: %s", err_msg);
+        return -1;
+    }
+
+    signature = OPENSSL_malloc(signlen);
+    if (!signature) {
+        logger(LOG_INFO,
+                "OpenLI collector: failed to allocate memory to store integrity check signature");
+        return -1;
+    }
+
+    if (EVP_PKEY_sign(sign_ctx, signature, &(signlen), digest,
+            digestlen) <= 0) {
+        errcode = ERR_get_error();
+        ERR_error_string_n(errcode, err_msg, sizeof(err_msg));
+
+        logger(LOG_INFO,
+                "OpenLI collector: failed to generate integrity check signature from digest: %s", err_msg);
+        OPENSSL_free(signature);
+        return -1;
+    }
+
+    populate_integrity_check_pshdr_data(&hdrdata, ics, netelemid,
+            operatorid);
+    reset_wandder_encoder(encoder);
+    ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
+            ics->self_seqno_sign, ics->agency->hash_method,
+            INTEGRITY_CHECK_REQUEST_SIGN,
+            ics->msgtype, signature, signlen, ics->signing_seqnos,
+            ics->signing_seqno_next_index,
+            ics->agency->time_fmt);
+
+    if (ic_pdu == NULL) {
+        OPENSSL_free(signature);
+        return -1;
+    }
+
+    ics->self_seqno_sign ++;
+    reset_sign_hash_context(ics);
+    ics->signing_seqno_next_index = 0;
+
+    liidlen = strlen(ics->liid_key);
+    l = htons(liidlen);
+
+    res->msgbody = calloc(1, sizeof(wandder_encoded_result_t));
+    res->msgbody->encoder = NULL;
+    res->preamblen = liidlen + 2;
+    res->msgbody->encoded = malloc(res->preamblen + ic_pdu->len);
+
+    memcpy(res->msgbody->encoded, &l, sizeof(uint16_t));
+    memcpy(res->msgbody->encoded + sizeof(uint16_t), ics->liid_key, liidlen);
+    memcpy(res->msgbody->encoded + sizeof(uint16_t) + liidlen,
+            ic_pdu->encoded, ic_pdu->len);
+
+    res->msgbody->len = ic_pdu->len + sizeof(uint16_t) + liidlen;
+    res->msgbody->alloced = res->msgbody->len;
+    res->msgbody->next = NULL;
+    res->ipcontents = NULL;
+    res->ipclen = 0;
+    res->header.magic = htonl(OPENLI_PROTO_MAGIC);
+    res->header.bodylen = htons(res->msgbody->len);
+    res->header.intercepttype = htons(ics->msgtype);
+    res->header.internalid = 0;
+
+    OPENSSL_free(signature);
+    wandder_release_encoded_result(encoder, ic_pdu);
+    return 0;
 }
 
 int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
@@ -461,15 +542,17 @@ int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
             ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
             ics->seqno_next_index, ics->agency->time_fmt);
 
-    if (ic_pdu != NULL) {
-        /* update the signed hash using the contents of the IntegrityCheck
-         * PDU
-         */
-        update_signature_hash(ics, etsidecoder, ic_pdu);
-
-        // don't increment until AFTER update_signature_hash()
-        ics->self_seqno_hash ++;
+    if (ic_pdu == NULL) {
+        return -1;
     }
+
+    /* update the signed hash using the contents of the IntegrityCheck
+     * PDU
+     */
+    update_signature_hash(ics, etsidecoder, ic_pdu);
+
+    // don't increment until AFTER update_signature_hash()
+    ics->self_seqno_hash ++;
 
     ics->seqno_next_index = 0;
     reset_hash_context(ics);

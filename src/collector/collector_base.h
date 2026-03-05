@@ -222,6 +222,7 @@ typedef struct collector_identity {
     uint8_t always_request_encrypt_bytecounter;
     uint8_t cisco_noradius;
 
+    EVP_PKEY *digestsigningkey;
 } collector_identity_t;
 
 typedef struct collector_sip_configuration {

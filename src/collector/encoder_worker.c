@@ -236,6 +236,115 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
     close(enc->epoll_fd);
 }
 
+static int _send_integrity_check_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics, uint8_t is_hash) {
+
+    openli_encoded_result_t res;
+    char *operatorid = NULL;
+    char *netelemid = NULL;
+    encoder_liid_state_t *found = NULL;
+    EVP_PKEY *signingkey = NULL;
+
+    memset(&res, 0, sizeof(res));
+
+    HASH_FIND(hh, enc->known_liids, ics->liid_key, strlen(ics->liid_key),
+            found);
+    if (!found) {
+        return 0;
+    }
+
+    pthread_rwlock_rdlock(enc->shared_mutex);
+    if (enc->shared->operatorid) {
+        operatorid = strdup(enc->shared->operatorid);
+    }
+    if (enc->shared->networkelemid) {
+        netelemid = strdup(enc->shared->networkelemid);
+    }
+    pthread_rwlock_unlock(enc->shared_mutex);
+
+    if (is_hash) {
+        if (generate_integrity_check_hash_pdu(&res, ics, netelemid, operatorid,
+                enc->encoder, enc->etsidecoder) < 0) {
+            free_encoded_result(&res);
+            if (operatorid) free(operatorid);
+            if (netelemid) free(netelemid);
+            return -1;
+        }
+    } else {
+        pthread_rwlock_rdlock(enc->shared_mutex);
+        if (!enc->shared->digestsigningkey) {
+            logger(LOG_INFO,
+                    "OpenLI collector: unable to generate integrity check signatures because we do not know the signing key!");
+            pthread_rwlock_unlock(enc->shared_mutex);
+            goto endzone;
+        }
+
+        signingkey = enc->shared->digestsigningkey;
+        EVP_PKEY_up_ref(signingkey);
+        pthread_rwlock_unlock(enc->shared_mutex);
+
+        // TODO generate_integrity_check_signature_pdu()
+
+        EVP_PKEY_free(signingkey);
+        goto endzone;
+    }
+
+    res.liid = strdup(ics->liid_key);
+    res.seqno = ics->self_seqno_hash - 1;
+    res.restype = ics->msgtype;
+    res.encodedby = enc->workerid;
+    res.cinstr = strdup(ics->cinstr);
+    res.destid = ics->destmediator;
+
+    zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
+
+endzone:
+    if (operatorid) free(operatorid);
+    if (netelemid) free(netelemid);
+    return 1;
+}
+
+static int send_integrity_check_sign_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics) {
+
+    int ret = 0;
+
+    halt_openli_timer(ics->sign_timer);
+    if (ics->hashes_since_last_signrec == 0) {
+        return 0;
+    }
+
+    ret = _send_integrity_check_pdu(enc, ics, 0);
+    if (ret > 0) {
+        ics->hashes_since_last_signrec = 0;
+    }
+    return ret;
+}
+
+static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics) {
+    int ret = 0;
+
+    halt_openli_timer(ics->hash_timer);
+    if (ics->pdus_since_last_hashrec == 0) {
+        return ret;
+    }
+
+    ret = _send_integrity_check_pdu(enc, ics, 1);
+
+    if (ret <= 0) {
+        return ret;
+    }
+    ics->pdus_since_last_hashrec = 0;
+
+    if (ics->hashes_since_last_signrec >= ics->agency->sign_hashlimit &&
+            ics->agency->sign_hashlimit > 0) {
+        // send signed hashes
+        ret = send_integrity_check_sign_pdu(enc, ics);
+    }
+    return ret;
+}
+
 static inline int finalize_encoded_result(openli_encoded_result_t *res,
         openli_encoding_job_t *job, openli_encoder_t *enc,
         encoder_liid_state_t *known, uint8_t type) {
@@ -282,11 +391,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     }
 
     if (integrity_res == INTEGRITY_CHECK_SEND_HASH) {
-        chain->pdus_since_last_hashrec = 0;
-    }
-
-    if (integrity_res == INTEGRITY_CHECK_REQUEST_SIGN) {
-        chain->hashes_since_last_signrec = 0;
+        return send_integrity_check_hash_pdu(enc, chain);
     }
 
     return 0;
@@ -341,7 +446,6 @@ static void check_agency_digest_config(openli_encoder_t *enc,
         return;
     }
 
-    fprintf(stderr, "AGENCY DIGEST %s %u\n", agmap->agencyid, agdigest->disabled);
     if (agdigest->disabled) {
         found->digest_config_disabled = 1;
         memset(&found->digest_config, 0, sizeof(found->digest_config));
@@ -1172,65 +1276,6 @@ encodejoberror:
     return encoded_total;
 }
 
-static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
-        integrity_check_state_t *ics) {
-    openli_encoded_result_t res;
-    char *operatorid = NULL;
-    char *netelemid = NULL;
-    encoder_liid_state_t *found = NULL;
-    int ret = 0;
-
-    if (ics->pdus_since_last_hashrec == 0) {
-        goto exitcallback;
-    }
-
-    pthread_rwlock_rdlock(enc->shared_mutex);
-    if (enc->shared->operatorid) {
-        operatorid = strdup(enc->shared->operatorid);
-    }
-    if (enc->shared->networkelemid) {
-        netelemid = strdup(enc->shared->networkelemid);
-    }
-
-    pthread_rwlock_unlock(enc->shared_mutex);
-
-    HASH_FIND(hh, enc->known_liids, ics->liid_key, strlen(ics->liid_key),
-            found);
-    if (!found) {
-        goto exitcallback;
-    }
-
-    memset(&res, 0, sizeof(res));
-    if (generate_integrity_check_hash_pdu(&res, ics, netelemid, operatorid,
-            enc->encoder, enc->etsidecoder) < 0) {
-        free_encoded_result(&res);
-        goto exitcallback;
-    }
-
-    res.liid = strdup(ics->liid_key);
-    res.seqno = ics->self_seqno_hash - 1;
-    res.restype = ics->msgtype;
-    res.encodedby = enc->workerid;
-    res.cinstr = strdup(ics->cinstr);
-    res.destid = ics->destmediator;
-
-
-    zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
-
-    ics->pdus_since_last_hashrec = 0;
-    if (ics->hashes_since_last_signrec >= ics->agency->sign_hashlimit &&
-            ics->agency->sign_hashlimit > 0) {
-        // send signed hashes TODO
-    }
-
-exitcallback:
-    if (operatorid) free(operatorid);
-    if (netelemid) free(netelemid);
-
-    halt_openli_timer(ics->hash_timer);
-    return ret;
-}
-
 static int integrity_hash_timer_callback(openli_encoder_t *enc,
         openli_epoll_ev_t *mev) {
 
@@ -1245,9 +1290,24 @@ static int integrity_hash_timer_callback(openli_encoder_t *enc,
         return 0;
     }
 
-    fprintf(stderr, "HASH TIMER %s\n", ics->key);
-
     return send_integrity_check_hash_pdu(enc, ics);
+}
+
+static int integrity_sign_timer_callback(openli_encoder_t *enc,
+        openli_epoll_ev_t *mev) {
+
+    integrity_check_state_t *ics;
+
+    if (mev == NULL) {
+        return -1;
+    }
+
+    ics = (integrity_check_state_t *)(mev->state);
+    if (ics == NULL) {
+        return 0;
+    }
+
+    return send_integrity_check_sign_pdu(enc, ics);
 }
 
 static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
@@ -1268,7 +1328,7 @@ static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
             ret = integrity_hash_timer_callback(enc, mev);
             break;
         case OPENLI_EPOLL_INTEGRITY_SIGN_TIMER:
-            //ret = integrity_sign_timer_callback(enc, mev);
+            ret = integrity_sign_timer_callback(enc, mev);
             break;
         case OPENLI_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER:
             // TODO
@@ -1309,7 +1369,6 @@ static inline void poll_nextjob(openli_encoder_t *enc) {
         if (nfds == 0) {
             zmq_getsockopt(enc->zmq_recvjob, ZMQ_EVENTS, &zmq_events, &size);
             if (zmq_events & ZMQ_POLLIN) {
-                fprintf(stderr, "process_job_manual\n");
                 process_job(enc, enc->zmq_recvjob);
             }
         }
