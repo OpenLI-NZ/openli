@@ -356,8 +356,12 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     /** map key is LIID, CIN and msgtype, separated by space characters. */
     HASH_FIND(hh, *map, dmk->keystring, strlen(dmk->keystring), found);
     if (!found) {
+        char cin_string[1024];
+        snprintf(cin_string, 1024, "%s-%u", known->liid_key, cin);
+
         found = calloc(1, sizeof(integrity_check_state_t));
         found->key = strdup(dmk->keystring);
+        found->cinstr = strdup(cin_string);
         found->agency = NULL;
         found->cin = cin;
         found->msgtype = msgtype;
@@ -395,6 +399,10 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->hashes_since_last_signrec = 0;
     } else {
         found->agency = &(known->digest_config);
+    }
+
+    if (job && job->origreq) {
+        found->destmediator = job->origreq->destid;
     }
 
     EVP_DigestUpdate(found->hash_ctx, msgbody, msglen);
@@ -775,6 +783,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->key) free(integ->key);
     if (integ->liid_key) free(integ->liid_key);
     if (integ->authcc) free(integ->authcc);
+    if (integ->cinstr) free(integ->cinstr);
     if (integ->hash_ctx) EVP_MD_CTX_free(integ->hash_ctx);
     if (integ->signature_ctx) EVP_MD_CTX_free(integ->signature_ctx);
     if (integ->hash_timer) destroy_openli_timer(integ->hash_timer);

@@ -250,6 +250,16 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     res->encodedby = enc->workerid;
     res->restype = type;
 
+    // update digest state
+    if (known && !known->digest_config_disabled &&
+            known->digest_config.required) {
+        integrity_res = update_integrity_check_state(&(enc->integrity_state),
+                known, res->msgbody->encoded + res->preamblen,
+                res->msgbody->len - res->preamblen,
+                ntohs(res->header.intercepttype), job, enc->epoll_fd,
+                &chain);
+    }
+
     if (type == OPENLI_EXPORT_LAST_SEGMENT_FLAG ||
             type == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
         // Otherwise we run the risk of double freeing this later on
@@ -259,19 +269,6 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     } else {
         res->origreq = job->origreq;
         job->origreq = NULL;
-    }
-
-
-    if (known) {
-        fprintf(stderr, "finalize_encoded_result %u\n", known->digest_config_disabled);
-    }
-    // update digest state
-    if (known && !known->digest_config_disabled) {
-        integrity_res = update_integrity_check_state(&(enc->integrity_state),
-                known, res->msgbody->encoded + res->preamblen,
-                res->msgbody->len - res->preamblen,
-                ntohs(res->header.intercepttype), job, enc->epoll_fd,
-                &chain);
     }
 
 
@@ -285,11 +282,11 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     }
 
     if (integrity_res == INTEGRITY_CHECK_SEND_HASH) {
-
+        chain->pdus_since_last_hashrec = 0;
     }
 
     if (integrity_res == INTEGRITY_CHECK_REQUEST_SIGN) {
-
+        chain->hashes_since_last_signrec = 0;
     }
 
     return 0;
@@ -1196,7 +1193,6 @@ static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
     }
 
     pthread_rwlock_unlock(enc->shared_mutex);
-    fprintf(stderr, "%s\n", operatorid);
 
     HASH_FIND(hh, enc->known_liids, ics->liid_key, strlen(ics->liid_key),
             found);
@@ -1210,6 +1206,14 @@ static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
         free_encoded_result(&res);
         goto exitcallback;
     }
+
+    res.liid = strdup(ics->liid_key);
+    res.seqno = ics->self_seqno_hash - 1;
+    res.restype = ics->msgtype;
+    res.encodedby = enc->workerid;
+    res.cinstr = strdup(ics->cinstr);
+    res.destid = ics->destmediator;
+
 
     zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
 
