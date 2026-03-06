@@ -244,6 +244,7 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
     char *netelemid = NULL;
     encoder_liid_state_t *found = NULL;
     EVP_PKEY *signingkey = NULL;
+    encrypt_encode_state_t *encryptstate;
 
     memset(&res, 0, sizeof(res));
 
@@ -262,14 +263,22 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
     }
     pthread_rwlock_unlock(enc->shared_mutex);
 
+    if (ics->msgtype == OPENLI_PROTO_ETSI_IRI) {
+        encryptstate = &(found->encrypt_iri);
+    } else {
+        encryptstate = &(found->encrypt_cc);
+    }
+
     if (is_hash) {
         if (generate_integrity_check_hash_pdu(&res, ics, netelemid, operatorid,
-                enc->encoder, enc->etsidecoder) < 0) {
+                enc->encoder, enc->etsidecoder, enc->evp_ctx,
+                encryptstate) < 0) {
             free_encoded_result(&res);
             if (operatorid) free(operatorid);
             if (netelemid) free(netelemid);
             return -1;
         }
+        res.seqno = ics->self_seqno_hash - 1;
     } else {
         pthread_rwlock_rdlock(enc->shared_mutex);
         if (!enc->shared->digestsigningkey) {
@@ -283,14 +292,19 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
         EVP_PKEY_up_ref(signingkey);
         pthread_rwlock_unlock(enc->shared_mutex);
 
-        // TODO generate_integrity_check_signature_pdu()
-
+        if (generate_integrity_check_signature_pdu(&res, ics, netelemid,
+                operatorid, enc->encoder, signingkey) < 0) {
+            free_encoded_result(&res);
+            EVP_PKEY_free(signingkey);
+            if (operatorid) free(operatorid);
+            if (netelemid) free(netelemid);
+            return -1;
+        }
         EVP_PKEY_free(signingkey);
-        goto endzone;
+        res.seqno = ics->self_seqno_sign - 1;
     }
 
     res.liid = strdup(ics->liid_key);
-    res.seqno = ics->self_seqno_hash - 1;
     res.restype = ics->msgtype;
     res.encodedby = enc->workerid;
     res.cinstr = strdup(ics->cinstr);

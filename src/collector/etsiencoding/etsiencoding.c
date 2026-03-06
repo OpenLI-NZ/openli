@@ -32,7 +32,7 @@
 #include "etsiencoding.h"
 #include "util.h"
 
-static inline uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
+uint8_t encode_pspdu_sequence(uint8_t *space, uint8_t space_len,
         uint32_t contentsize, char *liid, uint16_t *preamblen) {
 
     uint8_t len_space_req = DERIVE_INTEGER_LENGTH(contentsize);

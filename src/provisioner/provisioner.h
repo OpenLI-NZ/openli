@@ -421,10 +421,6 @@ typedef struct prov_state {
     /** The private key to use when signing digest hash integrity checks */
     EVP_PKEY *integrity_sign_private_key;
 
-    /** context for signing digests, used if the mediator requires
-     *  us to sign integrity checks */
-    EVP_PKEY_CTX *sign_ctx;
-
     /** A flag indicating whether collectors should ignore RTP comfort noise
      *  packets when intercepting voice traffic.
      */
@@ -560,6 +556,7 @@ int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
 int announce_digest_config_to_collectors(provision_state_t *state,
         prov_agency_t *lea);
+void announce_ics_private_key_to_collectors(provision_state_t *state);
 
 /* Implemented in hup_reload.c */
 int reload_provisioner_config(provision_state_t *state);

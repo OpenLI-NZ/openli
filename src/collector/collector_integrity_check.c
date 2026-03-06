@@ -287,11 +287,6 @@ static inline void update_signature_hash(integrity_check_state_t *found,
     }
 }
 
-#if 0
-
-
-#endif
-
 uint8_t update_integrity_check_state(integrity_check_state_t **map,
         encoder_liid_state_t *known, uint8_t *msgbody, uint16_t msglen,
         openli_proto_msgtype_t msgtype, openli_encoding_job_t *job,
@@ -350,7 +345,9 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->self_seqno_hash = 1;
         found->self_seqno_sign = 1;
         found->awaiting_final_signature = 0;
-        found->sign_jobs = NULL;
+        found->encryptmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+        found->encryptkey = NULL;
+        found->encryptkey_len = 0;
         HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
     }
 
@@ -377,6 +374,27 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
 
     if (job && job->origreq) {
         found->destmediator = job->origreq->destid;
+    }
+
+    if (job) {
+        found->encryptmethod = job->encryptmethod;
+
+        if (job->encryptkey == NULL) {
+            if (found->encryptkey) free(found->encryptkey);
+            found->encryptkey = NULL;
+        } else {
+            if (found->encryptkey != NULL && memcmp(found->encryptkey,
+                    job->encryptkey, job->encryptkey_len) != 0) {
+                free(found->encryptkey);
+                found->encryptkey = NULL;
+            }
+            if (found->encryptkey == NULL) {
+                found->encryptkey = malloc(job->encryptkey_len);
+                memcpy(found->encryptkey, job->encryptkey,
+                        job->encryptkey_len);
+            }
+        }
+        found->encryptkey_len = job->encryptkey_len;
     }
 
     EVP_DigestUpdate(found->hash_ctx, msgbody, msglen);
@@ -452,6 +470,7 @@ int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
 
         logger(LOG_INFO,
                 "OpenLI collector: failed to derive length for integrity check signature: %s", err_msg);
+        EVP_PKEY_CTX_free(sign_ctx);
         return -1;
     }
 
@@ -459,6 +478,7 @@ int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
     if (!signature) {
         logger(LOG_INFO,
                 "OpenLI collector: failed to allocate memory to store integrity check signature");
+        EVP_PKEY_CTX_free(sign_ctx);
         return -1;
     }
 
@@ -470,9 +490,11 @@ int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
         logger(LOG_INFO,
                 "OpenLI collector: failed to generate integrity check signature from digest: %s", err_msg);
         OPENSSL_free(signature);
+        EVP_PKEY_CTX_free(sign_ctx);
         return -1;
     }
 
+    EVP_PKEY_CTX_free(sign_ctx);
     populate_integrity_check_pshdr_data(&hdrdata, ics, netelemid,
             operatorid);
     reset_wandder_encoder(encoder);
@@ -522,7 +544,8 @@ int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
 
 int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
         integrity_check_state_t *ics, char *netelemid, char *operatorid,
-        wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder) {
+        wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder,
+        EVP_CIPHER_CTX *evp_ctx, encrypt_encode_state_t *encryptstate) {
 
     wandder_encoded_result_t *ic_pdu = NULL;
     uint8_t hashresult[EVP_MAX_MD_SIZE];
@@ -550,6 +573,28 @@ int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
      * PDU
      */
     update_signature_hash(ics, etsidecoder, ic_pdu);
+
+    /* If we're meant to be encrypted, generate the encrypted version of the
+     * IC PDU now.
+     *
+     * There are probably faster ways to do this, but it is simpler to just
+     * regenerate the entire PDU from scratch
+     */
+    if (ics->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        wandder_release_encoded_result(encoder, ic_pdu);
+        reset_wandder_encoder(encoder);
+
+        ic_pdu = encode_encrypted_etsi_integrity_check(encoder, etsidecoder,
+                &hdrdata, encryptstate, evp_ctx, ics->encryptmethod,
+                ics->encryptkey, ics->encryptkey_len, ics->cin,
+                ics->self_seqno_hash, ics->agency->hash_method,
+                INTEGRITY_CHECK_SEND_HASH, ics->msgtype, hashresult, hashlen,
+                ics->hashed_seqnos, ics->seqno_next_index,
+                ics->agency->time_fmt);
+        if (ic_pdu == NULL) {
+            return -1;
+        }
+    }
 
     // don't increment until AFTER update_signature_hash()
     ics->self_seqno_hash ++;
@@ -585,241 +630,6 @@ int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
     return 0;
 }
 
-#if 0
-int send_integrity_check_sign_pdu(coll_recv_t *col,
-        integrity_check_state_t *ics, ics_sign_request_t *job,
-        struct ics_sign_response_message *resp) {
-
-    wandder_encoded_result_t *encres;
-    char *operatorid = NULL;
-    uint32_t medid;
-    col_known_liid_t *found;
-    int r = 0;
-
-    HASH_FIND(hh, col->known_liids, ics->liid, strlen(ics->liid), found);
-    if (!found) {
-        return -1;
-    }
-
-    if (!found->declared_int_rmq) {
-        /* we don't have an RMQ to put this IC PDU into, so for now we'll
-         * just have to skip it */
-        return 0;
-    }
-
-    /* Generate a hash digest record and push it into the appropriate
-     * RMQ for the LIID
-     */
-
-    lock_med_collector_config(col->parentconfig);
-    if (col->parentconfig->operatorid) {
-        operatorid = strdup(col->parentconfig->operatorid);
-    }
-    medid = col->parentconfig->parent_mediatorid;
-    unlock_med_collector_config(col->parentconfig);
-
-    encres = generate_integrity_check_signature_pdu(ics, medid, operatorid,
-            col->etsiencoder, job, resp->signature, resp->sign_len);
-
-    if (collrecv_save_message(col, (unsigned char *)ics->liid, encres->encoded,
-            encres->len, ics->msgtype) < 0) {
-        if (operatorid) {
-            free(operatorid);
-        }
-        wandder_release_encoded_result(col->etsiencoder, encres);
-        return -1;
-    }
-
-    if (ics->msgtype == OPENLI_PROTO_ETSI_CC) {
-        r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                encres->encoded, encres->len, found->liid,
-                found->queuenames[1], &(col->rmq_blocked));
-    } else if (ics->msgtype == OPENLI_PROTO_ETSI_IRI) {
-        r = publish_iri_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                encres->encoded, encres->len, found->liid,
-                found->queuenames[0], &(col->rmq_blocked));
-    }
-
-    if (r < 0) {
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
-    }
-    if (operatorid) {
-        free(operatorid);
-    }
-    wandder_release_encoded_result(col->etsiencoder, encres);
-    return 1;
-}
-
-static void push_signing_request(coll_recv_t *col, integrity_check_state_t *ics,
-        ics_sign_request_t *job) {
-
-    col_thread_msg_t msg;
-    struct ics_sign_request_message *body;
-
-    body = calloc(1, sizeof(struct ics_sign_request_message));
-    body->ics_key = strdup(ics->key);
-    body->seqno = job->seqno;
-    body->digest = calloc(job->digest_len + 1, sizeof(unsigned char));
-    body->requestedby = strdup(col->ipaddr);
-    body->requestedby_fwd = col->forwarder_id;
-    memcpy(body->digest, job->digest, job->digest_len);
-    body->digest_len = job->digest_len;
-
-    memset(&msg, 0, sizeof(msg));
-    msg.type = MED_COLL_INTEGRITY_SIGN_REQUEST;
-    msg.arg = (uint64_t)(body);
-
-    if (zmq_send(col->zmq_requests, &msg, sizeof(msg), 0) < 0) {
-        logger(LOG_INFO, "OpenLI mediator: error pushing signing request %ld onto request queue for ICS chain %s:%u:%u: %s",
-                job->seqno, job->chain->liid, job->chain->cin,
-                job->chain->msgtype, strerror(errno));
-        logger(LOG_INFO, "OpenLI mediator: will try again soon");
-    }
-
-    job->attempts ++;
-    start_openli_timer(job->reply_timer, 30);
-}
-
-#define MAX_ICS_SIGN_REQUEST_ATTEMPTS 10
-
-void integrity_sign_reply_timer_callback(coll_recv_t *col,
-        med_epoll_ev_t *mev) {
-
-    ics_sign_request_t *job;
-
-    if (mev == NULL) {
-        return;
-    }
-    halt_openli_timer(mev);
-    job = (ics_sign_request_t *)(mev->state);
-
-    if (job->attempts == 5 || (
-            job->attempts > MAX_ICS_SIGN_REQUEST_ATTEMPTS &&
-            HASH_CNT(hh, job->chain->sign_jobs) > 5)) {
-        logger(LOG_INFO, "OpenLI mediator: giving up on signing request %ld for ICS chain %s:%u:%u after %u attempts",
-                job->seqno, job->chain->liid, job->chain->cin,
-                job->chain->msgtype, job->attempts);
-        free(job->digest);
-        free(job->signing_seqnos);
-        destroy_openli_timer(job->reply_timer);
-
-        HASH_DELETE(hh, job->chain->sign_jobs, job);
-        free(job);
-        return;
-    }
-
-    push_signing_request(col, job->chain, job);
-
-}
-
-void handle_integrity_check_signature_response(coll_recv_t *col,
-        struct ics_sign_response_message *resp) {
-
-    integrity_check_state_t *found;
-    ics_sign_request_t *job = NULL;
-
-    if (resp == NULL) {
-        return;
-    }
-
-    HASH_FIND(hh, col->integrity_state, resp->ics_key, strlen(resp->ics_key),
-            found);
-    if (!found) {
-        logger(LOG_INFO, "OpenLI mediator: failed to find integrity state entry for received response: %s", resp->ics_key);
-        goto tidyup;
-    }
-
-    HASH_FIND(hh, found->sign_jobs, &(resp->seqno), sizeof(resp->seqno), job);
-    if (!job) {
-        logger(LOG_INFO, "OpenLI mediator: received integrity check signature for seqno %ld, but could not find it in the pending jobs list for %s",
-                resp->seqno, resp->ics_key);
-        goto tidyup;
-    }
-
-    HASH_DELETE(hh, found->sign_jobs, job);
-    halt_openli_timer(job->reply_timer);
-
-    /* encode the integrity check PDU with the signature */
-    send_integrity_check_sign_pdu(col, found, job, resp);
-
-    if (found->awaiting_final_signature && HASH_CNT(hh, found->sign_jobs) == 0)
-    {
-        HASH_DELETE(hh, col->integrity_state, found);
-        free_integrity_check_state(found);
-    }
-
-tidyup:
-    if (job) {
-        destroy_integrity_sign_job(job);
-    }
-
-    if (resp->signature) {
-        free(resp->signature);
-    }
-    if (resp->ics_key) {
-        free(resp->ics_key);
-    }
-    if (resp->requestedby) {
-        free(resp->requestedby);
-    }
-
-    free(resp);
-}
-
-int send_integrity_check_signing_request(coll_recv_t *col,
-        integrity_check_state_t *ics) {
-
-    ics_sign_request_t *job = NULL;
-
-    if (ics->sign_timer && ics->sign_timer->fd != -1) {
-        halt_openli_timer(ics->sign_timer);
-    }
-
-    if (ics->signing_seqno_next_index == 0) {
-        return 0;
-    }
-
-    if (col->forwarder_id < 0) {
-        return 0;
-    }
-
-    HASH_FIND(hh, ics->sign_jobs, &(ics->self_seqno_sign),
-            sizeof(ics->self_seqno_sign), job);
-    if (job) {
-        /* this is bad, because this should not happen... */
-        logger(LOG_INFO, "OpenLI mediator: sequence number %ld is already in use for an outstanding signing request for %s:%u:%u?",
-                ics->self_seqno_sign, ics->liid, ics->cin, ics->msgtype);
-        return -1;
-    }
-
-    job = calloc(1, sizeof(ics_sign_request_t));
-    job->chain = ics;
-    job->attempts = 0;
-    job->seqno = ics->self_seqno_sign;
-    job->signing_seqnos = ics->signing_seqnos;
-    job->signing_seqno_array_size = ics->signing_seqno_next_index;
-    job->digest = calloc(EVP_MAX_MD_SIZE + 1, sizeof(unsigned char));
-    job->digest_len = 0;
-    job->reply_timer = create_openli_timer(col->epoll_fd, job,
-            MED_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER, 0);
-
-    HASH_ADD_KEYPTR(hh, ics->sign_jobs, &(job->seqno), sizeof(job->seqno), job);
-
-    ics->self_seqno_sign ++;
-    ics->signing_seqnos = calloc(16, sizeof(int64_t));
-    ics->signing_seqno_array_size = 16;
-    ics->signing_seqno_next_index = 0;
-    ics->hashes_since_last_signrec = 0;
-
-    EVP_DigestFinal_ex(ics->signature_ctx, job->digest, &(job->digest_len));
-    push_signing_request(col, ics, job);
-    reset_sign_hash_context(ics);
-
-    return 0;
-}
-#endif
-
 int integrity_sign_timer_callback(openli_encoder_t *enc UNUSED,
         openli_epoll_ev_t *mev) {
 
@@ -836,31 +646,9 @@ int integrity_sign_timer_callback(openli_encoder_t *enc UNUSED,
     return 0;
 }
 
-void destroy_integrity_sign_job(ics_sign_request_t *job) {
-    if (!job) return;
-
-    if (job->signing_seqnos) {
-        free(job->signing_seqnos);
-    }
-    if (job->reply_timer) {
-        destroy_openli_timer(job->reply_timer);
-    }
-    if (job->digest) {
-        free(job->digest);
-        job->digest = NULL;
-        job->digest_len = 0;
-    }
-    free(job);
-}
-
 void free_integrity_check_state(integrity_check_state_t *integ) {
-    ics_sign_request_t *job, *tmp;
     if (integ == NULL) {
         return;
-    }
-    HASH_ITER(hh, integ->sign_jobs, job, tmp) {
-        HASH_DELETE(hh, integ->sign_jobs, job);
-        destroy_integrity_sign_job(job);
     }
 
     if (integ->key) free(integ->key);
@@ -873,6 +661,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->sign_timer) destroy_openli_timer(integ->sign_timer);
     if (integ->hashed_seqnos) free(integ->hashed_seqnos);
     if (integ->signing_seqnos) free(integ->signing_seqnos);
+    if (integ->encryptkey) free(integ->encryptkey);
 
     free(integ);
 }
