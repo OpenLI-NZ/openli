@@ -221,6 +221,18 @@ wandder_encoded_result_t *encode_etsi_segment_flag_body(
         wandder_encoder_t *encoder, wandder_encode_job_t *precomputed,
         uint8_t is_first);
 
+wandder_encoded_result_t *encode_encrypted_etsi_integrity_check(
+        wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder,
+        wandder_etsipshdr_data_t *hdrdata,
+        encrypt_encode_state_t *encryptstate, EVP_CIPHER_CTX *evp_ctx,
+        payload_encryption_method_t encryptmethod, uint8_t *encryptkey,
+        size_t encryptkey_len, int64_t cin,
+        int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
+        uint32_t checktype, openli_proto_msgtype_t msgtype,
+        uint8_t *checkval, unsigned int checkvallen,
+        int64_t *inclseqnos, size_t numseqnos,
+        openli_timestamp_encoding_fmt_t timefmt);
+
 /* defined in hi1notification.c */
 openli_encoded_result_t *encode_etsi_hi1_notification(
         wandder_encoder_t *encoder, hi1_notify_data_t *not_data,

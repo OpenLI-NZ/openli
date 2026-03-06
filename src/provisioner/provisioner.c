@@ -287,7 +287,6 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->authdb = NULL;
     state->integrity_sign_private_key = NULL;
     state->integrity_sign_private_key_location = NULL;
-    state->sign_ctx = NULL;
 
     init_intercept_config(&(state->interceptconf));
 
@@ -791,9 +790,6 @@ void clear_prov_state(provision_state_t *state) {
     if (state->clientdbkey) {
         free(state->clientdbkey);
     }
-    if (state->sign_ctx) {
-        EVP_PKEY_CTX_free(state->sign_ctx);
-    }
     if (state->integrity_sign_private_key) {
         EVP_PKEY_free(state->integrity_sign_private_key);
     }
@@ -1056,6 +1052,14 @@ static int respond_collector_auth(provision_state_t *state,
         logger(LOG_INFO,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
                 pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_ics_signing_key_onto_net_buffer(outgoing,
+            state->integrity_sign_private_key) == -1) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send ICS private key to new collector on fd %s", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
@@ -1431,12 +1435,6 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
 
                 if (update_mediator_details(state, msgbody, msglen,
                         cs, cs->ipaddr) == -1) {
-                    return -1;
-                }
-                break;
-            case OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST:
-                if (prov_handle_ics_signing_request(state, msgbody, msglen,
-                        cs, pev) == -1) {
                     return -1;
                 }
                 break;

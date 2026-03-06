@@ -518,6 +518,26 @@ static int handle_lea_withdrawal(collector_sync_t *sync, uint8_t *provmsg,
     return 0;
 }
 
+static int update_ics_signing_key(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    EVP_PKEY *pkey = NULL, *oldkey = NULL;
+    if (decode_ics_signing_key(provmsg, msglen, &pkey) < 0) {
+        logger(LOG_INFO,
+                "OpenLI collector: failed to decode ICS signing key sent by the provisioner");
+        return -1;
+    }
+    pthread_rwlock_wrlock(sync->info_mutex);
+    oldkey = sync->info->digestsigningkey;
+    sync->info->digestsigningkey = pkey;
+    pthread_rwlock_unlock(sync->info_mutex);
+
+    if (oldkey) {
+        EVP_PKEY_free(oldkey);
+    }
+    return 0;
+}
+
 static int update_digest_config(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
@@ -532,7 +552,6 @@ static int update_digest_config(collector_sync_t *sync, uint8_t *provmsg,
 
     pthread_rwlock_wrlock(sync->digest_config_mutex);
 
-    fprintf(stderr, "AGENCY DIGEST FOR %s\n", agencyid);
     update_agency_digest_config_map(&(sync->digest_config->map), agencyid,
             agdigest);
 
@@ -2787,7 +2806,12 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
-
+            case OPENLI_PROTO_INTEGRITY_SIGNATURE_KEY:
+                ret = update_ics_signing_key(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
             case OPENLI_PROTO_ANNOUNCE_LEA_DIGEST:
                 ret = update_digest_config(sync, provmsg, msglen);
                 if (ret == -1) {

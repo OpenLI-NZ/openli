@@ -1294,9 +1294,6 @@ int reload_provisioner_config(provision_state_t *currstate) {
         return -1;
     }
 
-    /* integrity signing key changes are local to the provisioner, so
-     * there is no need to notify clients
-     */
     if (currstate->integrity_sign_private_key_location) {
         free(currstate->integrity_sign_private_key_location);
     }
@@ -1305,6 +1302,10 @@ int reload_provisioner_config(provision_state_t *currstate) {
     newstate.integrity_sign_private_key_location = NULL;
     load_integrity_signing_privatekey(currstate);
 
+    /* Always send the private key to any collectors we have, no need to
+     * worry about checking if it has changed.
+     */
+    announce_ics_private_key_to_collectors(currstate);
 
     /* Only make changes if the relevant configuration has changed, so as
      * to minimise interruptions.

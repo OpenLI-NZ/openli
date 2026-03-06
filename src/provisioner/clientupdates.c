@@ -650,6 +650,20 @@ int remove_liid_mapping(provision_state_t *state,
     return 0;
 }
 
+void announce_ics_private_key_to_collectors(provision_state_t *state) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_ics_signing_key_onto_net_buffer(sock->outgoing,
+                state->integrity_sign_private_key) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send ICS private key to collector '%s'", col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
 int announce_liidmapping_to_mediators(provision_state_t *state,
         liid_hash_t *liidmap) {
 

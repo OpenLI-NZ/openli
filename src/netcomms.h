@@ -164,8 +164,8 @@ typedef enum {
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
     OPENLI_PROTO_X2X3_LISTENER_DETAILS,
-    OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
-    OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_KEY,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,  // no longer used
     OPENLI_PROTO_ADD_UDPSINK,
     OPENLI_PROTO_MODIFY_UDPSINK,
     OPENLI_PROTO_REMOVE_UDPSINK,
@@ -239,7 +239,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
     OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
     OPENLI_PROTO_FIELD_COMPONENT_NAME,
-    OPENLI_PROTO_FIELD_DIGEST,
+    OPENLI_PROTO_FIELD_PRIV_SIGN_KEY,
     OPENLI_PROTO_FIELD_LENGTH_BYTES,
     OPENLI_PROTO_FIELD_COLLECTORID,
     OPENLI_PROTO_FIELD_HANDOVER_RETRY,
@@ -281,10 +281,8 @@ int push_default_radius_onto_net_buffer(net_buffer_t *nb,
 int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
         default_radius_user_t *defuser);
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
-int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
-        struct ics_sign_request_message *req);
-int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
-        struct ics_sign_response_message *resp);
+int push_ics_signing_key_onto_net_buffer(net_buffer_t *nb, EVP_PKEY *pkey);
+
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
@@ -363,10 +361,7 @@ int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
         default_radius_user_t *defuser);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
-int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
-        struct ics_sign_request_message *req);
-int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
-        struct ics_sign_response_message *resp);
+int decode_ics_signing_key(uint8_t *msgbody, uint16_t len, EVP_PKEY **pkey);
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,

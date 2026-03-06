@@ -371,22 +371,6 @@ typedef struct encoder_liid_state {
 
 typedef struct integrity_check_state integrity_check_state_t;
 
-typedef struct ics_sign_request {
-
-    integrity_check_state_t *chain;
-
-    uint8_t attempts;
-
-    int64_t seqno;
-    int64_t *signing_seqnos;
-    size_t signing_seqno_array_size;
-
-    openli_epoll_ev_t *reply_timer;
-    unsigned char *digest;
-    unsigned int digest_len;
-    UT_hash_handle hh;
-} ics_sign_request_t;
-
 struct integrity_check_state {
 
     char *key;
@@ -404,8 +388,6 @@ struct integrity_check_state {
     openli_epoll_ev_t *hash_timer;
     openli_epoll_ev_t *sign_timer;
 
-    ics_sign_request_t *sign_jobs;
-
     uint32_t pdus_since_last_hashrec;
     uint32_t hashes_since_last_signrec;
 
@@ -422,6 +404,10 @@ struct integrity_check_state {
 
     int64_t self_seqno_hash;
     int64_t self_seqno_sign;
+
+    payload_encryption_method_t encryptmethod;
+    uint8_t *encryptkey;
+    size_t encryptkey_len;
 
     uint8_t awaiting_final_signature;
     UT_hash_handle hh;
