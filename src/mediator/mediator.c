@@ -816,10 +816,8 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     }
 
     if (found == 0) {
-        logger(LOG_INFO, "OpenLI Mediator: agency %s is not recognised by the mediator, yet LIID %s is intended for it?",
+        logger(LOG_INFO, "OpenLI Mediator: agency %s is not recognised by the mediator, yet LIID %s is intended for it. This LIID will be ignored.",
                 agencyid, liid);
-        ret = -1;
-        goto tidyup;
     }
 
 tidyup:
