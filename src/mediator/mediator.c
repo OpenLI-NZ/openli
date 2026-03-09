@@ -612,6 +612,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
     hi1_notify_data_t *ndata = calloc(1, sizeof(hi1_notify_data_t));
     lea_thread_msg_t msg;
     lea_thread_state_t *lea_t;
+    int ret = 0;
 
     char *nottype_strings[] = {
         "INVALID", "Activated", "Deactivated", "Modified", "ALARM"
@@ -623,6 +624,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
             logger(LOG_INFO,
                     "OpenLI Mediator: received invalid HI1 notification from provisioner.");
         }
+        ret = -1;
         goto freehi1;
     }
 
@@ -631,6 +633,7 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
             logger(LOG_INFO,
                     "OpenLI Mediator: invalid HI1 notification type %u received from provisioner.", ndata->notify_type);
         }
+        ret = -1;
         goto freehi1;
     }
 
@@ -640,11 +643,16 @@ static int receive_hi1_notification(mediator_state_t *state, uint8_t *msgbody,
     HASH_FIND(hh, state->agency_threads.threads, ndata->agencyid,
             strlen(ndata->agencyid), lea_t);
     if (lea_t == NULL) {
-        if (state->provisioner.disable_log == 0) {
+        // don't worry about logging deactivations with bad agencies, as
+        // most likely the deactivation was triggered by the agency being
+        // removed anyway
+        if (state->provisioner.disable_log == 0 &&
+                (ndata->notify_type == 1 || ndata->notify_type == 3)) {
             logger(LOG_INFO,
                     "OpenLI Mediator: received \"%s\" HI1 Notification from provisioner for LIID %s, but target agency '%s' is not recognisable?",
                     nottype_strings[ndata->notify_type], ndata->liid,
                     ndata->agencyid);
+            ret = -1;
         }
         goto freehi1;
     }
@@ -677,7 +685,7 @@ freehi1:
         free(ndata->delivcc);
     }
     free(ndata);
-    return -1;
+    return ret;
 }
 
 /** Parse and action an instruction from a provisioner to remove an

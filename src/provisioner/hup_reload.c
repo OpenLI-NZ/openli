@@ -653,8 +653,6 @@ static int reload_emailintercepts(provision_state_t *currstate,
             char *old_target_info = list_email_targets(mailint, 256);
             char *new_target_info = list_email_targets(newequiv, 256);
 
-            HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
-                    strlen(newequiv->common.targetagency), lea);
             if (!lea && strcmp(newequiv->common.targetagency, "pcapdisk")
                     != 0) {
                 // this intercept got changed to a non-existent LEA, or the
@@ -672,7 +670,7 @@ static int reload_emailintercepts(provision_state_t *currstate,
                 }
                 target_info = list_email_targets(mailint, 256);
                 remove_withdrawn_intercept(currstate, &(mailint->common),
-                        target_info, droppedmeds);
+                        target_info, 1);
                 if (target_info) {
                     free(target_info);
                 }
@@ -815,7 +813,7 @@ static int reload_voipintercepts(provision_state_t *currstate,
                 }
                 target_info = list_sip_targets(voipint, 256);
                 remove_withdrawn_intercept(currstate, &(voipint->common),
-                        target_info, droppedmeds);
+                        target_info, 1);
                 if (target_info) {
                     free(target_info);
                 }
@@ -946,7 +944,7 @@ static int reload_ipintercepts(provision_state_t *currstate,
                             OPENLI_PROTO_HALT_IPINTERCEPT);
                 }
                 remove_withdrawn_intercept(currstate, &(ipint->common),
-                        ipint->username, droppedmeds);
+                        ipint->username, 1);
                 continue;
             }
             newequiv->awaitingconfirm = 0;
