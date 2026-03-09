@@ -293,7 +293,8 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
         pthread_rwlock_unlock(enc->shared_mutex);
 
         if (generate_integrity_check_signature_pdu(&res, ics, netelemid,
-                operatorid, enc->encoder, signingkey) < 0) {
+                operatorid, enc->encoder, signingkey, enc->etsidecoder,
+                enc->evp_ctx, encryptstate) < 0) {
             free_encoded_result(&res);
             EVP_PKEY_free(signingkey);
             if (operatorid) free(operatorid);
@@ -1205,7 +1206,19 @@ static int process_job(openli_encoder_t *enc, void *socket) {
              */
             /* TODO remove integrity check state as well */
             if (found) {
+                integrity_check_state_t *ics, *tmp;
                 HASH_DELETE(hh, enc->known_liids, found);
+                // remove all integrity state chains for this LIID
+                HASH_ITER(hh, enc->integrity_state, ics, tmp) {
+                    if (strcmp(job.liid, ics->liid_key) != 0) {
+                        continue;
+                    }
+                    HASH_DELETE(hh, enc->integrity_state, ics);
+                    /* make sure we send final hashes and signatures */
+                    send_integrity_check_hash_pdu(enc, ics);
+                    send_integrity_check_sign_pdu(enc, ics);
+                    free_integrity_check_state(ics);
+                }
                 destroy_known_liid(found);
             }
             destroy_encoding_job(&job, 0);
@@ -1334,7 +1347,6 @@ static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
             // Time to halt the worker
             return -1;
         case OPENLI_EPOLL_ZMQ_YIELD:
-            __attribute__ ((fallthrough));
         case OPENLI_EPOLL_ENCODING_JOB:
             ret = process_job(enc, enc->zmq_recvjob);
             break;
@@ -1343,9 +1355,6 @@ static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
             break;
         case OPENLI_EPOLL_INTEGRITY_SIGN_TIMER:
             ret = integrity_sign_timer_callback(enc, mev);
-            break;
-        case OPENLI_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER:
-            // TODO
             break;
         default:
             logger(LOG_INFO, "OpenLI collector: invalid epoll event type %d seen in encoder worker %d", mev->fdtype, enc->workerid);

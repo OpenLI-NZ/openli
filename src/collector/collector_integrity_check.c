@@ -430,7 +430,9 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
 
 int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
         integrity_check_state_t *ics, char *netelemid, char *operatorid,
-        wandder_encoder_t *encoder, EVP_PKEY *signingkey) {
+        wandder_encoder_t *encoder, EVP_PKEY *signingkey,
+        wandder_etsispec_t *etsidecoder,
+        EVP_CIPHER_CTX *evp_ctx, encrypt_encode_state_t *encryptstate) {
 
     wandder_encoded_result_t *ic_pdu = NULL;
     unsigned char digest[EVP_MAX_MD_SIZE + 1];
@@ -510,6 +512,27 @@ int generate_integrity_check_signature_pdu(openli_encoded_result_t *res,
         return -1;
     }
 
+    /* If we're meant to be encrypted, generate the encrypted version of the
+     * IC PDU now.
+     *
+     * There are probably faster ways to do this, but it is simpler to just
+     * regenerate the entire PDU from scratch
+     */
+    if (ics->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        wandder_release_encoded_result(encoder, ic_pdu);
+        reset_wandder_encoder(encoder);
+
+        ic_pdu = encode_encrypted_etsi_integrity_check(encoder, etsidecoder,
+                &hdrdata, encryptstate, evp_ctx, ics->encryptmethod,
+                ics->encryptkey, ics->encryptkey_len, ics->cin,
+                ics->self_seqno_sign, ics->agency->sign_method,
+                INTEGRITY_CHECK_REQUEST_SIGN, ics->msgtype, signature,
+                signlen, ics->signing_seqnos, ics->signing_seqno_next_index,
+                ics->agency->time_fmt);
+        if (ic_pdu == NULL) {
+            return -1;
+        }
+    }
     ics->self_seqno_sign ++;
     reset_sign_hash_context(ics);
     ics->signing_seqno_next_index = 0;
@@ -630,22 +653,6 @@ int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
     return 0;
 }
 
-int integrity_sign_timer_callback(openli_encoder_t *enc UNUSED,
-        openli_epoll_ev_t *mev) {
-
-    integrity_check_state_t *ics;
-
-    if (mev == NULL) {
-        return -1;
-    }
-
-    ics = (integrity_check_state_t *)(mev->state);
-    fprintf(stderr, "SIGN TIMER %s\n", ics->key);
-    //return send_integrity_check_signing_request(col, ics);
-
-    return 0;
-}
-
 void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ == NULL) {
         return;
@@ -666,56 +673,3 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     free(integ);
 }
 
-#if 0
-void handle_liid_withdrawal_within_integrity_check_state(
-        integrity_check_state_t **state, char *liid,
-        coll_recv_t *col) {
-
-    integrity_check_state_t *ics, *tmp;
-
-    HASH_ITER(hh, *state, ics, tmp) {
-        if (strcmp(liid, ics->liid) == 0) {
-            if (ics->hash_timer) {
-                destroy_openli_timer(ics->hash_timer);
-                ics->hash_timer = NULL;
-            }
-            if (ics->sign_timer) {
-                destroy_openli_timer(ics->sign_timer);
-                ics->sign_timer = NULL;
-            }
-            /* have to produce a final hash record for any unhashed PDUs */
-            send_integrity_check_hash_pdu(col, ics);
-
-            /* have to produce a final signature for any unsigned hashes */
-            /* If we need a final signature, we can't free this ICS instance
-             * yet because we will need it to encode the message once the
-             * signed response gets back to us from the provisioner.
-             *
-             */
-            if (ics->hashes_since_last_signrec != 0) {
-                send_integrity_check_signing_request(col, ics);
-                ics->awaiting_final_signature = 1;
-            } else {
-                HASH_DELETE(hh, *state, ics);
-                free_integrity_check_state(ics);
-            }
-
-        }
-    }
-
-}
-
-void handle_lea_withdrawal_within_integrity_check_state(
-        integrity_check_state_t **state, char *agencyid) {
-
-    integrity_check_state_t *ics, *tmp;
-
-    HASH_ITER(hh, *state, ics, tmp) {
-        if (strcmp(agencyid, ics->agency->agencyid) == 0) {
-            HASH_DELETE(hh, *state, ics);
-            free_integrity_check_state(ics);
-        }
-    }
-}
-
-#endif
