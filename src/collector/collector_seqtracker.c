@@ -48,6 +48,9 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->delivcc) {
         free(msg->delivcc);
     }
+    if (msg->agencyid) {
+        free(msg->agencyid);
+    }
     openli_free_encryptkey_ptr(&(msg->encryptkey), msg->encryptkey_len);
 }
 
@@ -249,15 +252,11 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         remove_preencoded(seqdata, intstate);
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
+        free(intstate->details.agencyid);
         openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
                 intstate->details.encryptkey_len);
 
         /* leave the CIN seqno state as is for now */
-        intstate->details.authcc = strdup(cept->authcc);
-        intstate->details.delivcc = strdup(cept->delivcc);
-        intstate->details.authcc_len = strlen(cept->authcc);
-        intstate->details.delivcc_len = strlen(cept->delivcc);
-
         intstate->version ++;
 
     } else {
@@ -277,6 +276,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
                 intstate->details.liid_len, intstate);
     }
 
+    intstate->details.agencyid = strdup(cept->targetagency);
     intstate->details.authcc = strdup(cept->authcc);
     intstate->details.delivcc = strdup(cept->delivcc);
     intstate->details.authcc_len = strlen(cept->authcc);
@@ -325,6 +325,11 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
                 msg->liid);
         return -1;
     }
+
+    if (intstate->details.agencyid) {
+        free(intstate->details.agencyid);
+    }
+    intstate->details.agencyid = strdup(msg->targetagency);
 
     if (intstate->details.authcc) {
         free(intstate->details.authcc);
