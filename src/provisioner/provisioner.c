@@ -199,20 +199,61 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint;
     emailintercept_t *mailint;
+    prov_agency_t *found;
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
+        HASH_FIND(hh, conf->leas, ipint->common.targetagency,
+                strlen(ipint->common.targetagency), found);
+        if (!found && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, IP intercept with LIID '%s' is destined for LEA '%s', but that LEA is not configured in OpenLI",
+                    ipint->common.liid, ipint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    ipint->common.liid);
+            HASH_DELETE(hh_liid, conf->ipintercepts, ipint);
+            free_single_ipintercept(ipint);
+            continue;
+        }
+
         add_liid_mapping(conf, &(ipint->common));
     }
 
     /* Now do the VOIP intercepts */
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
+        HASH_FIND(hh, conf->leas, vint->common.targetagency,
+                strlen(vint->common.targetagency), found);
+        if (!found && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, VoIP intercept with LIID '%s' is destined for LEA '%s', but that LEA is not configured in OpenLI",
+                    vint->common.liid, vint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    vint->common.liid);
+            HASH_DELETE(hh_liid, conf->voipintercepts, vint);
+            free_single_voipintercept(vint);
+            continue;
+        }
         add_liid_mapping(conf, &(vint->common));
     }
 
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
+        HASH_FIND(hh, conf->leas, mailint->common.targetagency,
+                strlen(mailint->common.targetagency), found);
+        if (!found && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, Email intercept with LIID '%s' is destined for LEA '%s', but that LEA is not configured in OpenLI",
+                    mailint->common.liid, mailint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    mailint->common.liid);
+            HASH_DELETE(hh_liid, conf->emailintercepts, mailint);
+            free_single_emailintercept(mailint);
+            continue;
+        }
         add_liid_mapping(conf, &(mailint->common));
     }
 

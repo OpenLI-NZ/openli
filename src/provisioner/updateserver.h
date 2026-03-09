@@ -98,11 +98,11 @@ int remove_coreserver(update_con_info_t *cinfo, provision_state_t *state,
 int remove_defaultradius(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr);
 int remove_ip_intercept(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr);
+        const char *idstr, uint8_t send_deactivate);
 int remove_voip_intercept(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr);
+        const char *idstr, uint8_t send_deactivate);
 int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
-        const char *idstr);
+        const char *idstr, uint8_t send_deactivate);
 int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
         const char *fullid);
 

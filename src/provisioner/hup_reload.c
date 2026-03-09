@@ -404,6 +404,7 @@ static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
             /* Agency has been withdrawn entirely */
             withdraw_agency_from_mediators(state, lea);
             withdraw_agency_from_collectors(state, lea);
+
         } else if (agency_equal(lea->ag, newequiv->ag)) {
             newequiv->announcereq = 0;
         } else {
@@ -559,8 +560,9 @@ static int update_reconfigured_intercept(provision_state_t *currstate,
         char *new_targets) {
 
     char errorstring[1024];
-
     prov_intercept_data_t *local, *oldlocal;
+
+
     /* save the "hi1 sent" status from the original intercept
      * instance.
      */
@@ -617,6 +619,7 @@ static int reload_emailintercepts(provision_state_t *currstate,
     emailintercept_t *mailint, *tmp, *newequiv;
     char *target_info;
     struct timeval tv;
+    prov_agency_t *lea = NULL;
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -650,6 +653,31 @@ static int reload_emailintercepts(provision_state_t *currstate,
             char *old_target_info = list_email_targets(mailint, 256);
             char *new_target_info = list_email_targets(newequiv, 256);
 
+            HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
+                    strlen(newequiv->common.targetagency), lea);
+            if (!lea && strcmp(newequiv->common.targetagency, "pcapdisk")
+                    != 0) {
+                // this intercept got changed to a non-existent LEA, or the
+                // LEA got removed but the intercept remained
+                logger(LOG_INFO,
+                        "OpenLI provisioner: WARNING, Email intercept '%s' no longer has a valid destination agency (currently set to '%s')",
+                        newequiv->common.liid, newequiv->common.targetagency);
+                logger(LOG_INFO,
+                        "OpenLI provisioner: DISABLING LIID '%s' ",
+                        newequiv->common.liid);
+
+                if (!droppedcols) {
+                    halt_existing_intercept(currstate, (void *)mailint,
+                            OPENLI_PROTO_HALT_EMAILINTERCEPT);
+                }
+                target_info = list_email_targets(mailint, 256);
+                remove_withdrawn_intercept(currstate, &(mailint->common),
+                        target_info, droppedmeds);
+                if (target_info) {
+                    free(target_info);
+                }
+                continue;
+            }
             newequiv->awaitingconfirm = 0;
             if (update_reconfigured_intercept(currstate, &(mailint->common),
                     &(newequiv->common), intconf, (!intsame || changedtargets),
@@ -678,6 +706,20 @@ static int reload_emailintercepts(provision_state_t *currstate,
         int r = 0;
 
         if (!mailint->awaitingconfirm) {
+            continue;
+        }
+        HASH_FIND(hh, intconf->leas, mailint->common.targetagency,
+                strlen(mailint->common.targetagency), lea);
+        if (!lea) {
+            // This new intercept does not point to a valid LEA
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, Email intercept '%s' does not have a valid destination agency (currently set to '%s')",
+                    mailint->common.liid, mailint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    mailint->common.liid);
+            HASH_DELETE(hh_liid, newemail, mailint);
+            free_single_emailintercept(mailint);
             continue;
         }
         target_info = list_email_targets(mailint, 256);
@@ -717,6 +759,7 @@ static int reload_voipintercepts(provision_state_t *currstate,
     voipintercept_t *voipint, *tmp, *newequiv;
     char *target_info;
     struct timeval tv;
+    prov_agency_t *lea = NULL;
 
     /* TODO error handling in the "inform other components about changes"
      * functions?
@@ -753,6 +796,31 @@ static int reload_voipintercepts(provision_state_t *currstate,
             char *old_target_info = list_sip_targets(voipint, 256);
             char *new_target_info = list_sip_targets(newequiv, 256);
 
+            HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
+                    strlen(newequiv->common.targetagency), lea);
+            if (!lea && strcmp(newequiv->common.targetagency, "pcapdisk")
+                    != 0) {
+                // this intercept got changed to a non-existent LEA, or the
+                // LEA got removed but the intercept remained
+                logger(LOG_INFO,
+                        "OpenLI provisioner: WARNING, VoIP intercept '%s' no longer has a valid destination agency (currently set to '%s')",
+                        newequiv->common.liid, newequiv->common.targetagency);
+                logger(LOG_INFO,
+                        "OpenLI provisioner: DISABLING LIID '%s' ",
+                        newequiv->common.liid);
+
+                if (!droppedcols) {
+                    halt_existing_intercept(currstate, (void *)voipint,
+                            OPENLI_PROTO_HALT_VOIPINTERCEPT);
+                }
+                target_info = list_sip_targets(voipint, 256);
+                remove_withdrawn_intercept(currstate, &(voipint->common),
+                        target_info, droppedmeds);
+                if (target_info) {
+                    free(target_info);
+                }
+                continue;
+            }
             newequiv->awaitingconfirm = 0;
             if (update_reconfigured_intercept(currstate, &(voipint->common),
                     &(newequiv->common), intconf, (!intsame || changedtargets),
@@ -781,6 +849,20 @@ static int reload_voipintercepts(provision_state_t *currstate,
         int r = 0;
 
         if (!voipint->awaitingconfirm) {
+            continue;
+        }
+        HASH_FIND(hh, intconf->leas, voipint->common.targetagency,
+                strlen(voipint->common.targetagency), lea);
+        if (!lea) {
+            // This new intercept does not point to a valid LEA
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, VoIP intercept '%s' does not have a valid destination agency (currently set to '%s')",
+                    voipint->common.liid, voipint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    voipint->common.liid);
+            HASH_DELETE(hh_liid, newvoip, voipint);
+            free_single_voipintercept(voipint);
             continue;
         }
         target_info = list_sip_targets(voipint, 256);
@@ -821,6 +903,7 @@ static int reload_ipintercepts(provision_state_t *currstate,
 		prov_intercept_conf_t *intconf, int droppedcols, int droppedmeds) {
 
     ipintercept_t *ipint, *tmp, *newequiv;
+    prov_agency_t *lea;
 
     HASH_ITER(hh_liid, currints, ipint, tmp) {
         HASH_FIND(hh_liid, newints, ipint->common.liid,
@@ -845,6 +928,27 @@ static int reload_ipintercepts(provision_state_t *currstate,
             int encryptchanged = compare_intercept_encrypt_configuration(
                     &(ipint->common), &(newequiv->common));
 
+            HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
+                    strlen(newequiv->common.targetagency), lea);
+            if (!lea && strcmp(newequiv->common.targetagency, "pcapdisk")
+                    != 0) {
+                // this intercept got changed to a non-existent LEA, or the
+                // LEA got removed but the intercept remained
+                logger(LOG_INFO,
+                        "OpenLI provisioner: WARNING, IP intercept '%s' no longer has a valid destination agency (currently set to '%s')",
+                        newequiv->common.liid, newequiv->common.targetagency);
+                logger(LOG_INFO,
+                        "OpenLI provisioner: DISABLING LIID '%s' ",
+                        newequiv->common.liid);
+
+                if (!droppedcols) {
+                    halt_existing_intercept(currstate, (void *)ipint,
+                            OPENLI_PROTO_HALT_IPINTERCEPT);
+                }
+                remove_withdrawn_intercept(currstate, &(ipint->common),
+                        ipint->username, droppedmeds);
+                continue;
+            }
             newequiv->awaitingconfirm = 0;
 
             if (update_reconfigured_intercept(currstate, &(ipint->common),
@@ -869,6 +973,20 @@ static int reload_ipintercepts(provision_state_t *currstate,
             continue;
         }
 
+        HASH_FIND(hh, intconf->leas, ipint->common.targetagency,
+                strlen(ipint->common.targetagency), lea);
+        if (!lea) {
+            // This new intercept does not point to a valid LEA
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, IP intercept '%s' does not have a valid destination agency (currently set to '%s')",
+                    ipint->common.liid, ipint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    ipint->common.liid);
+            HASH_DELETE(hh_liid, newints, ipint);
+            free_single_ipintercept(ipint);
+            continue;
+        }
         r = enable_new_intercept(currstate, &(ipint->common), intconf,
                 ipint->username, droppedmeds);
         if (r < 0) {

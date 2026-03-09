@@ -289,13 +289,13 @@ static int update_configuration_delete(update_con_info_t *cinfo,
                     OPENLI_CORE_SERVER_POP3);
             break;
         case TARGET_IPINTERCEPT:
-            ret = remove_ip_intercept(cinfo, state, target);
+            ret = remove_ip_intercept(cinfo, state, target, 1);
             break;
         case TARGET_VOIPINTERCEPT:
-            ret = remove_voip_intercept(cinfo, state, target);
+            ret = remove_voip_intercept(cinfo, state, target, 1);
             break;
         case TARGET_EMAILINTERCEPT:
-            ret = remove_email_intercept(cinfo, state, target);
+            ret = remove_email_intercept(cinfo, state, target, 1);
             break;
         case TARGET_DEFAULTRADIUS:
             ret = remove_defaultradius(cinfo, state, target);

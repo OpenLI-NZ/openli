@@ -628,7 +628,7 @@ static int update_intercept_common(intercept_common_t *parsed,
 }
 
 int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
-        provision_state_t *state, const char *idstr) {
+        provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     voipintercept_t *found;
     char *target_info;
@@ -643,23 +643,25 @@ int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
         target_info = list_sip_targets(found, 256);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                target_info, HI1_LI_DEACTIVATED);
+        if (send_deactivate) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_DEACTIVATED);
+        }
         free_prov_intercept_data(&(found->common), state->epoll_fd);
-        free_single_voipintercept(found);
         if (target_info) {
             free(target_info);
         }
         logger(LOG_INFO,
                 "OpenLI: removed VOIP intercept '%s' via update socket.",
                 idstr);
+        free_single_voipintercept(found);
         return 1;
     }
     return 0;
 }
 
 int remove_email_intercept(update_con_info_t *cinfo UNUSED,
-        provision_state_t *state, const char *idstr) {
+        provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     emailintercept_t *found;
     char *target_info;
@@ -674,23 +676,25 @@ int remove_email_intercept(update_con_info_t *cinfo UNUSED,
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
         target_info = list_email_targets(found, 256);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                target_info, HI1_LI_DEACTIVATED);
+        if (send_deactivate) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_DEACTIVATED);
+        }
         free_prov_intercept_data(&(found->common), state->epoll_fd);
-        free_single_emailintercept(found);
         if (target_info) {
             free(target_info);
         }
         logger(LOG_INFO,
                 "OpenLI: removed Email intercept '%s' via update socket.",
                 idstr);
+        free_single_emailintercept(found);
         return 1;
     }
     return 0;
 }
 
 int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
-        provision_state_t *state, const char *idstr) {
+        provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     ipintercept_t *found;
 
@@ -711,20 +715,25 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
             OPENLI_PROTO_HALT_IPINTERCEPT);
     remove_liid_mapping(state, found->common.liid, found->common.liid_len,
             0);
-    announce_hi1_notification_to_mediators(state, &(found->common),
-            found->username, HI1_LI_DEACTIVATED);
+    if (send_deactivate) {
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                found->username, HI1_LI_DEACTIVATED);
+    }
     free_prov_intercept_data(&(found->common), state->epoll_fd);
-    free_single_ipintercept(found);
     logger(LOG_INFO,
             "OpenLI: removed IP intercept '%s' via update socket.",
             idstr);
+    free_single_ipintercept(found);
     return 1;
 }
 
-int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
+int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
     prov_agency_t *found;
+    ipintercept_t *ipint, *iptmp;
+    emailintercept_t *mailint, *mailtmp;
+    voipintercept_t *vint, *vtmp;
 
     HASH_FIND(hh, state->interceptconf.leas, idstr, strlen(idstr), found);
 
@@ -732,6 +741,37 @@ int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
         HASH_DEL(state->interceptconf.leas, found);
         withdraw_agency_from_mediators(state, found);
         withdraw_agency_from_collectors(state, found);
+
+        HASH_ITER(hh_liid, state->interceptconf.emailintercepts, mailint,
+                mailtmp) {
+            if (strcmp(mailint->common.targetagency, idstr) == 0) {
+                // Will perform another hash lookup, but that's not a big
+                // deal in the overall scheme of things
+                logger(LOG_INFO, "OpenLI: removing email intercept '%s' as its parent agency '%s' has been removed", mailint->common.liid, idstr);
+                remove_email_intercept(cinfo, state, mailint->common.liid, 0);
+            }
+        }
+
+        HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint,
+                vtmp) {
+            if (strcmp(vint->common.targetagency, idstr) == 0) {
+                // Will perform another hash lookup, but that's not a big
+                // deal in the overall scheme of things
+                logger(LOG_INFO, "OpenLI: removing VoIP intercept '%s' as its parent agency '%s' has been removed", vint->common.liid, idstr);
+                remove_voip_intercept(cinfo, state, vint->common.liid, 0);
+            }
+        }
+
+        HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint,
+                iptmp) {
+            if (strcmp(ipint->common.targetagency, idstr) == 0) {
+                // Will perform another hash lookup, but that's not a big
+                // deal in the overall scheme of things
+                logger(LOG_INFO, "OpenLI: removing IP intercept '%s' as its parent agency '%s' has been removed", ipint->common.liid, idstr);
+                remove_ip_intercept(cinfo, state, ipint->common.liid, 0);
+            }
+        }
+
         free_liagency(found->ag);
         free(found);
         logger(LOG_INFO, "OpenLI: removed agency '%s' via update socket.",
@@ -1598,6 +1638,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
     prov_intercept_data_t *timers = NULL;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -1609,6 +1650,16 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, true, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, mailint->common.targetagency,
+            strlen(mailint->common.targetagency), lea);
+    if (!lea && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, mailint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -1734,6 +1785,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int r;
     char *target_info;
     prov_intercept_data_t *timers = NULL;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1752,6 +1804,16 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&voipjson, &(vint->common),
             "VOIP intercept", cinfo, true, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, vint->common.targetagency,
+            strlen(vint->common.targetagency), lea);
+    if (!lea && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, vint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -1867,6 +1929,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
     prov_intercept_data_t *timers = NULL;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1883,6 +1946,16 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             "IP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+    HASH_FIND(hh, state->interceptconf.leas, ipint->common.targetagency,
+            strlen(ipint->common.targetagency), lea);
+    if (!lea && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, ipint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     if (ipint->common.xid_count > 0 &&
             check_for_duplicate_xids(&(state->interceptconf),
             ipint->common.xid_count, ipint->common.xids,
@@ -2172,6 +2245,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     email_target_t *tmp;
     char *target_info;
     char *delivcompressstring = NULL;
+    prov_agency_t *lea;
 
     char *liidstr = NULL, *parsedliid = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
@@ -2212,6 +2286,16 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     free(liidstr);
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, false, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, mailint->common.targetagency,
+            strlen(mailint->common.targetagency), lea);
+    if (!lea && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, mailint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -2338,6 +2422,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *liidstr = NULL, *target_info, *parsedliid = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -2379,6 +2464,15 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    HASH_FIND(hh, state->interceptconf.leas, vint->common.targetagency,
+            strlen(vint->common.targetagency), lea);
+    if (!lea && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, vint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
     if (vint->common.xid_count > 0 &&
             check_for_duplicate_xids(&(state->interceptconf),
             vint->common.xid_count, vint->common.xids,
@@ -2485,6 +2579,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *mobileidentstring = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
     int timeschanged = 0;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -2524,6 +2619,16 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
             "IP intercept", cinfo, false, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, ipint->common.targetagency,
+            strlen(ipint->common.targetagency), lea);
+    if (!lea && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, ipint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
