@@ -492,64 +492,6 @@ static inline int check_for_last_segment_flag(forwarding_thread_data_t *fwd,
     return 0;
 }
 
-#if 0
-static int session_begin_again(int_reorderer_t *reord,
-        openli_encoded_result_t *res) {
-
-    /* This session never really started, so don't worry about it */
-    if (reord->expectedseqno == 0) {
-        return 0;
-    }
-
-    /* Basically, we are looking for an IRI BEGIN that has been sent
-     * while the session is in the flagged state (i.e. we were recently
-     * told the session was over but haven't removed it fully yet).
-     *
-     * In that case, it is most likely that the BEGIN has been sent as
-     * a result of someone re-adding the intercept with the same static
-     * session ID before the "old" reorderer for that same session key
-     * has been removed.
-     *
-     * It's not necessarily obvious to the user that a session ID should
-     * be changed in this situation, so it is going to happen and we
-     * should probably try to at least do what the user would expect. The LEA
-     * can explain to them later on if the session ID duplication is a
-     * problem...
-     */
-
-    if (res->restype == OPENLI_EXPORT_IPIRI) {
-        openli_ipiri_job_t *job = &(res->origreq->data.ipiri);
-        if (job->iritype == ETSILI_IRI_REPORT &&
-                job->special == OPENLI_IPIRI_STARTWHILEACTIVE) {
-            return 1;
-        }
-        if (job->iritype == ETSILI_IRI_BEGIN) {
-            return 1;
-        }
-    }
-
-    if (res->restype == OPENLI_EXPORT_IPMMIRI) {
-        if (res->origreq->data.ipmmiri.iritype == ETSILI_IRI_BEGIN) {
-            return 1;
-        }
-    }
-
-    if (res->restype == OPENLI_EXPORT_EMAILIRI) {
-        if (res->origreq->data.emailiri.iritype == ETSILI_IRI_BEGIN) {
-            return 1;
-        }
-    }
-
-    if (res->restype == OPENLI_EXPORT_UMTSIRI ||
-            res->restype == OPENLI_EXPORT_EPSIRI) {
-        if (res->origreq->data.mobiri.iritype == ETSILI_IRI_BEGIN) {
-            return 1;
-        }
-    }
-    return 0;
-}
-#endif
-
 static inline int enqueue_result(forwarding_thread_data_t *fwd,
         export_dest_t *med, openli_encoded_result_t *res) {
 
