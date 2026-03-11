@@ -83,6 +83,11 @@ struct json_prov_options {
     struct json_object *defaultemailcompress;
 };
 
+struct json_component_options {
+    struct json_object *name;
+    struct json_object *config;
+};
+
 #define EXTRACT_JSON_INT_PARAM(name, uptype, jsonobj, dest, errflag, \
         minval, maxval, force) \
     if ((*errflag) == 0) { \
@@ -205,6 +210,13 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
             &(agjson->encryptmethod));
     json_object_object_get_ex(parsed, "encryptionkey", &(agjson->encryptkey));
 
+}
+
+static inline void extract_component_options_json_objects(
+        struct json_component_options *opts, struct json_object *parsed) {
+
+    json_object_object_get_ex(parsed, "name", &(opts->name));
+    json_object_object_get_ex(parsed, "configuration", &(opts->config));
 }
 
 static inline void extract_provisioner_options_json_objects(
@@ -579,45 +591,25 @@ static int update_intercept_common(intercept_common_t *parsed,
         timers->start_hi1_sent = 0;
     }
 
-    if (existing->encrypt_inherited) {
-        if (parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-            existing->encrypt = parsed->encrypt;
-            encryptchanged = 1;
-            existing->encrypt_inherited = 0;
-            existing->encryptkey_len = parsed->encryptkey_len;
-            if (parsed->encryptkey_len > 0) {
-                memcpy(existing->encryptkey, parsed->encryptkey,
-                        parsed->encryptkey_len);
-                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
-                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
-                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
-                }
-            }
-        } else if (*agencychanged) {
-            apply_intercept_encryption_settings(&(state->interceptconf),
-                    existing);
-        }
-    } else {
-        if (parsed->encrypt != existing->encrypt &&
-                parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-            encryptchanged = 1;
-            existing->encrypt = parsed->encrypt;
-        }
+    if (parsed->encrypt != existing->encrypt &&
+            parsed->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
+        encryptchanged = 1;
+        existing->encrypt = parsed->encrypt;
+    }
 
-        /* If a new key was provided (len==24) and it differs, copy it in */
-        if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
-            if (existing->encryptkey_len != parsed->encryptkey_len ||
-                    memcmp(existing->encryptkey, parsed->encryptkey,
-                            parsed->encryptkey_len) != 0) {
-                memcpy(existing->encryptkey, parsed->encryptkey,
-                        parsed->encryptkey_len);
-                if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
-                    memset(existing->encryptkey + parsed->encryptkey_len, 0,
-                           OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
-                }
-                existing->encryptkey_len = parsed->encryptkey_len;
-                encryptchanged = 1;
+    /* If a new key was provided (len==24) and it differs, copy it in */
+    if (parsed->encryptkey_len == OPENLI_AES192_KEY_LEN) {
+        if (existing->encryptkey_len != parsed->encryptkey_len ||
+                memcmp(existing->encryptkey, parsed->encryptkey,
+                    parsed->encryptkey_len) != 0) {
+            memcpy(existing->encryptkey, parsed->encryptkey,
+                    parsed->encryptkey_len);
+            if (parsed->encryptkey_len < OPENLI_MAX_ENCRYPTKEY_LEN) {
+                memset(existing->encryptkey + parsed->encryptkey_len, 0,
+                        OPENLI_MAX_ENCRYPTKEY_LEN - parsed->encryptkey_len);
             }
+            existing->encryptkey_len = parsed->encryptkey_len;
+            encryptchanged = 1;
         }
     }
 
@@ -636,7 +628,7 @@ static int update_intercept_common(intercept_common_t *parsed,
 }
 
 int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
-        provision_state_t *state, const char *idstr) {
+        provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     voipintercept_t *found;
     char *target_info;
@@ -651,23 +643,25 @@ int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
         target_info = list_sip_targets(found, 256);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                target_info, HI1_LI_DEACTIVATED);
+        if (send_deactivate) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_DEACTIVATED);
+        }
         free_prov_intercept_data(&(found->common), state->epoll_fd);
-        free_single_voipintercept(found);
         if (target_info) {
             free(target_info);
         }
         logger(LOG_INFO,
                 "OpenLI: removed VOIP intercept '%s' via update socket.",
                 idstr);
+        free_single_voipintercept(found);
         return 1;
     }
     return 0;
 }
 
 int remove_email_intercept(update_con_info_t *cinfo UNUSED,
-        provision_state_t *state, const char *idstr) {
+        provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     emailintercept_t *found;
     char *target_info;
@@ -682,23 +676,25 @@ int remove_email_intercept(update_con_info_t *cinfo UNUSED,
         remove_liid_mapping(state, found->common.liid, found->common.liid_len,
                 0);
         target_info = list_email_targets(found, 256);
-        announce_hi1_notification_to_mediators(state, &(found->common),
-                target_info, HI1_LI_DEACTIVATED);
+        if (send_deactivate) {
+            announce_hi1_notification_to_mediators(state, &(found->common),
+                    target_info, HI1_LI_DEACTIVATED);
+        }
         free_prov_intercept_data(&(found->common), state->epoll_fd);
-        free_single_emailintercept(found);
         if (target_info) {
             free(target_info);
         }
         logger(LOG_INFO,
                 "OpenLI: removed Email intercept '%s' via update socket.",
                 idstr);
+        free_single_emailintercept(found);
         return 1;
     }
     return 0;
 }
 
 int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
-        provision_state_t *state, const char *idstr) {
+        provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     ipintercept_t *found;
 
@@ -719,26 +715,63 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
             OPENLI_PROTO_HALT_IPINTERCEPT);
     remove_liid_mapping(state, found->common.liid, found->common.liid_len,
             0);
-    announce_hi1_notification_to_mediators(state, &(found->common),
-            found->username, HI1_LI_DEACTIVATED);
+    if (send_deactivate) {
+        announce_hi1_notification_to_mediators(state, &(found->common),
+                found->username, HI1_LI_DEACTIVATED);
+    }
     free_prov_intercept_data(&(found->common), state->epoll_fd);
-    free_single_ipintercept(found);
     logger(LOG_INFO,
             "OpenLI: removed IP intercept '%s' via update socket.",
             idstr);
+    free_single_ipintercept(found);
     return 1;
 }
 
-int remove_agency(update_con_info_t *cinfo UNUSED, provision_state_t *state,
+int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
 
     prov_agency_t *found;
+    ipintercept_t *ipint, *iptmp;
+    emailintercept_t *mailint, *mailtmp;
+    voipintercept_t *vint, *vtmp;
 
     HASH_FIND(hh, state->interceptconf.leas, idstr, strlen(idstr), found);
 
     if (found) {
         HASH_DEL(state->interceptconf.leas, found);
         withdraw_agency_from_mediators(state, found);
+        withdraw_agency_from_collectors(state, found);
+
+        HASH_ITER(hh_liid, state->interceptconf.emailintercepts, mailint,
+                mailtmp) {
+            if (strcmp(mailint->common.targetagency, idstr) == 0) {
+                // Will perform another hash lookup, but that's not a big
+                // deal in the overall scheme of things
+                logger(LOG_INFO, "OpenLI: removing email intercept '%s' as its parent agency '%s' has been removed", mailint->common.liid, idstr);
+                remove_email_intercept(cinfo, state, mailint->common.liid, 0);
+            }
+        }
+
+        HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint,
+                vtmp) {
+            if (strcmp(vint->common.targetagency, idstr) == 0) {
+                // Will perform another hash lookup, but that's not a big
+                // deal in the overall scheme of things
+                logger(LOG_INFO, "OpenLI: removing VoIP intercept '%s' as its parent agency '%s' has been removed", vint->common.liid, idstr);
+                remove_voip_intercept(cinfo, state, vint->common.liid, 0);
+            }
+        }
+
+        HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint,
+                iptmp) {
+            if (strcmp(ipint->common.targetagency, idstr) == 0) {
+                // Will perform another hash lookup, but that's not a big
+                // deal in the overall scheme of things
+                logger(LOG_INFO, "OpenLI: removing IP intercept '%s' as its parent agency '%s' has been removed", ipint->common.liid, idstr);
+                remove_ip_intercept(cinfo, state, ipint->common.liid, 0);
+            }
+        }
+
         free_liagency(found->ag);
         free(found);
         logger(LOG_INFO, "OpenLI: removed agency '%s' via update socket.",
@@ -767,6 +800,63 @@ int remove_defaultradius(update_con_info_t *cinfo UNUSED,
         return 1;
     }
     return 0;
+}
+
+int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
+        const char *fullid) {
+
+    char *copy, *tok;
+    char *uuid, *ipaddr, *port;
+    prov_collector_t *col;
+    int ret = 0;
+
+    copy = strdup(fullid);
+    tok = strtok(copy, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove X2X3 listener '%s' via update socket.",
+                fullid);
+        goto endremx2x3;
+    }
+    uuid = tok;
+
+    tok = strtok(NULL, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove X2X3 listener '%s' via update socket.",
+                fullid);
+        goto endremx2x3;
+    }
+    ipaddr = tok;
+
+    tok = strtok(NULL, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove X2X3 listener '%s' via update socket.",
+                fullid);
+        goto endremx2x3;
+    }
+    port = tok;
+
+    remove_x2x3_listener_from_clientdb(state, uuid, ipaddr, port);
+
+    HASH_FIND(hh, state->collectors, uuid, strlen(uuid), col);
+    if (!col) {
+        goto endremx2x3;
+    }
+    if (announce_x2x3_listener_removal_to_collector(state, col, ipaddr,
+            port) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to remove X2X3 listener from collector: %s (%s:%s). %s",
+                update_failure_page_start, uuid, ipaddr, port,
+                update_failure_page_end);
+        ret = -1;
+        goto endremx2x3;
+    }
+    ret = 1;
+endremx2x3:
+    free(copy);
+    return ret;
 }
 
 int remove_coreserver(update_con_info_t *cinfo UNUSED, provision_state_t *state,
@@ -920,6 +1010,74 @@ defraderr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state) {
+    struct json_object *parsed = NULL;
+    struct json_tokener *tknr;
+    prov_collector_t *thiscol;
+
+    struct json_object *ipaddr;
+    struct json_object *port;
+    struct json_object *uuid;
+
+    char *ipaddr_str = NULL;
+    char *port_str = NULL;
+    char *uuid_str = NULL;
+
+    int parseerr = 0;
+    int ret = -1;
+
+    tknr = json_tokener_new();
+
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto x2x3err;
+    }
+
+    json_object_object_get_ex(parsed, "uuid", &(uuid));
+    json_object_object_get_ex(parsed, "ipaddress", &(ipaddr));
+    json_object_object_get_ex(parsed, "port", &(port));
+
+    EXTRACT_JSON_STRING_PARAM("ipaddress", "X2X3 listener", ipaddr,
+            ipaddr_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("port", "X2X3 listener", port,
+            port_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("uuid", "X2X3 listener", uuid,
+            uuid_str, &parseerr, true);
+
+    if (parseerr) {
+        goto x2x3err;
+    }
+
+    HASH_FIND(hh, state->collectors, uuid_str, strlen(uuid_str), thiscol);
+    if (thiscol) {
+        if (announce_x2x3_listener_to_collector(state, thiscol, ipaddr_str,
+                port_str) < 0) {
+            goto x2x3err;
+        }
+    }
+
+    ret = 0;
+
+x2x3err:
+    if (ipaddr_str) free(ipaddr_str);
+    if (port_str) free(port_str);
+    if (uuid_str) free(uuid_str);
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
 }
 
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
@@ -1207,9 +1365,9 @@ static int parse_agency_integrity_options(liagency_t *newag,
     if (enabled) {
         json_bool isset = json_object_get_boolean(enabled);
         if (isset) {
-            newag->digest_required = 1;
+            newag->digest.required = 1;
         } else {
-            newag->digest_required = 0;
+            newag->digest.required = 0;
         }
     }
 
@@ -1218,7 +1376,7 @@ static int parse_agency_integrity_options(liagency_t *newag,
         EXTRACT_JSON_STRING_PARAM("hashmethod", "Agency Digest Hash method",
                 hash_method, hashmethodstr, &parseerr, false);
         if (hashmethodstr) {
-            newag->digest_hash_method =
+            newag->digest.hash_method =
                     map_digest_hash_method_string(hashmethodstr);
             free(hashmethodstr);
         }
@@ -1230,23 +1388,23 @@ static int parse_agency_integrity_options(liagency_t *newag,
                 "Agency Signature Hash method",
                 sign_method, hashmethodstr, &parseerr, false);
         if (hashmethodstr) {
-            newag->digest_sign_method =
+            newag->digest.sign_method =
                     map_digest_hash_method_string(hashmethodstr);
             free(hashmethodstr);
         }
     }
 
     EXTRACT_JSON_INT_PARAM("hashtimeout", "Agency Digest Hash timeout",
-            hash_timeout, newag->digest_hash_timeout, &parseerr, 1,
+            hash_timeout, newag->digest.hash_timeout, &parseerr, 1,
             1000000, false);
     EXTRACT_JSON_INT_PARAM("datapducount", "Agency Digest Hash PDU limit",
-            hash_pdulimit, newag->digest_hash_pdulimit, &parseerr, 1,
+            hash_pdulimit, newag->digest.hash_pdulimit, &parseerr, 1,
             1000000, false);
     EXTRACT_JSON_INT_PARAM("signtimeout", "Agency Digest Signature timeout",
-            sign_timeout, newag->digest_sign_timeout, &parseerr, 1,
+            sign_timeout, newag->digest.sign_timeout, &parseerr, 1,
             1000000, false);
     EXTRACT_JSON_INT_PARAM("hashpducount", "Agency Digest Signature hash limit",
-            sign_hashlimit, newag->digest_sign_hashlimit, &parseerr, 1,
+            sign_hashlimit, newag->digest.sign_hashlimit, &parseerr, 1,
             1000000, false);
 
     if (parseerr) {
@@ -1480,6 +1638,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
     prov_intercept_data_t *timers = NULL;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -1491,6 +1650,16 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, true, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, mailint->common.targetagency,
+            strlen(mailint->common.targetagency), lea);
+    if (!lea && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, mailint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -1556,8 +1725,6 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mailint->common.liid, mailint->common.liid_len, mailint);
 
 
-    apply_intercept_encryption_settings(&(state->interceptconf),
-            &(mailint->common));
     new_intercept_liidmapping(state, &(mailint->common));
 
     if (announce_single_intercept(state, (void *)mailint,
@@ -1618,6 +1785,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int r;
     char *target_info;
     prov_intercept_data_t *timers = NULL;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1636,6 +1804,16 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&voipjson, &(vint->common),
             "VOIP intercept", cinfo, true, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, vint->common.targetagency,
+            strlen(vint->common.targetagency), lea);
+    if (!lea && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, vint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -1689,8 +1867,6 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
             vint->common.liid, vint->common.liid_len, vint);
 
-    apply_intercept_encryption_settings(&(state->interceptconf),
-            &(vint->common));
     new_intercept_liidmapping(state, &(vint->common));
 
     if (announce_single_intercept(state, (void *)vint,
@@ -1753,6 +1929,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
     prov_intercept_data_t *timers = NULL;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1769,6 +1946,16 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             "IP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
+    HASH_FIND(hh, state->interceptconf.leas, ipint->common.targetagency,
+            strlen(ipint->common.targetagency), lea);
+    if (!lea && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, ipint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
+
     if (ipint->common.xid_count > 0 &&
             check_for_duplicate_xids(&(state->interceptconf),
             ipint->common.xid_count, ipint->common.xids,
@@ -1861,9 +2048,6 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
             ipint->common.liid, ipint->common.liid_len, ipint);
 
-    apply_intercept_encryption_settings(&(state->interceptconf),
-            &(ipint->common));
-
     new_intercept_liidmapping(state, &(ipint->common));
 
     if (announce_single_intercept(state, (void *)ipint,
@@ -1912,6 +2096,82 @@ cepterr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+int modify_collector_configuration(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_component_options optsjson;
+    prov_collector_t *thiscol;
+    int ret = 0;
+    char *uuid = NULL;
+    char *jsonconfig = NULL;
+    int parseerr = 0;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        ret = -1;
+        goto endjsonparse;
+    }
+
+    extract_component_options_json_objects(&optsjson, parsed);
+    EXTRACT_JSON_STRING_PARAM("name", "collector identifier",
+            optsjson.name, uuid, &parseerr, true);
+
+    if (parseerr) {
+        goto endjsonparse;
+    }
+    HASH_FIND(hh, state->collectors, uuid, strlen(uuid), thiscol);
+    if (thiscol == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received collector configuration update for a collector we know nothing about: %s", uuid);
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Cannot update configuration for unknown collector: %s. %s",
+                update_failure_page_start, uuid,
+                update_failure_page_end);
+        ret = -1;
+        goto endjsonparse;
+    }
+
+    EXTRACT_JSON_STRING_PARAM("configuration", "config JSON",
+            optsjson.config, jsonconfig, &parseerr, true);
+
+    if (parseerr) {
+        goto endjsonparse;
+    }
+    if (announce_configuration_update_to_collector(state, thiscol,
+            jsonconfig) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to update configuration for collector: %s. %s",
+                update_failure_page_start, uuid,
+                update_failure_page_end);
+        ret = -1;
+    }
+
+endjsonparse:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    if (jsonconfig) {
+        free(jsonconfig);
+    }
+    if (uuid) {
+        free(uuid);
+    }
+    json_tokener_free(tknr);
+    return ret;
+
 }
 
 int modify_provisioner_options(update_con_info_t *cinfo,
@@ -1985,6 +2245,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     email_target_t *tmp;
     char *target_info;
     char *delivcompressstring = NULL;
+    prov_agency_t *lea;
 
     char *liidstr = NULL, *parsedliid = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
@@ -2025,6 +2286,16 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     free(liidstr);
     if (parse_intercept_common_json(&emailjson, &(mailint->common),
             "Email intercept", cinfo, false, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, mailint->common.targetagency,
+            strlen(mailint->common.targetagency), lea);
+    if (!lea && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, mailint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -2151,6 +2422,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *liidstr = NULL, *target_info, *parsedliid = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -2192,6 +2464,15 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    HASH_FIND(hh, state->interceptconf.leas, vint->common.targetagency,
+            strlen(vint->common.targetagency), lea);
+    if (!lea && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, vint->common.liid,
+                update_failure_page_end);
+        goto cepterr;
+    }
     if (vint->common.xid_count > 0 &&
             check_for_duplicate_xids(&(state->interceptconf),
             vint->common.xid_count, vint->common.xids,
@@ -2298,6 +2579,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *mobileidentstring = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
     int timeschanged = 0;
+    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -2337,6 +2619,16 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (parse_intercept_common_json(&ipjson, &(ipint->common),
             "IP intercept", cinfo, false, state->epoll_fd) < 0) {
+        goto cepterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, ipint->common.targetagency,
+            strlen(ipint->common.targetagency), lea);
+    if (!lea && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, ipint->common.liid,
+                update_failure_page_end);
         goto cepterr;
     }
 
@@ -2612,13 +2904,13 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     nag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     nag->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
     nag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
-    nag->digest_hash_method = DEFAULT_DIGEST_HASH_METHOD;
-    nag->digest_sign_method = DEFAULT_DIGEST_HASH_METHOD;
-    nag->digest_hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
-    nag->digest_hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
-    nag->digest_sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
-    nag->digest_sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
-    nag->digest_required = 0;
+    nag->digest.hash_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest.sign_method = DEFAULT_DIGEST_HASH_METHOD;
+    nag->digest.hash_pdulimit = DEFAULT_DIGEST_HASH_PDULIMIT;
+    nag->digest.hash_timeout = DEFAULT_DIGEST_HASH_TIMEOUT;
+    nag->digest.sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
+    nag->digest.sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+    nag->digest.required = 0;
     nag->encryptkey_len = 0;
     memset(nag->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
     nag->encrypt = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
@@ -2670,7 +2962,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (timefmtstring) {
-        nag->time_fmt = map_timestamp_format_string(timefmtstring);
+        nag->digest.time_fmt = map_timestamp_format_string(timefmtstring);
         free(timefmtstring);
     }
 
@@ -2683,6 +2975,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     lea = calloc(1, sizeof(prov_agency_t));
     lea->ag = nag;
     lea->announcereq = 1;
+    lea->digestchanged = 1;
 
     HASH_FIND(hh, state->interceptconf.leas, nag->agencyid,
             strlen(nag->agencyid), found);
@@ -2697,6 +2990,7 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     HASH_ADD_KEYPTR(hh, state->interceptconf.leas, nag->agencyid,
             strlen(nag->agencyid), lea);
     announce_lea_to_mediators(state, lea);
+    announce_digest_config_to_collectors(state, lea);
 
     logger(LOG_INFO, "OpenLI: %s agency '%s' via update socket.",
             verb, nag->agencyid);
@@ -2732,8 +3026,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int parseerr = 0;
     liagency_t modified;
     int changed = 0;
-    int medchanged = 0;
-    int encryptchanged = 0;
+    int medchanged = 0, colchanged = 0;
     char *encstr = NULL;
 
     memset(&modified, 0, sizeof(modified));
@@ -2752,16 +3045,16 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     modified.keepalivewait = 0xffffffff;
     modified.handover_retry = 0xffff;
     modified.resend_window_kbs = 0xffffffff;
-    modified.digest_required = 0xff;
-    modified.digest_hash_method = 0xff;
-    modified.digest_sign_method = 0xff;
-    modified.digest_hash_timeout = 0xffffffff;
-    modified.digest_hash_pdulimit = 0xffffffff;
-    modified.digest_sign_timeout = 0xffffffff;
-    modified.digest_sign_hashlimit = 0xffffffff;
+    modified.digest.required = 0xff;
+    modified.digest.hash_method = 0xff;
+    modified.digest.sign_method = 0xff;
+    modified.digest.hash_timeout = 0xffffffff;
+    modified.digest.hash_pdulimit = 0xffffffff;
+    modified.digest.sign_timeout = 0xffffffff;
+    modified.digest.sign_hashlimit = 0xffffffff;
     modified.encrypt = 0xff;
     modified.encryptkey_len = 0xffffffff;
-    modified.time_fmt = 0xff;
+    modified.digest.time_fmt = 0xff;
 
     extract_agency_json_objects(&agjson, parsed);
     EXTRACT_JSON_STRING_PARAM("hi3address", "agency", agjson.hi3addr,
@@ -2810,7 +3103,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (timefmtstring) {
-        modified.time_fmt = map_timestamp_format_string(timefmtstring);
+        modified.digest.time_fmt = map_timestamp_format_string(timefmtstring);
         free(timefmtstring);
     }
 
@@ -2824,7 +3117,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.encryptkey_len != 0xffffffff) {
         if (modified.encryptkey_len != found->ag->encryptkey_len) {
             changed = 1;
-            encryptchanged = 1;
             if (modified.encryptkey_len > 0) {
                 memcpy(found->ag->encryptkey, modified.encryptkey,
                         modified.encryptkey_len);
@@ -2840,16 +3132,9 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                         modified.encryptkey_len)) {
             // new key, same length as before but different bytes
             changed = 1;
-            encryptchanged = 1;
             memcpy(found->ag->encryptkey, modified.encryptkey,
                     modified.encryptkey_len);
         }
-    }
-
-    // check for change in encryption key first, so we can set the
-    // encryptchanged flag based on the fact that "changed" has been set
-    if (changed) {
-        encryptchanged = 1;
     }
 
     MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
@@ -2863,71 +3148,78 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.encrypt != 0xff &&
             modified.encrypt != found->ag->encrypt) {
         changed = 1;
-        encryptchanged = 1;
         medchanged = 1;
         found->ag->encrypt = modified.encrypt;
     }
 
-    if (modified.time_fmt != 0xff &&
-            modified.time_fmt != found->ag->time_fmt) {
+    if (modified.digest.time_fmt != 0xff &&
+            modified.digest.time_fmt != found->ag->digest.time_fmt) {
         update_intercept_timeformats(state, found->ag->agencyid,
-                modified.time_fmt);
-        found->ag->time_fmt = modified.time_fmt;
+                modified.digest.time_fmt);
+        found->ag->digest.time_fmt = modified.digest.time_fmt;
         changed = 1;
         medchanged = 1;
+        colchanged = 1;
     }
 
-    if (modified.digest_required != 0xff &&
-                modified.digest_required != found->ag->digest_required) {
+    if (modified.digest.required != 0xff &&
+                modified.digest.required != found->ag->digest.required) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_required = modified.digest_required;
+        colchanged = 1;
+        found->ag->digest.required = modified.digest.required;
     }
 
-    if (modified.digest_hash_method != 0xff &&
-                modified.digest_hash_method != found->ag->digest_hash_method) {
+    if (modified.digest.hash_method != 0xff &&
+                modified.digest.hash_method != found->ag->digest.hash_method) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_hash_method = modified.digest_hash_method;
+        colchanged = 1;
+        found->ag->digest.hash_method = modified.digest.hash_method;
     }
 
-    if (modified.digest_sign_method != 0xff &&
-                modified.digest_sign_method != found->ag->digest_sign_method) {
+    if (modified.digest.sign_method != 0xff &&
+                modified.digest.sign_method != found->ag->digest.sign_method) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_sign_method = modified.digest_sign_method;
+        colchanged = 1;
+        found->ag->digest.sign_method = modified.digest.sign_method;
     }
 
-    if (modified.digest_hash_timeout != 0xffffffff &&
-                modified.digest_hash_timeout !=
-                        found->ag->digest_hash_timeout) {
+    if (modified.digest.hash_timeout != 0xffffffff &&
+                modified.digest.hash_timeout !=
+                        found->ag->digest.hash_timeout) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_hash_timeout = modified.digest_hash_timeout;
+        colchanged = 1;
+        found->ag->digest.hash_timeout = modified.digest.hash_timeout;
     }
 
-    if (modified.digest_hash_pdulimit != 0xffffffff &&
-                modified.digest_hash_pdulimit !=
-                        found->ag->digest_hash_pdulimit) {
+    if (modified.digest.hash_pdulimit != 0xffffffff &&
+                modified.digest.hash_pdulimit !=
+                        found->ag->digest.hash_pdulimit) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_hash_pdulimit = modified.digest_hash_pdulimit;
+        colchanged = 1;
+        found->ag->digest.hash_pdulimit = modified.digest.hash_pdulimit;
     }
 
-    if (modified.digest_sign_timeout != 0xffffffff &&
-                modified.digest_sign_timeout !=
-                        found->ag->digest_sign_timeout) {
+    if (modified.digest.sign_timeout != 0xffffffff &&
+                modified.digest.sign_timeout !=
+                        found->ag->digest.sign_timeout) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_sign_timeout = modified.digest_sign_timeout;
+        colchanged = 1;
+        found->ag->digest.sign_timeout = modified.digest.sign_timeout;
     }
 
-    if (modified.digest_sign_hashlimit != 0xffffffff &&
-                modified.digest_sign_hashlimit !=
-                        found->ag->digest_sign_hashlimit) {
+    if (modified.digest.sign_hashlimit != 0xffffffff &&
+                modified.digest.sign_hashlimit !=
+                        found->ag->digest.sign_hashlimit) {
         changed = 1;
         medchanged = 1;
-        found->ag->digest_sign_hashlimit = modified.digest_sign_hashlimit;
+        colchanged = 1;
+        found->ag->digest.sign_hashlimit = modified.digest.sign_hashlimit;
     }
 
     if (modified.keepalivefreq != 0xffffffff &&
@@ -2959,18 +3251,17 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (medchanged) {
+        /* TODO exclude digest config from "medchanged" */
         announce_lea_to_mediators(state, found);
         logger(LOG_INFO,
                 "OpenLI: modified existing agency '%s' via update socket.",
                 found->ag->agencyid);
     }
-    if (encryptchanged) {
-        update_inherited_encryption_settings(state, found->ag);
-        logger(LOG_INFO,
-                "OpenLI: updated encryption options for intercepts destined for agency '%s' via update socket.",
-                found->ag->agencyid);
-        announce_all_updated_liidmappings_to_mediators(state);
+
+    if (colchanged) {
+        announce_digest_config_to_collectors(state, found);
     }
+
     if (!changed) {
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",

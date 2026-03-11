@@ -69,7 +69,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
         encrypt_str = "none";
     }
 
-    if (lea->ag->time_fmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
+    if (lea->ag->digest.time_fmt == OPENLI_ENCODED_TIMESTAMP_GENERALIZED) {
         timefmt_str = "generalized";
     } else {
         timefmt_str = "microseconds";
@@ -112,39 +112,39 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object_object_add(jobj, "encryptionkey_len",
             json_object_new_int((int)lea->ag->encryptkey_len));
 
-    digest_required = json_object_new_boolean(lea->ag->digest_required);
+    digest_required = json_object_new_boolean(lea->ag->digest.required);
     json_object_object_add(integrity, "enabled", digest_required);
 
-    if (lea->ag->digest_required) {
-        digest_hash_timeout = json_object_new_int(lea->ag->digest_hash_timeout);
-        digest_sign_timeout = json_object_new_int(lea->ag->digest_sign_timeout);
-        digest_hash_pdulimit = json_object_new_int(lea->ag->digest_hash_pdulimit);
-        digest_sign_hashlimit = json_object_new_int(lea->ag->digest_sign_hashlimit);
+    if (lea->ag->digest.required) {
+        digest_hash_timeout = json_object_new_int(lea->ag->digest.hash_timeout);
+        digest_sign_timeout = json_object_new_int(lea->ag->digest.sign_timeout);
+        digest_hash_pdulimit = json_object_new_int(lea->ag->digest.hash_pdulimit);
+        digest_sign_hashlimit = json_object_new_int(lea->ag->digest.sign_hashlimit);
 
-        if (lea->ag->digest_hash_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
+        if (lea->ag->digest.hash_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
             digest_hash_method = json_object_new_string("sha-1");
-        } else if (lea->ag->digest_hash_method ==
+        } else if (lea->ag->digest.hash_method ==
                 OPENLI_DIGEST_HASH_ALGO_SHA256) {
             digest_hash_method = json_object_new_string("sha-256");
-        } else if (lea->ag->digest_hash_method ==
+        } else if (lea->ag->digest.hash_method ==
                 OPENLI_DIGEST_HASH_ALGO_SHA384) {
             digest_hash_method = json_object_new_string("sha-384");
-        } else if (lea->ag->digest_hash_method ==
+        } else if (lea->ag->digest.hash_method ==
                 OPENLI_DIGEST_HASH_ALGO_SHA512) {
             digest_hash_method = json_object_new_string("sha-512");
         } else {
             digest_hash_method = NULL;
         }
 
-        if (lea->ag->digest_sign_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
+        if (lea->ag->digest.sign_method == OPENLI_DIGEST_HASH_ALGO_SHA1) {
             digest_sign_method = json_object_new_string("sha-1");
-        } else if (lea->ag->digest_sign_method ==
+        } else if (lea->ag->digest.sign_method ==
                 OPENLI_DIGEST_HASH_ALGO_SHA256) {
             digest_sign_method = json_object_new_string("sha-256");
-        } else if (lea->ag->digest_sign_method ==
+        } else if (lea->ag->digest.sign_method ==
                 OPENLI_DIGEST_HASH_ALGO_SHA384) {
             digest_sign_method = json_object_new_string("sha-384");
-        } else if (lea->ag->digest_sign_method ==
+        } else if (lea->ag->digest.sign_method ==
                 OPENLI_DIGEST_HASH_ALGO_SHA512) {
             digest_sign_method = json_object_new_string("sha-512");
         } else {
@@ -189,7 +189,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
 /*    json_object *encryptkey, *xids; */
     json_object *xids;
     json_object *starttime, *endtime, *tomediate, *encryption;
-    json_object *encrypt_inherited;
     char uuid[64];
 
     if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
@@ -228,7 +227,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
     agencyid = json_object_new_string(common->targetagency);
     mediator = json_object_new_int(common->destid);
     tomediate = json_object_new_int(common->tomediate);
-    encrypt_inherited = json_object_new_boolean(common->encrypt_inherited);
     encryption = json_object_new_string(encrypt_str);
 
     json_object_object_add(jobj, "liid", liid);
@@ -237,7 +235,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
     json_object_object_add(jobj, "agencyid", agencyid);
     json_object_object_add(jobj, "mediator", mediator);
     json_object_object_add(jobj, "outputhandovers", tomediate);
-    json_object_object_add(jobj, "encrypt_inherited", encrypt_inherited);
     json_object_object_add(jobj, "payloadencryption", encryption);
 	json_object_object_add(jobj, "has_encryptionkey",
 			json_object_new_boolean(common->encryptkey_len == OPENLI_AES192_KEY_LEN));
@@ -471,7 +468,7 @@ static inline struct json_object *openli_json_object_new_uint64(uint64_t val) {
 
 static json_object *convert_client_to_json(known_client_t *c) {
     json_object *jobj;
-    json_object *medid, *ipaddress, *firstseen, *lastseen, *colname;
+    json_object *medid, *ipaddress, *firstseen, *lastseen, *colname, *config;
 
     medid = ipaddress = firstseen = lastseen = NULL;
 
@@ -488,6 +485,11 @@ static json_object *convert_client_to_json(known_client_t *c) {
     if (c->ipaddress) {
         ipaddress = json_object_new_string(c->ipaddress);
         json_object_object_add(jobj, "ipaddress", ipaddress);
+    }
+
+    if (c->jsonconfig) {
+        config = json_object_new_string(c->jsonconfig);
+        json_object_object_add(jobj, "configuration", config);
     }
 
     firstseen = openli_json_object_new_uint64(c->firstseen);

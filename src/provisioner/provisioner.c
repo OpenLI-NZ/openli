@@ -199,23 +199,61 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint;
     emailintercept_t *mailint;
+    prov_agency_t *found;
 
     /* Do IP Intercepts */
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, iptmp) {
-        apply_intercept_encryption_settings(conf, &(ipint->common));
+        HASH_FIND(hh, conf->leas, ipint->common.targetagency,
+                strlen(ipint->common.targetagency), found);
+        if (!found && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, IP intercept with LIID '%s' is destined for LEA '%s', but that LEA is not configured in OpenLI",
+                    ipint->common.liid, ipint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    ipint->common.liid);
+            HASH_DELETE(hh_liid, conf->ipintercepts, ipint);
+            free_single_ipintercept(ipint);
+            continue;
+        }
+
         add_liid_mapping(conf, &(ipint->common));
     }
 
     /* Now do the VOIP intercepts */
     for (vint = conf->voipintercepts; vint != NULL; vint = vint->hh_liid.next)
     {
-        apply_intercept_encryption_settings(conf, &(vint->common));
+        HASH_FIND(hh, conf->leas, vint->common.targetagency,
+                strlen(vint->common.targetagency), found);
+        if (!found && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, VoIP intercept with LIID '%s' is destined for LEA '%s', but that LEA is not configured in OpenLI",
+                    vint->common.liid, vint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    vint->common.liid);
+            HASH_DELETE(hh_liid, conf->voipintercepts, vint);
+            free_single_voipintercept(vint);
+            continue;
+        }
         add_liid_mapping(conf, &(vint->common));
     }
 
     for (mailint = conf->emailintercepts; mailint != NULL;
             mailint = mailint->hh_liid.next) {
-        apply_intercept_encryption_settings(conf, &(mailint->common));
+        HASH_FIND(hh, conf->leas, mailint->common.targetagency,
+                strlen(mailint->common.targetagency), found);
+        if (!found && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: WARNING, Email intercept with LIID '%s' is destined for LEA '%s', but that LEA is not configured in OpenLI",
+                    mailint->common.liid, mailint->common.targetagency);
+            logger(LOG_INFO,
+                    "OpenLI provisioner: DISABLING LIID '%s' ",
+                    mailint->common.liid);
+            HASH_DELETE(hh_liid, conf->emailintercepts, mailint);
+            free_single_emailintercept(mailint);
+            continue;
+        }
         add_liid_mapping(conf, &(mailint->common));
     }
 
@@ -290,7 +328,6 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->authdb = NULL;
     state->integrity_sign_private_key = NULL;
     state->integrity_sign_private_key_location = NULL;
-    state->sign_ctx = NULL;
 
     init_intercept_config(&(state->interceptconf));
 
@@ -448,25 +485,28 @@ static int add_collector_to_hashmap(provision_state_t *state,
         uint16_t msglen) {
 
     prov_collector_t *col;
-    char *colname = NULL;
+    char *jsonconfig = NULL;
+    char *uuidstr = NULL;
 
-    if (decode_component_name(msgbody, msglen, &colname) < 0) {
+    if (decode_component_name(msgbody, msglen, &jsonconfig, &uuidstr) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
         return -1;
     }
 
-    if (!colname) {
-        colname = strdup(client->identifier);
+    if (!uuidstr) {
+        logger(LOG_INFO, "OpenLI provisioner: collector authentication announcement from %s does not include a UUID -- is there a version mismatch between the provisioner and collector?", client->identifier);
+        return -1;
     }
-    HASH_FIND(hh, state->collectors, client->ipaddress,
-            strlen(client->ipaddress), col);
+
+    HASH_FIND(hh, state->collectors, uuidstr, strlen(uuidstr), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
-        col->identifier = colname;
+        col->identifier = uuidstr;
+        col->jsonconfig = jsonconfig;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
-                strlen(col->client->ipaddress), col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
     } else if (col->client != client) {
         HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
@@ -474,12 +514,17 @@ static int add_collector_to_hashmap(provision_state_t *state,
         if (col->identifier) {
             free(col->identifier);
         }
-        col->identifier = colname;
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
+        col->identifier = uuidstr;
+        col->jsonconfig = jsonconfig;
         col->client = client;
-        HASH_ADD_KEYPTR(hh, state->collectors, col->client->ipaddress,
-                strlen(col->client->ipaddress), col);
+        HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
+                strlen(col->identifier), col);
     } else {
-        free(colname);
+        free(jsonconfig);
+        free(uuidstr);
     }
 
     cs->parent = (void *)col;
@@ -654,6 +699,9 @@ void stop_all_collectors(int epollfd, prov_collector_t **collectors) {
         HASH_DELETE(hh, *collectors, col);
         destroy_provisioner_client(epollfd, col->client, col->identifier);
         free(col->identifier);
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
         free(col);
     }
 }
@@ -782,9 +830,6 @@ void clear_prov_state(provision_state_t *state) {
     }
     if (state->clientdbkey) {
         free(state->clientdbkey);
-    }
-    if (state->sign_ctx) {
-        EVP_PKEY_CTX_free(state->sign_ctx);
     }
     if (state->integrity_sign_private_key) {
         EVP_PKEY_free(state->integrity_sign_private_key);
@@ -969,6 +1014,24 @@ static int push_all_emailintercepts(emailintercept_t *mailintercepts,
     return 0;
 }
 
+static int push_all_agency_digest_configs(prov_agency_t *leas,
+        net_buffer_t *nb) {
+
+    prov_agency_t *ag, *tmp;
+
+    HASH_ITER(hh, leas, ag, tmp) {
+        if (push_lea_digest_onto_net_buffer(nb, ag->ag) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: error pushing digest config for agency %s onto buffer for writing to collector.",
+                    ag->ag->agencyid);
+            return -1;
+        }
+    }
+
+    return 0;
+
+}
+
 static int push_all_ipintercepts(ipintercept_t *ipintercepts,
         net_buffer_t *nb, prov_agency_t *agencies) {
 
@@ -1029,6 +1092,23 @@ static int respond_collector_auth(provision_state_t *state,
     if (push_all_mediators(state->mediators, outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue mediators to be sent to new collector on fd %d",
+                pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_ics_signing_key_onto_net_buffer(outgoing,
+            state->integrity_sign_private_key) == -1) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send ICS private key to new collector on fd %s", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_all_agency_digest_configs(state->interceptconf.leas,
+            outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue LEA digest configs to be sent to new collector on fd %d",
                 pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
@@ -1099,6 +1179,7 @@ static int respond_collector_auth(provision_state_t *state,
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }
+
 
     if (push_all_ipintercepts(state->interceptconf.ipintercepts, outgoing,
                 state->interceptconf.leas) == -1) {
@@ -1233,7 +1314,7 @@ static int process_udp_sink_announcement(provision_state_t *state,
     return 0;
 }
 
-static int process_x2x3_listener_announcement(provision_state_t *state,
+static int process_x2x3_listener_details(provision_state_t *state,
         prov_collector_t *col, uint8_t *msgbody, uint16_t msglen) {
 
     char *listenport = NULL;
@@ -1289,8 +1370,8 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 return -1;
             case OPENLI_PROTO_NO_MESSAGE:
                 break;
-            case OPENLI_PROTO_X2X3_LISTENER:
-                process_x2x3_listener_announcement(state,
+            case OPENLI_PROTO_X2X3_LISTENER_DETAILS:
+                process_x2x3_listener_details(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
             case OPENLI_PROTO_ADD_UDPSINK:
@@ -1395,12 +1476,6 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
 
                 if (update_mediator_details(state, msgbody, msglen,
                         cs, cs->ipaddr) == -1) {
-                    return -1;
-                }
-                break;
-            case OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST:
-                if (prov_handle_ics_signing_request(state, msgbody, msglen,
-                        cs, pev) == -1) {
                     return -1;
                 }
                 break;
@@ -1744,6 +1819,9 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
                     col->identifier);
             HASH_DELETE(hh, state->collectors, col);
             free(col->identifier);
+            if (col->jsonconfig) {
+                free(col->jsonconfig);
+            }
             free(col);
         }
         destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);

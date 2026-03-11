@@ -40,7 +40,6 @@
 #define SMS_SESSION_EXPIRY 180
 
 typedef struct sip_debug_settings {
-    char *sipdebugfile_base;
     libtrace_out_t *sipdebugout;
     libtrace_out_t *sipdebugupdate;
 
@@ -64,7 +63,7 @@ typedef struct openli_sip_worker {
     collector_stats_t *stats;
 
     /* Shared global-level configuration for this collector instance */
-    collector_identity_t *shared;
+    collector_sip_config_t *shared;
 
     /* RW mutex to protect the shared config against race conditions */
     pthread_rwlock_t *shared_mutex;
@@ -113,12 +112,6 @@ typedef struct openli_sip_worker {
      * SIP session to be intercepted
      */
     voipcinmap_t *knowncallids;
-
-    /* Flag that indicates whether we should avoid treating calls with
-     * matching SDP-O fields as separate legs of the same call, regardless
-     * of their call ID
-     */
-    uint8_t ignore_sdpo_matches;
 
     /* State for managing the pcaps where we will write bogus SIP messages
      * if requested by the user

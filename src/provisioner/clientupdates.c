@@ -211,6 +211,22 @@ int compare_sip_targets(provision_state_t *currstate,
     }
 
 
+int announce_digest_config_to_collectors(provision_state_t *state,
+        prov_agency_t *lea) {
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_lea_digest_onto_net_buffer(sock->outgoing, lea->ag) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send LEA digest config for %s to collector '%s'.",
+                    lea->ag->agencyid, col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+
+    return 0;
+}
+
 int announce_lea_to_mediators(provision_state_t *state,
         prov_agency_t *lea) {
 
@@ -227,6 +243,101 @@ int announce_lea_to_mediators(provision_state_t *state,
 
     return 0;
 }
+
+#define SEND_SINGLE_COLLECTOR_BEGIN \
+    if (col->client == NULL || col->client->commev == NULL) { \
+        return 0; \
+    } \
+    sock = (prov_sock_state_t *)(col->client->state); \
+    if (!sock->trusted || sock->halted) { \
+        return 0; \
+    }
+
+#define SEND_SINGLE_COLLECTOR_END \
+    if (enable_epoll_write(state, col->client->commev) == -1) { \
+        if (sock->log_allowed) { \
+            logger(LOG_INFO, \
+                    "OpenLI: unable to enable epoll write event for collector %s -- %s", \
+                    col->identifier, strerror(errno)); \
+        } \
+        disconnect_provisioner_client(state->epoll_fd, \
+                col->client, col->identifier); \
+        return -1; \
+    }
+
+int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_x2x3_listener_removal_onto_net_buffer(sock->outgoing, ipaddr,
+            port) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send X2X3 listener removal to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+
+}
+
+int announce_x2x3_listener_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_x2x3_listener_addition_onto_net_buffer(sock->outgoing, ipaddr,
+            port) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send X2X3 listener addition to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+
+}
+
+int announce_configuration_update_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *newconfig) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+
+    if (push_updated_component_configuration(sock->outgoing, newconfig) == -1) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send new component configuration to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+}
+
+int withdraw_agency_from_collectors(provision_state_t *state,
+        prov_agency_t *lea) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+
+        if (push_lea_withdrawal_onto_net_buffer(sock->outgoing,
+                    lea->ag) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send withdrawal of LEA %s to collector '%s'.",
+                    lea->ag->agencyid, col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+
+    return 0;
+}
+
 
 int withdraw_agency_from_mediators(provision_state_t *state,
         prov_agency_t *lea) {
@@ -539,6 +650,20 @@ int remove_liid_mapping(provision_state_t *state,
     return 0;
 }
 
+void announce_ics_private_key_to_collectors(provision_state_t *state) {
+
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_ics_signing_key_onto_net_buffer(sock->outgoing,
+                state->integrity_sign_private_key) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send ICS private key to collector '%s'", col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+}
+
 int announce_liidmapping_to_mediators(provision_state_t *state,
         liid_hash_t *liidmap) {
 
@@ -789,89 +914,6 @@ void clear_liid_announce_flags(prov_intercept_conf_t *conf) {
         h->need_announce = 0;
     }
 
-}
-
-static inline int replace_intercept_encryption_config(
-        intercept_common_t *common, liagency_t *agency) {
-
-    if (!common->encrypt_inherited) {
-        return 0;
-    }
-    if (strcmp(common->targetagency, agency->agencyid) != 0) {
-        return 0;
-    }
-    common->encrypt = agency->encrypt;
-    common->encryptkey_len = agency->encryptkey_len;
-
-    if (agency->encryptkey_len > 0) {
-        memcpy(common->encryptkey, agency->encryptkey,
-                OPENLI_MAX_ENCRYPTKEY_LEN);
-    } else {
-        memset(common->encryptkey, 0, OPENLI_MAX_ENCRYPTKEY_LEN);
-    }
-    return 1;
-}
-
-void update_inherited_encryption_settings(provision_state_t *state,
-        liagency_t *agency) {
-
-    ipintercept_t *ipint, *iptmp;
-    emailintercept_t *mailint, *mailtmp;
-    voipintercept_t *vint, *vtmp;
-
-    HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, iptmp) {
-        if (replace_intercept_encryption_config(&(ipint->common), agency)) {
-            modify_existing_intercept_options(state, (void *)ipint,
-                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
-            add_liid_mapping(&(state->interceptconf), &(ipint->common));
-        }
-    }
-
-    HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint, vtmp) {
-        if (replace_intercept_encryption_config(&(vint->common), agency)) {
-            modify_existing_intercept_options(state, (void *)vint,
-                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
-            add_liid_mapping(&(state->interceptconf), &(vint->common));
-        }
-    }
-
-    HASH_ITER(hh_liid, state->interceptconf.emailintercepts, mailint, mailtmp) {
-        if (replace_intercept_encryption_config(&(mailint->common), agency)) {
-            modify_existing_intercept_options(state, (void *)mailint,
-                    OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
-            add_liid_mapping(&(state->interceptconf), &(mailint->common));
-        }
-    }
-
-}
-
-void apply_intercept_encryption_settings(prov_intercept_conf_t *conf,
-        intercept_common_t *common) {
-
-    prov_agency_t *found;
-    HASH_FIND_STR(conf->leas, common->targetagency, found);
-
-    if (!found) {
-        // shouldn't happen, but in this case just leave the encryption
-        // settings as they are
-        return;
-    }
-
-    if (common->encrypt == OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
-        // no override, so use whatever is configured for the agency as a
-        // whole
-        common->encrypt = found->ag->encrypt;
-        common->encrypt_inherited = 1;
-    } else {
-        common->encrypt_inherited = 0;
-    }
-
-    if (common->encryptkey_len == 0 && found->ag->encryptkey_len > 0 &&
-            common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        common->encryptkey_len = found->ag->encryptkey_len;
-        memcpy(common->encryptkey, found->ag->encryptkey,
-                OPENLI_MAX_ENCRYPTKEY_LEN);
-    }
 }
 
 void update_intercept_timeformats(provision_state_t *state,

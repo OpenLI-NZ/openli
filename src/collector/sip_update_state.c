@@ -755,10 +755,12 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     HASH_FIND(hh_callid, vint->cin_callid_map, callid, strlen(callid),
             lookup);
 
-    if (!sipworker->ignore_sdpo_matches && sdpo != NULL) {
+    pthread_rwlock_rdlock(sipworker->shared_mutex);
+    if (!sipworker->shared->ignore_sdpo_matches && sdpo != NULL) {
         HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo,
                 sizeof(sip_sdp_identifier_t), lookup_sdp);
     }
+    pthread_rwlock_unlock(sipworker->shared_mutex);
 
     if (lookup) {
         if (lookup_sdp) {

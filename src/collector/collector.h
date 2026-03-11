@@ -35,6 +35,7 @@
 #include <uthash.h>
 #include <libwandder.h>
 #include <zmq.h>
+#include <uuid/uuid.h>
 
 #include <openssl/err.h>
 #include <openssl/pem.h>
@@ -298,6 +299,8 @@ typedef struct colthread_local {
 
 typedef struct collector_global {
 
+    uuid_t uuid;
+
     void *zmq_ctxt;
     colinput_t *inputs;
 
@@ -312,6 +315,7 @@ typedef struct collector_global {
     void *zmq_encoder_ctrl;
 
     pthread_rwlock_t config_mutex;
+    pthread_mutex_t configupdate_mutex;
 
     sync_thread_global_t syncip;
     etsili_generic_freelist_t *syncgenericfreelist;
@@ -329,14 +333,20 @@ typedef struct collector_global {
 
     char *configfile;
     collector_identity_t sharedinfo;
+    pthread_rwlock_t sipconfig_mutex;
+    collector_sip_config_t sipconfig;
+
+    pthread_rwlock_t digestconfig_mutex;
+    shared_agency_digest_config_t digest_config;
+
+    pthread_rwlock_t liid_agency_mutex;
+    shared_liid_to_agency_mapping_t liid_to_agency;
+
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
     coreserver_t *jmirrors;
     coreserver_t *ciscomirrors;
-
-    char *sipdebugfile;
-    uint8_t ignore_sdpo_matches;
 
     pthread_t seqproxy_tid;
 
@@ -363,8 +373,15 @@ typedef struct collector_global {
     email_ingestor_state_t *email_ingestor;
 
     x_input_t *x_inputs;
+    pthread_rwlock_t x_input_mutex;
 
 } collector_global_t;
+
+// "dirty" flag that is used to signal when the sync thread has received
+// updated collector config from the provisioner that needs to be written
+// to disk
+extern volatile int config_write_required;
+
 
 int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
@@ -379,6 +396,7 @@ int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
 void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
         uint8_t ismirror);
 
-
+// implemented in configwriter_collector.c
+int emit_collector_config(char *configfile, collector_global_t *conf);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

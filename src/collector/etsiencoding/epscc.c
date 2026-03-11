@@ -34,7 +34,7 @@
 
 openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
         uint32_t destid, uint8_t dir, uint8_t *ipcontent, uint32_t ipclen,
-        uint8_t icetype, uint16_t gtpseqno) {
+        uint8_t icetype, uint16_t gtpseqno, char *authcc, char *delivcc) {
 
     openli_export_recv_t *msg = NULL;
 
@@ -48,6 +48,8 @@ openli_export_recv_t *create_epscc_job(char *liid, uint32_t cin,
     gettimeofday(&(msg->ts), NULL);
 
     msg->data.mobcc.liid = strdup(liid);
+    msg->data.mobcc.authcc = strdup(authcc);
+    msg->data.mobcc.delivcc = strdup(delivcc);
     msg->data.mobcc.cin = cin;
     msg->data.mobcc.dir = dir;
     msg->data.mobcc.ipcontent = calloc(ipclen, sizeof(uint8_t));

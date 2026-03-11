@@ -113,7 +113,7 @@ static inline void reset_hash_context(integrity_check_state_t *found) {
         found->hash_ctx = EVP_MD_CTX_new();
     }
 
-    switch(found->agency->config->digest_hash_method) {
+    switch(found->agency->config->digest.hash_method) {
         case OPENLI_DIGEST_HASH_ALGO_SHA256:
             EVP_DigestInit_ex(found->hash_ctx, EVP_sha256(), NULL);
             break;
@@ -134,7 +134,7 @@ static inline void reset_sign_hash_context(integrity_check_state_t *found) {
         found->signature_ctx = EVP_MD_CTX_new();
     }
 
-    switch(found->agency->config->digest_sign_method) {
+    switch(found->agency->config->digest.sign_method) {
         case OPENLI_DIGEST_HASH_ALGO_SHA256:
             EVP_DigestInit_ex(found->signature_ctx, EVP_sha256(), NULL);
             break;
@@ -212,11 +212,11 @@ static inline void update_signature_hash(integrity_check_state_t *found,
     if (icbody && icbodylen > 0) {
         EVP_DigestUpdate(found->signature_ctx, icbody, icbodylen);
         if (found->hashes_since_last_signrec == 0 &&
-                found->agency->config->digest_sign_hashlimit > 1 &&
-                found->agency->config->digest_sign_timeout > 0) {
+                found->agency->config->digest.sign_hashlimit > 1 &&
+                found->agency->config->digest.sign_timeout > 0) {
 
             if (start_mediator_timer(found->sign_timer,
-                        found->agency->config->digest_sign_timeout) < 0) {
+                        found->agency->config->digest.sign_timeout) < 0) {
                 /* what can we do here? */
             }
         }
@@ -246,10 +246,11 @@ static wandder_encoded_result_t *generate_integrity_check_signature_pdu(
             operatorid, netelemid);
     reset_wandder_encoder(encoder);
     ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
-            job->seqno, ics->agency->config->digest_hash_method,
+            job->seqno, ics->agency->config->digest.hash_method,
             INTEGRITY_CHECK_REQUEST_SIGN,
             ics->msgtype, signature, signlen, job->signing_seqnos,
-            job->signing_seqno_array_size, ics->agency->config->time_fmt);
+            job->signing_seqno_array_size,
+            ics->agency->config->digest.time_fmt);
 
     return ic_pdu;
 }
@@ -272,9 +273,9 @@ static wandder_encoded_result_t *generate_integrity_check_hash_pdu(
 
     ic_pdu = encode_etsi_integrity_check(encoder, &hdrdata, ics->cin,
             ics->self_seqno_hash,
-            ics->agency->config->digest_hash_method, INTEGRITY_CHECK_SEND_HASH,
+            ics->agency->config->digest.hash_method, INTEGRITY_CHECK_SEND_HASH,
             ics->msgtype, hashresult, hashlen, ics->hashed_seqnos,
-            ics->seqno_next_index, ics->agency->config->time_fmt);
+            ics->seqno_next_index, ics->agency->config->digest.time_fmt);
 
     if (ic_pdu != NULL) {
         /* update the signed hash using the contents of the IntegrityCheck
@@ -391,18 +392,18 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
     found->seqno_next_index ++;
 
     if (found->pdus_since_last_hashrec == 0 &&
-            found->agency->config->digest_hash_pdulimit > 1 &&
-            found->agency->config->digest_hash_timeout > 0) {
+            found->agency->config->digest.hash_pdulimit > 1 &&
+            found->agency->config->digest.hash_timeout > 0) {
         if (start_mediator_timer(found->hash_timer,
-                    found->agency->config->digest_hash_timeout) < 0) {
+                    found->agency->config->digest.hash_timeout) < 0) {
             /* what can we do here? */
         }
     }
     found->pdus_since_last_hashrec += 1;
 
     if (found->pdus_since_last_hashrec >=
-            found->agency->config->digest_hash_pdulimit &&
-            found->agency->config->digest_hash_pdulimit != 0) {
+            found->agency->config->digest.hash_pdulimit &&
+            found->agency->config->digest.hash_pdulimit != 0) {
         halt_mediator_timer(found->hash_timer);
         action = INTEGRITY_CHECK_SEND_HASH;
 
@@ -485,8 +486,8 @@ uint8_t send_integrity_check_hash_pdu(coll_recv_t *col,
     halt_mediator_timer(ics->hash_timer);
 
     if (ics->hashes_since_last_signrec >=
-            ics->agency->config->digest_sign_hashlimit &&
-            ics->agency->config->digest_sign_hashlimit > 0) {
+            ics->agency->config->digest.sign_hashlimit &&
+            ics->agency->config->digest.sign_hashlimit > 0) {
         ret = INTEGRITY_CHECK_REQUEST_SIGN;
     }
 

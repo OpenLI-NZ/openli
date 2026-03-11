@@ -289,13 +289,13 @@ static int update_configuration_delete(update_con_info_t *cinfo,
                     OPENLI_CORE_SERVER_POP3);
             break;
         case TARGET_IPINTERCEPT:
-            ret = remove_ip_intercept(cinfo, state, target);
+            ret = remove_ip_intercept(cinfo, state, target, 1);
             break;
         case TARGET_VOIPINTERCEPT:
-            ret = remove_voip_intercept(cinfo, state, target);
+            ret = remove_voip_intercept(cinfo, state, target, 1);
             break;
         case TARGET_EMAILINTERCEPT:
-            ret = remove_email_intercept(cinfo, state, target);
+            ret = remove_email_intercept(cinfo, state, target, 1);
             break;
         case TARGET_DEFAULTRADIUS:
             ret = remove_defaultradius(cinfo, state, target);
@@ -313,6 +313,12 @@ static int update_configuration_delete(update_con_info_t *cinfo,
                         delete_active_collector_page);
                 cinfo->answercode = MHD_HTTP_FORBIDDEN;
             }
+            break;
+        case TARGET_X2X3LISTENER:
+            ret = remove_x2x3_listener(cinfo, state, target);
+            break;
+        case TARGET_UDPSINK:
+            /* TODO */
             break;
 
         case TARGET_MEDIATOR:
@@ -479,8 +485,18 @@ static int update_configuration_post(update_con_info_t *cinfo,
             break;
         case TARGET_OPENLIVERSION:
             break;
-        case TARGET_MEDIATOR:
         case TARGET_COLLECTOR:
+            if (strcmp(method, "PUT") == 0) {
+                // allow for modification of the collector config
+                ret = modify_collector_configuration(cinfo, state);
+            }
+            break;
+        case TARGET_MEDIATOR:
+            break;
+        case TARGET_X2X3LISTENER:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_x2x3_listener(cinfo, state);
+            }
             break;
     }
 
@@ -718,6 +734,12 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
         } else if (strncmp(url, "/collectors",
                 strlen("/collectors")) == 0) {
             cinfo->target = TARGET_COLLECTOR;
+        } else if (strncmp(url, "/x2x3listener",
+                strlen("/x2x3listener")) == 0) {
+            cinfo->target = TARGET_X2X3LISTENER;
+        } else if (strncmp(url, "/udpsink",
+                strlen("/udpsink")) == 0) {
+            cinfo->target = TARGET_UDPSINK;
         } else if (strncmp(url, "/mediators",
                 strlen("/mediators")) == 0) {
             cinfo->target = TARGET_MEDIATOR;

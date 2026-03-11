@@ -179,7 +179,6 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->toend_time = src->toend_time;
     dest->tomediate = src->tomediate;
     dest->encrypt = src->encrypt;
-    dest->encrypt_inherited = src->encrypt_inherited;
     dest->seqtrackerid = src->seqtrackerid;
     dest->time_fmt = src->time_fmt;
 

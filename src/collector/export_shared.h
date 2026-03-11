@@ -41,8 +41,11 @@ typedef struct exporter_intercept_msg {
     int authcc_len;
     char *delivcc;
     int delivcc_len;
+    char *agencyid;
 
     payload_encryption_method_t encryptmethod;
+    uint8_t *encryptkey;
+    size_t encryptkey_len;
     openli_timestamp_encoding_fmt_t timefmt;
     openli_liid_format_t liid_format;
 } exporter_intercept_msg_t;
@@ -60,6 +63,7 @@ typedef struct cin_seqno {
 typedef struct intercept_state {
     exporter_intercept_msg_t details;
     cin_seqno_t *cinsequencing;
+    size_t encoder_index;
     UT_hash_handle hh;
     wandder_encode_job_t *preencoded;
     uint8_t version;

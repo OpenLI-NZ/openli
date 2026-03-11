@@ -80,10 +80,10 @@ static void add_recipients(etsili_email_iri_content_t *content,
 
 }
 
-static openli_export_recv_t *create_emailiri_job(char *liid,
+static openli_export_recv_t *create_emailiri_job(char *liid, char *authcc,
         emailsession_t *sess, uint8_t iritype, uint8_t emailev,
         uint8_t status, uint32_t destid, time_t timestamp,
-        const char **tgtaddrs, int tgtaddr_count) {
+        const char **tgtaddrs, int tgtaddr_count, char *delivcc) {
 
     openli_export_recv_t *msg = NULL;
     etsili_email_iri_content_t *content;
@@ -102,6 +102,8 @@ static openli_export_recv_t *create_emailiri_job(char *liid,
 
     msg->data.emailiri.customparams = NULL;
     msg->data.emailiri.liid = strdup(liid);
+    msg->data.emailiri.authcc = strdup(authcc);
+    msg->data.emailiri.delivcc = strdup(delivcc);
     msg->data.emailiri.cin = sess->cin;
     msg->data.emailiri.iritype = iritype;
     content->eventtype = emailev;
@@ -256,9 +258,10 @@ static void create_emailiris_for_intercept_list(openli_email_worker_t *state,
             usetarget_count = 0;
         }
 
-        irijob = create_emailiri_job(ref->em->common.liid, sess,
+        irijob = create_emailiri_job(ref->em->common.liid,
+                ref->em->common.authcc, sess,
                 iri_type, email_ev, status, ref->em->common.destid, ts,
-                usetargets, usetarget_count);
+                usetargets, usetarget_count, ref->em->common.delivcc);
         if (irijob == NULL) {
             continue;
         }

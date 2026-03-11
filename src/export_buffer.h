@@ -46,6 +46,7 @@ typedef struct encoder_result {
     wandder_encoded_result_t *msgbody;
     uint8_t *ipcontents;
     uint32_t ipclen;
+    uint16_t preamblen;
     uint32_t seqno;
     uint32_t destid;
     char *liid;

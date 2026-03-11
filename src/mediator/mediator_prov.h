@@ -28,7 +28,7 @@
 #define OPENLI_MEDIATOR_PROV_H_
 
 #include <inttypes.h>
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "netcomms.h"
 #include "openli_tls.h"
 
@@ -36,11 +36,11 @@
 typedef struct mediator_provisioner {
 
     /** Epoll event for the socket when the connection is active */
-    med_epoll_ev_t *provev;
+    openli_epoll_ev_t *provev;
 
     /** Epoll timer event for attempting to reconnect to the provisioner
      *  when the connection has failed */
-    med_epoll_ev_t *provreconnect;
+    openli_epoll_ev_t *provreconnect;
 
     /** Netcomms buffer for sending messages to the provisioner */
     net_buffer_t *outgoing;
@@ -152,16 +152,6 @@ int send_mediator_details_to_provisioner(mediator_prov_t *prov,
  */
 int reload_provisioner_socket_config(mediator_prov_t *currstate,
         mediator_prov_t *newstate);
-
-/** Sends an integrity check signing request to a connected provisioner.
- *
- *  @param prov         The provisioner that needs to receive the request
- *  @param req          The request that needs to be sent
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-int send_ics_signing_request_to_provisioner(mediator_prov_t *prov,
-        struct ics_sign_request_message *req);
 
 #endif
 

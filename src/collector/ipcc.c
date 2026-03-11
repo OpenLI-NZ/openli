@@ -148,11 +148,13 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         strcmp(matchsess->common.targetagency, "pcapdisk") == 0)
                 {
                     msg = create_rawip_cc_job(matchsess->common.liid,
-                        matchsess->common.destid, pkt);
+                        matchsess->common.destid, matchsess->common.authcc,
+                        pkt);
                 } else {
                     msg = create_ipcc_job(matchsess->cin,
                         matchsess->common.liid, matchsess->common.destid, pkt,
-                        dir);
+                        dir, matchsess->common.authcc,
+                        matchsess->common.delivcc);
                 }
 
                 publish_openli_msg(
@@ -213,15 +215,17 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                     if (sess->common.targetagency == NULL ||
                             strcmp(sess->common.targetagency,"pcapdisk") == 0) {
                         msg = create_rawip_cc_job(sess->common.liid,
-                            sess->common.destid, pkt);
+                            sess->common.destid, sess->common.authcc, pkt);
                     } else if (sess->accesstype ==
                             INTERNET_ACCESS_TYPE_MOBILE) {
 
                         msg = create_epscc_job_from_ip(sess->cin,
-                                sess->common.liid, sess->common.destid, pkt, 0);
+                                sess->common.liid, sess->common.destid, pkt, 0,
+                                sess->common.authcc, sess->common.delivcc);
                     } else {
                         msg = create_ipcc_job(sess->cin, sess->common.liid,
-                                sess->common.destid, pkt, 0);
+                                sess->common.destid, pkt, 0,
+                                sess->common.authcc, sess->common.delivcc);
                     }
                     if (msg != NULL) {
                         publish_openli_msg(
@@ -306,13 +310,15 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (sess->common.targetagency == NULL ||
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
                 msg = create_rawip_cc_job(sess->common.liid,
-                        sess->common.destid, pkt);
+                        sess->common.destid, sess->common.authcc, pkt);
             } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
                 msg = create_epscc_job_from_ip(sess->cin,
-                        sess->common.liid, sess->common.destid, pkt, 0);
+                        sess->common.liid, sess->common.destid, pkt, 0,
+                        sess->common.authcc, sess->common.delivcc);
             } else {
                 msg = create_ipcc_job(sess->cin, sess->common.liid,
-                        sess->common.destid, pkt, 0);
+                        sess->common.destid, pkt, 0, sess->common.authcc,
+                        sess->common.delivcc);
             }
             if (msg != NULL) {
                 publish_openli_msg(
@@ -343,13 +349,15 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (sess->common.targetagency == NULL ||
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
                 msg = create_rawip_cc_job(sess->common.liid,
-                        sess->common.destid, pkt);
+                        sess->common.destid, sess->common.authcc, pkt);
             } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
                 msg = create_epscc_job_from_ip(sess->cin,
-                        sess->common.liid, sess->common.destid, pkt, 1);
+                        sess->common.liid, sess->common.destid, pkt, 1,
+                        sess->common.authcc, sess->common.delivcc);
             } else {
                 msg = create_ipcc_job(sess->cin, sess->common.liid,
-                        sess->common.destid, pkt, 1);
+                        sess->common.destid, pkt, 1, sess->common.authcc,
+                        sess->common.delivcc);
             }
             if (msg != NULL) {
                 publish_openli_msg( 
@@ -375,7 +383,7 @@ ipv4ccdone:
 
 openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
         uint16_t iplen, char *liid, uint32_t cin, uint8_t dir,
-        uint32_t destid) {
+        uint32_t destid, char *authcc, char *delivcc) {
 
     size_t liidlen = strlen(liid);
     openli_export_recv_t *msg = NULL;
@@ -392,6 +400,8 @@ openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
     msg->ts = tv;
 
     msg->data.ipcc.liid = strdup(liid);
+    msg->data.ipcc.authcc = strdup(authcc);
+    msg->data.ipcc.delivcc = strdup(delivcc);
     msg->data.ipcc.liidalloc = liidlen + 1;
     msg->data.ipcc.cin = cin;
     msg->data.ipcc.dir = dir;

@@ -49,6 +49,7 @@ int config_yaml_parser(char *configfile, void *arg,
         int (*parse_mapping)(void *, yaml_document_t *, yaml_node_t *,
                 yaml_node_t *), int createifmissing, const char *encpassfile);
 int config_check_onoff(char *value);
+int config_parse_uuid(char *srcvalue, uuid_t dest);
 int parse_core_server_list(coreserver_t **servlist, uint8_t cstype,
         yaml_document_t *doc, yaml_node_t *inputs);
 

@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <assert.h>
 
+#include "util.h"
 #include "logger.h"
 #include "collector_base.h"
 #include "collector_publish.h"
@@ -47,6 +48,10 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->delivcc) {
         free(msg->delivcc);
     }
+    if (msg->agencyid) {
+        free(msg->agencyid);
+    }
+    openli_free_encryptkey_ptr(&(msg->encryptkey), msg->encryptkey_len);
 }
 
 static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
@@ -59,6 +64,60 @@ static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
         }
         free(c);
     }
+}
+
+static inline char *extract_authcc_from_job(openli_export_recv_t *recvd) {
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.authcc;
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
+            return recvd->data.ipcc.authcc;
+        case OPENLI_EXPORT_IPIRI:
+            return recvd->data.ipiri.authcc;
+        case OPENLI_EXPORT_IPMMIRI:
+            return recvd->data.ipmmiri.authcc;
+        case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
+            return recvd->data.mobiri.authcc;
+        case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
+        case OPENLI_EXPORT_RAW_IRI:
+            return recvd->data.rawip.authcc;
+        case OPENLI_EXPORT_EMAILIRI:
+            return recvd->data.emailiri.authcc;
+        case OPENLI_EXPORT_EMAILCC:
+            return recvd->data.emailcc.authcc;
+        case OPENLI_EXPORT_EPSCC:
+            return recvd->data.mobcc.authcc;
+    }
+    return NULL;
+}
+
+static inline char *extract_delivcc_from_job(openli_export_recv_t *recvd) {
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.delivcc;
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
+            return recvd->data.ipcc.delivcc;
+        case OPENLI_EXPORT_IPIRI:
+            return recvd->data.ipiri.delivcc;
+        case OPENLI_EXPORT_IPMMIRI:
+            return recvd->data.ipmmiri.delivcc;
+        case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
+            return recvd->data.mobiri.delivcc;
+        case OPENLI_EXPORT_EMAILIRI:
+            return recvd->data.emailiri.delivcc;
+        case OPENLI_EXPORT_EMAILCC:
+            return recvd->data.emailcc.delivcc;
+        case OPENLI_EXPORT_EPSCC:
+            return recvd->data.mobcc.delivcc;
+    }
+    return NULL;
 }
 
 static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
@@ -247,16 +306,11 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         remove_preencoded(seqdata, intstate);
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
+        free(intstate->details.agencyid);
+        openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
+                intstate->details.encryptkey_len);
 
         /* leave the CIN seqno state as is for now */
-        intstate->details.authcc = strdup(cept->authcc);
-        intstate->details.delivcc = strdup(cept->delivcc);
-        intstate->details.authcc_len = strlen(cept->authcc);
-        intstate->details.delivcc_len = strlen(cept->delivcc);
-
-        intstate->details.encryptmethod = cept->encryptmethod;
-        intstate->details.timefmt = cept->timefmt;
-        intstate->details.liid_format = cept->liid_format;
         intstate->version ++;
 
     } else {
@@ -264,21 +318,29 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate = (exporter_intercept_state_t *)malloc(
                 sizeof(exporter_intercept_state_t));
         intstate->details.liid = strdup(cept->liid);
-        intstate->details.authcc = strdup(cept->authcc);
-        intstate->details.delivcc = strdup(cept->delivcc);
         intstate->details.liid_len = strlen(cept->liid);
-        intstate->details.authcc_len = strlen(cept->authcc);
-        intstate->details.delivcc_len = strlen(cept->delivcc);
-        intstate->details.timefmt = cept->timefmt;
-        intstate->details.liid_format = cept->liid_format;
-        intstate->details.encryptmethod = cept->encryptmethod;
         intstate->cinsequencing = NULL;
         intstate->version = 0;
-
+        intstate->encoder_index = seqdata->rr_next_encoder_assign;
+        seqdata->rr_next_encoder_assign ++;
+        if (seqdata->rr_next_encoder_assign >= seqdata->encoders) {
+            seqdata->rr_next_encoder_assign %= seqdata->encoders;
+        }
         HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
                 intstate->details.liid_len, intstate);
     }
 
+    intstate->details.agencyid = strdup(cept->targetagency);
+    intstate->details.authcc = strdup(cept->authcc);
+    intstate->details.delivcc = strdup(cept->delivcc);
+    intstate->details.authcc_len = strlen(cept->authcc);
+    intstate->details.delivcc_len = strlen(cept->delivcc);
+    intstate->details.encryptmethod = cept->encryptmethod;
+    intstate->details.encryptkey = openli_dup_encryptkey_ptr(
+            cept->encryptkey, cept->encryptkey_len);
+    intstate->details.encryptkey_len = cept->encryptkey_len;
+    intstate->details.timefmt = cept->timefmt;
+    intstate->details.liid_format = cept->liid_format;
     preencode_etsi_fields(seqdata, intstate);
 }
 
@@ -318,11 +380,19 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
         return -1;
     }
 
+    if (intstate->details.agencyid) {
+        free(intstate->details.agencyid);
+    }
+    intstate->details.agencyid = strdup(msg->targetagency);
+
     if (intstate->details.authcc) {
         free(intstate->details.authcc);
     }
     intstate->details.authcc = strdup(msg->authcc);
     intstate->details.authcc_len = strlen(msg->authcc);
+
+    openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
+            intstate->details.encryptkey_len);
 
     if (intstate->details.delivcc) {
         free(intstate->details.delivcc);
@@ -332,6 +402,9 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.liid_format = msg->liid_format;
     intstate->details.timefmt = msg->timefmt;
     intstate->details.encryptmethod = msg->encryptmethod;
+    intstate->details.encryptkey = openli_dup_encryptkey_ptr(msg->encryptkey,
+            msg->encryptkey_len);
+    intstate->details.encryptkey_len = msg->encryptkey_len;
     remove_preencoded(seqdata, intstate);
     preencode_etsi_fields(seqdata, intstate);
     intstate->version ++;
@@ -343,6 +416,10 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
+    size_t index;
+    int ret = 1;
+    openli_encoding_job_t job;
+
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
 
     if (!intstate) {
@@ -351,36 +428,66 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         return -1;
     }
 
-    /* TODO All encoders need to know that they should clear all templates
-     * for this particular intercept, somehow?
-     */
+    /* Tell the encoder that the intercept is over -- signal with a NULL
+     * origreq */
+    memset(&job, 0, sizeof(openli_encoding_job_t));
+	job.liid = strdup(msg->liid);
+
+    index = intstate->encoder_index;
+    while (1) {
+        if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
+                sizeof(openli_encoding_job_t), 0)) < 0) {
+            if (errno == EAGAIN) {
+                continue;
+            }
+            logger(LOG_INFO,
+                    "Error while pushing encoding job to worker threads: %s",
+                    strerror(errno));
+            return -1;
+        }
+        break;
+    }
+
     HASH_DELETE(hh, seqdata->intercepts, intstate);
     free_intercept_state(seqdata, intstate);
-    return 1;
+    return ret;
 }
 
 static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd, exporter_intercept_state_t *intstate,
-        cin_seqno_t *cinseq, char *liid, uint32_t *seqno) {
+        cin_seqno_t *cinseq, char *liid, uint32_t *seqno, char *authcc,
+        char *delivcc) {
 
     openli_encoding_job_t job;
     int ret = 1;
+    size_t index;
 
     job.seqno = *seqno;
 	job.preencoded = intstate->preencoded;
 	job.origreq = recvd;
 	job.liid = strdup(liid);
+    job.authcc = strdup(authcc);
+    job.delivcc = strdup(delivcc);
     job.cinstr = strdup(cinseq->cin_string);
     job.cin = (int64_t)cinseq->cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
+    job.encryptkey = openli_dup_encryptkey_ptr(intstate->details.encryptkey,
+            intstate->details.encryptkey_len);
+    job.encryptkey_len = intstate->details.encryptkey_len;
+
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;
 
+    /* TODO we should be able to store this index per LIID, alongside its
+     * encryption and integrity check state so we don't have to re-calculate
+     * it every time
+     */
+    index = intstate->encoder_index;
     (*seqno)++;
 
     while (1) {
-        if ((ret = zmq_send(seqdata->zmq_pushjobsock, (char *)&job,
+        if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
                 sizeof(openli_encoding_job_t), 0)) < 0) {
             if (errno == EAGAIN) {
                 continue;
@@ -398,7 +505,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 
 static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd, exporter_intercept_state_t *intstate,
-        cin_seqno_t *cinseq, char *liid) {
+        cin_seqno_t *cinseq, char *liid, char *authcc, char *delivcc) {
 
     openli_export_recv_t *replace;
     openli_emailcc_job_t *req;
@@ -409,7 +516,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
     req = &(recvd->data.emailcc);
     if (req->cc_content_len < MAX_CONTENT_PER_JOB) {
         return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
-                &cinseq->cc_seqno);
+                &cinseq->cc_seqno, authcc, delivcc);
     }
 
     cc_rem = (uint32_t)req->cc_content_len;
@@ -422,6 +529,8 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
         replace->destid = recvd->destid;
         replace->ts = recvd->ts;
         replace->data.emailcc.liid = strdup(liid);
+        replace->data.emailcc.authcc = strdup(authcc);
+        replace->data.emailcc.delivcc = strdup(delivcc);
         replace->data.emailcc.cin = cinseq->cin;
         replace->data.emailcc.format = req->format;
         replace->data.emailcc.dir = req->dir;
@@ -443,7 +552,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
         cc_rem -= tocopy;
 
         res = generate_encoding_job(seqdata, replace, intstate, cinseq, liid,
-                &cinseq->cc_seqno);
+                &cinseq->cc_seqno, authcc, delivcc);
         if (res < 0) {
             return -1;
         }
@@ -456,7 +565,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
 static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd) {
 
-    char *liid;
+    char *liid, *authcc, *delivcc;
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
@@ -466,6 +575,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
+    authcc = extract_authcc_from_job(recvd);
+    delivcc = extract_delivcc_from_job(recvd);
     cin = extract_cin_from_job(recvd);
     iritype = extract_iritype_from_job(recvd);
 
@@ -504,7 +615,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     switch(recvd->type) {
         case OPENLI_EXPORT_EMAILCC:
-            return handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid);
+            return handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid,
+                    authcc, delivcc);
     }
 
 
@@ -536,7 +648,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	}
 
     return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
-            seqno);
+            seqno, authcc, delivcc);
 
 }
 
@@ -625,6 +737,7 @@ void *start_seqtracker_thread(void *data) {
     seqtracker_thread_data_t *seqdata = (seqtracker_thread_data_t *)data;
     openli_export_recv_t *job = NULL;
     int x, zero = 0, large=1000, sndtimeo=1000;
+    size_t i;
     exporter_intercept_state_t *intstate, *tmpexp;
 
     seqdata->zmq_recvpublished = zmq_socket(seqdata->zmq_ctxt, ZMQ_PULL);
@@ -645,34 +758,37 @@ void *start_seqtracker_thread(void *data) {
     }
 
 
-    seqdata->zmq_pushjobsock = zmq_socket(seqdata->zmq_ctxt, ZMQ_PUSH);
-    snprintf(sockname, 128, "inproc://openliseqpush-%d", seqdata->trackerid);
-    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_LINGER, &zero,
-                sizeof(zero)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to configure push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
-    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_SNDHWM, &large,
-                sizeof(large)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to configure push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
-    if (zmq_setsockopt(seqdata->zmq_pushjobsock, ZMQ_SNDTIMEO, &sndtimeo,
-                sizeof(sndtimeo)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to configure push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
-    }
-    if (zmq_bind(seqdata->zmq_pushjobsock, sockname) < 0) {
-        logger(LOG_INFO,
-                "OpenLI: tracker thread %d failed to bind to push zmq: %s",
-                seqdata->trackerid, strerror(errno));
-        goto haltseqtracker;
+    seqdata->zmq_pushjobsocks = calloc(seqdata->encoders, sizeof(void *));
+    for (i = 0; i < seqdata->encoders; i++) {
+        seqdata->zmq_pushjobsocks[i] = zmq_socket(seqdata->zmq_ctxt, ZMQ_PUSH);
+        snprintf(sockname, 128, "inproc://openliseqpush-%zu", i);
+        if (zmq_setsockopt(seqdata->zmq_pushjobsocks[i], ZMQ_LINGER, &zero,
+                    sizeof(zero)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
+        if (zmq_setsockopt(seqdata->zmq_pushjobsocks[i], ZMQ_SNDHWM, &large,
+                    sizeof(large)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
+        if (zmq_setsockopt(seqdata->zmq_pushjobsocks[i], ZMQ_SNDTIMEO,
+                &sndtimeo, sizeof(sndtimeo)) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to configure push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
+        if (zmq_bind(seqdata->zmq_pushjobsocks[i], sockname) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: tracker thread %d failed to bind to push zmq: %s",
+                    seqdata->trackerid, strerror(errno));
+            goto haltseqtracker;
+        }
     }
 
 	seqdata->removedints = NULL;
@@ -704,13 +820,20 @@ haltseqtracker:
     logger(LOG_INFO, "OpenLI: halting sequence tracker %d\n",
 		    seqdata->trackerid);
     zmq_close(seqdata->zmq_recvpublished);
-    zmq_close(seqdata->zmq_pushjobsock);
+    if (seqdata->zmq_pushjobsocks) {
+        for (i = 0; i < seqdata->encoders; i++) {
+            if (seqdata->zmq_pushjobsocks[i]) {
+                zmq_close(seqdata->zmq_pushjobsocks[i]);
+            }
+        }
+        free(seqdata->zmq_pushjobsocks);
+    }
 
     if (seqdata->haltinfo) {
-	pthread_mutex_lock(&(seqdata->haltinfo->mutex));
-	seqdata->haltinfo->halted ++;
-	pthread_cond_signal(&(seqdata->haltinfo->cond));
-	pthread_mutex_unlock(&(seqdata->haltinfo->mutex));
+        pthread_mutex_lock(&(seqdata->haltinfo->mutex));
+        seqdata->haltinfo->halted ++;
+        pthread_cond_signal(&(seqdata->haltinfo->cond));
+        pthread_mutex_unlock(&(seqdata->haltinfo->mutex));
     }
     pthread_exit(NULL);
 }

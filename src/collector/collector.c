@@ -53,9 +53,11 @@
 #include "jmirror_parser.h"
 #include "cisco_parser.h"
 #include "util.h"
+#include "collector_integrity_check.h"
 
-volatile int collector_halt = 0;
 volatile int reload_config = 0;
+volatile int config_write_required = 0;
+volatile sig_atomic_t collector_halt = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -1797,6 +1799,12 @@ static inline void init_sync_thread_data(collector_global_t *glob,
 
     sup->stats_mutex = &(glob->stats_mutex);
     sup->stats = &(glob->stats);
+
+    sup->configupdate_mutex = &(glob->configupdate_mutex);
+    sup->configupdates.updates = calloc(16,
+            sizeof(openli_yaml_config_update_t));
+    sup->configupdates.update_count = 0;
+    sup->configupdates.array_size = 16;
 }
 
 static inline void free_sync_thread_data(sync_thread_global_t *sup) {
@@ -1811,6 +1819,8 @@ static inline void free_sync_thread_data(sync_thread_global_t *sup) {
 	if (sup->epollevs) {
         libtrace_list_deinit((libtrace_list_t *)(sup->epollevs));
 	}
+    clean_openli_yaml_config_updates(&(sup->configupdates));
+    free(sup->configupdates.updates);
 }
 
 static void destroy_collector_state(collector_global_t *glob) {
@@ -1818,6 +1828,7 @@ static void destroy_collector_state(collector_global_t *glob) {
     colinput_t *inp;
     int i;
     colthread_local_t *loc, *tmp;
+    agency_digest_config_t *dig, *digtmp;
 
     if (glob->expired_inputs) {
         libtrace_list_node_t *n;
@@ -1832,6 +1843,13 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
 	free_sync_thread_data(&(glob->syncip));
+
+    HASH_ITER(hh, glob->digest_config.map, dig, digtmp) {
+        HASH_DELETE(hh, glob->digest_config.map, dig);
+        free_agency_digest_config(dig);
+    }
+
+    purge_liid_to_agency_map(&(glob->liid_to_agency.map));
 
     if (glob->emailworkers) {
         free(glob->emailworkers);
@@ -1893,8 +1911,13 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
+    pthread_mutex_destroy(&(glob->configupdate_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_rwlock_destroy(&glob->x_input_mutex);
+    pthread_rwlock_destroy(&glob->sipconfig_mutex);
+    pthread_rwlock_destroy(&glob->digestconfig_mutex);
+    pthread_rwlock_destroy(&glob->liid_agency_mutex);
     free(glob);
 }
 
@@ -1919,8 +1942,8 @@ static void clear_global_config(collector_global_t *glob) {
         destroy_x_input(xinp);
     };
 
-    if (glob->sipdebugfile) {
-        free(glob->sipdebugfile);
+    if (glob->sipconfig.sipdebugfile) {
+        free(glob->sipconfig.sipdebugfile);
     }
 
     if (glob->default_email_domain) {
@@ -1950,6 +1973,13 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->sharedinfo.provisionerport) {
         free(glob->sharedinfo.provisionerport);
     }
+    if (glob->sharedinfo.jsonconfig) {
+        free(glob->sharedinfo.jsonconfig);
+    }
+    if (glob->sharedinfo.digestsigningkey) {
+        EVP_PKEY_free(glob->sharedinfo.digestsigningkey);
+    }
+
     if (glob->alumirrors) {
         free_coreserver_list(glob->alumirrors);
     }
@@ -2076,6 +2106,8 @@ static int prepare_collector_glob(collector_global_t *glob) {
 }
 
 static void init_collector_global(collector_global_t *glob) {
+    uuid_clear(glob->sharedinfo.uuid);
+
     glob->zmq_ctxt = NULL;
     glob->inputs = NULL;
     glob->x_inputs = NULL;
@@ -2085,6 +2117,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_threads = 1;
     glob->gtp_threads = 1;
     glob->sip_threads = 1;
+    glob->sharedinfo.jsonconfig = NULL;
     glob->sharedinfo.intpointid = NULL;
     glob->sharedinfo.intpointid_len = 0;
     glob->sharedinfo.operatorid = NULL;
@@ -2092,6 +2125,8 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
     glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
+    glob->sharedinfo.always_request_encrypt_bytecounter = 0;
+    glob->sharedinfo.digestsigningkey = NULL;
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
@@ -2099,11 +2134,10 @@ static void init_collector_global(collector_global_t *glob) {
     glob->configfile = NULL;
     glob->sharedinfo.provisionerip = NULL;
     glob->sharedinfo.provisionerport = NULL;
-    glob->sharedinfo.disable_sip_redirect = 0;
+    glob->sipconfig.disable_sip_redirect = 0;
     glob->alumirrors = NULL;
     glob->jmirrors = NULL;
     glob->ciscomirrors = NULL;
-    glob->sipdebugfile = NULL;
     glob->nextloc = 0;
     glob->syncgenericfreelist = NULL;
 
@@ -2130,7 +2164,8 @@ static void init_collector_global(collector_global_t *glob) {
     glob->emailconf.authpassword = NULL;
 
     glob->etsitls = 1;
-    glob->ignore_sdpo_matches = 0;
+    glob->sipconfig.ignore_sdpo_matches = 0;
+    glob->sipconfig.sipdebugfile = NULL;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
     memset(&(glob->stats), 0, sizeof(glob->stats));
@@ -2160,20 +2195,51 @@ static void init_collector_global(collector_global_t *glob) {
 static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
+    char *jsonconfig;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
     glob->configfile = configfile;
 
     pthread_mutex_init(&(glob->stats_mutex), NULL);
+    pthread_mutex_init(&(glob->configupdate_mutex), NULL);
     pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
+    pthread_rwlock_init(&glob->sipconfig_mutex, NULL);
+    pthread_rwlock_init(&glob->digestconfig_mutex, NULL);
+    pthread_rwlock_init(&glob->liid_agency_mutex, NULL);
+    pthread_rwlock_init(&glob->x_input_mutex, NULL);
 
+    glob->digest_config.map = NULL;
+    glob->liid_to_agency.map = NULL;
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
     }
+
+    if (uuid_is_null(glob->sharedinfo.uuid)) {
+        char uuidstr[64];
+        openli_yaml_config_pending_updates_t *pending;
+
+        uuid_generate(glob->sharedinfo.uuid);
+        uuid_unparse(glob->sharedinfo.uuid, uuidstr);
+        /* rewrite config file to contain new UUID */
+        //emit_collector_config(configfile, glob);
+        pthread_mutex_lock(&(glob->configupdate_mutex));
+        pending = &(glob->syncip.configupdates);
+        UPDATE_SCALAR_CONFIG(pending, "uuid", uuidstr, true, true);
+        if (apply_yaml_config_updates(configfile,
+                &(glob->syncip.configupdates)) < 0) {
+            logger(LOG_INFO, "Failed to write updated YAML configuration to local config file: %s", configfile);
+        }
+        clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
+        pthread_mutex_unlock(&(glob->configupdate_mutex));
+    }
+    jsonconfig = collector_config_to_json(glob);
+    pthread_rwlock_wrlock(&glob->config_mutex);
+    glob->sharedinfo.jsonconfig = jsonconfig;
+    pthread_rwlock_unlock(&glob->config_mutex);
 
     /* Disable by default, unless the user has configured EITHER:
      *   a) set the enabled flag to true (obviously)
@@ -2211,12 +2277,12 @@ static collector_global_t *parse_global_config(char *configfile) {
     logger(LOG_DEBUG, "OpenLI: ETSI TLS encryption %s",
         glob->etsitls ? "enabled" : "disabled");
 
-    if (glob->sharedinfo.trust_sip_from) {
+    if (glob->sipconfig.trust_sip_from) {
         logger(LOG_INFO, "Allowing SIP From: URIs to be used for target identification");
     }
 
     logger(LOG_INFO, "Redirection of packets between SIP threads is %s",
-            glob->sharedinfo.disable_sip_redirect ? "disabled": "allowed");
+            glob->sipconfig.disable_sip_redirect ? "disabled": "allowed");
 
     if (glob->mask_imap_creds) {
         logger(LOG_INFO, "Email interception: rewriting IMAP auth credentials to avoid leaking passwords to agencies");
@@ -2285,7 +2351,7 @@ static int reload_collector_config(collector_global_t *glob,
     int i, tlschanged, ret;
     coreserver_t *tmp;
     x_input_t *xinp, *xtmp;
-
+    char *newjson = NULL;
     ret = 0;
 
     init_collector_global(&newstate);
@@ -2339,19 +2405,24 @@ static int reload_collector_config(collector_global_t *glob,
             pthread_mutex_unlock(&(glob->forwarders[i].sslmutex));
         }
 
+        pthread_rwlock_wrlock(&(glob->x_input_mutex));
         HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
             pthread_mutex_lock(&(xinp->sslmutex));
             xinp->ssl_ctx = glob->sslconf.ctx;
             xinp->ssl_ctx_bad = 0;
             pthread_mutex_unlock(&(xinp->sslmutex));
         }
+        pthread_rwlock_unlock(&(glob->x_input_mutex));
     }
 
-    pthread_rwlock_wrlock(&(glob->config_mutex));
+    pthread_rwlock_wrlock(&(glob->x_input_mutex));
+    reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
+    pthread_rwlock_unlock(&(glob->x_input_mutex));
 
+
+    pthread_rwlock_wrlock(&(glob->config_mutex));
     glob->stat_frequency = newstate.stat_frequency;
     reload_inputs(glob, &newstate);
-    reload_x2x3_inputs(glob, &newstate, sync, tlschanged);
     reload_udpsinks(glob, &newstate);
     /* Just update these, regardless of whether they've changed. It's more
      * effort to check for a change than it is worth and there are no
@@ -2393,13 +2464,24 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid = newstate.sharedinfo.intpointid;
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
-
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
-    glob->sharedinfo.trust_sip_from = newstate.sharedinfo.trust_sip_from;
-    glob->sharedinfo.disable_sip_redirect =
-            newstate.sharedinfo.disable_sip_redirect;
+    glob->sharedinfo.always_request_encrypt_bytecounter =
+            newstate.sharedinfo.always_request_encrypt_bytecounter;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
+
+    pthread_rwlock_wrlock(&(glob->sipconfig_mutex));
+    glob->sipconfig.trust_sip_from = newstate.sipconfig.trust_sip_from;
+    glob->sipconfig.disable_sip_redirect =
+            newstate.sipconfig.disable_sip_redirect;
+    glob->sipconfig.ignore_sdpo_matches =
+            newstate.sipconfig.ignore_sdpo_matches;
+    if (glob->sipconfig.sipdebugfile) {
+        free(glob->sipconfig.sipdebugfile);
+    }
+    glob->sipconfig.sipdebugfile = newstate.sipconfig.sipdebugfile;
+    newstate.sipconfig.sipdebugfile = NULL;
+    pthread_rwlock_unlock(&(glob->sipconfig_mutex));
 
     pthread_rwlock_wrlock(&(glob->email_config_mutex));
     if (glob->mask_imap_creds != newstate.mask_imap_creds) {
@@ -2460,6 +2542,15 @@ static int reload_collector_config(collector_global_t *glob,
     logger(LOG_DEBUG, "OpenLI: session idle timeout for POP3 sessions is now %u minutes", glob->email_timeouts.pop3);
     pthread_rwlock_unlock(&(glob->email_config_mutex));
 
+    newjson = collector_config_to_json(glob);
+    if (newjson != NULL) {
+        pthread_rwlock_wrlock(&glob->config_mutex);
+        free(glob->sharedinfo.jsonconfig);
+        glob->sharedinfo.jsonconfig = newjson;
+        pthread_rwlock_unlock(&glob->config_mutex);
+    } else {
+        ret = -1;
+    }
 endreload:
     clear_global_config(&newstate);
     return ret;
@@ -2503,6 +2594,18 @@ static void *start_ip_sync_thread(void *params) {
     }
 
     while (collector_halt == 0) {
+        if (__atomic_exchange_n(&config_write_required, 0, __ATOMIC_ACQUIRE)) {
+            pthread_mutex_lock(&(glob->configupdate_mutex));
+            if (apply_yaml_config_updates(glob->configfile,
+                    &(glob->syncip.configupdates)) < 0) {
+                logger(LOG_INFO, "Failed to write updated YAML configuration to local config file: %s", glob->configfile);
+            }
+            clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
+
+            pthread_mutex_unlock(&(glob->configupdate_mutex));
+            reload_config = 0;
+        }
+
         if (reload_config) {
             if (reload_collector_config(glob, sync) == -1) {
                 break;
@@ -2572,8 +2675,8 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->zmq_ctxt = glob->zmq_ctxt;
     sipworker->stats_mutex = &(glob->stats_mutex);
     sipworker->stats = &(glob->stats);
-    sipworker->shared = &(glob->sharedinfo);
-    sipworker->shared_mutex = &(glob->config_mutex);
+    sipworker->shared = &(glob->sipconfig);
+    sipworker->shared_mutex = &(glob->sipconfig_mutex);
     sipworker->collector_queues = NULL;
     sipworker->haltinfo = NULL;
 
@@ -2593,13 +2696,7 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->sipworker_threads = glob->sip_threads;
     sipworker->voipintercepts = NULL;
     sipworker->knowncallids = NULL;
-    sipworker->ignore_sdpo_matches = glob->ignore_sdpo_matches;
 
-    if (glob->sipdebugfile) {
-        sipworker->debug.sipdebugfile_base = strdup(glob->sipdebugfile);
-    } else {
-        sipworker->debug.sipdebugfile_base = NULL;
-    }
     sipworker->debug.sipdebugout = NULL;
     sipworker->debug.sipdebugupdate = NULL;
     sipworker->debug.log_bad_sip = 1;
@@ -2621,6 +2718,7 @@ int main(int argc, char *argv[]) {
     char name[1024];
     x_input_t *xinp, *xtmp;
 
+    collector_halt = 0;
     todaemon = 0;
     while (1) {
         int optind;
@@ -2705,8 +2803,9 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    sigemptyset(&sig_block_all);
-    if (pthread_sigmask(SIG_SETMASK, &sig_block_all, &sig_before) < 0) {
+
+    sigfillset(&sig_block_all);
+    if (pthread_sigmask(SIG_BLOCK, &sig_block_all, &sig_before) < 0) {
         logger(LOG_INFO, "Unable to disable signals before starting threads.");
         return 1;
     }
@@ -2822,10 +2921,12 @@ int main(int argc, char *argv[]) {
         snprintf(name, 1024, "seqtracker-%d", i);
         glob->seqtrackers[i].zmq_ctxt = glob->zmq_ctxt;
         glob->seqtrackers[i].trackerid = i;
-        glob->seqtrackers[i].zmq_pushjobsock = NULL;
+        glob->seqtrackers[i].zmq_pushjobsocks = NULL;
         glob->seqtrackers[i].zmq_recvpublished = NULL;
         glob->seqtrackers[i].intercepts = NULL;
-	glob->seqtrackers[i].haltinfo = NULL;
+        glob->seqtrackers[i].rr_next_encoder_assign = 0;
+    	glob->seqtrackers[i].haltinfo = NULL;
+        glob->seqtrackers[i].encoders = glob->encoding_threads;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);
         glob->seqtrackers[i].encoding_method = glob->encoding_method;
@@ -2839,23 +2940,29 @@ int main(int argc, char *argv[]) {
     for (i = 0; i < glob->encoding_threads; i++) {
         snprintf(name, 1024, "encoder-%d", i);
         glob->encoders[i].zmq_ctxt = glob->zmq_ctxt;
-        glob->encoders[i].zmq_recvjobs = NULL;
+        glob->encoders[i].zmq_recvjob = NULL;
         glob->encoders[i].zmq_pushresults = NULL;
         glob->encoders[i].zmq_control = NULL;
 
+        if (pipe(glob->encoders[i].control_pipe) < 0) {
+            logger(LOG_INFO, "OpenLI Collector: WARNING failed to create control pipe for encoder worker %d", i);
+        }
         glob->encoders[i].workerid = i;
         glob->encoders[i].shared = &(glob->sharedinfo);
         glob->encoders[i].shared_mutex = &(glob->config_mutex);
+        glob->encoders[i].digest_config = &(glob->digest_config);
+        glob->encoders[i].digest_config_mutex = &(glob->digestconfig_mutex);
+        glob->encoders[i].liid_agencies = &(glob->liid_to_agency);
+        glob->encoders[i].liid_agency_mutex = &(glob->liid_agency_mutex);
         glob->encoders[i].encoder = NULL;
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;
         glob->encoders[i].saved_global_templates = NULL;
 
-        glob->encoders[i].encrypt.byte_counter = 0;
-        glob->encoders[i].encrypt.byte_startts = 0;
-        glob->encoders[i].encrypt.saved_encryption_templates = NULL;
-        glob->encoders[i].seqtrackers = glob->seqtracker_threads;
         glob->encoders[i].forwarders = glob->forwarding_threads;
+
+        glob->encoders[i].known_liids = NULL;
+        glob->encoders[i].integrity_state = NULL;
 
         glob->encoders[i].result_array = calloc(glob->forwarding_threads,
                 sizeof(openli_encoded_result_t *));
@@ -2903,16 +3010,16 @@ int main(int argc, char *argv[]) {
             return 1;
         }
 
-        pthread_rwlock_wrlock(&(glob->config_mutex));
+        pthread_rwlock_rdlock(&(glob->config_mutex));
+        pthread_rwlock_rdlock(&(glob->x_input_mutex));
         HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
             if (start_xinput(glob, xinp) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start X2-X3 input %s",
                         xinp->identifier);
             }
         }
-        pthread_rwlock_unlock(&(glob->config_mutex));
+        pthread_rwlock_unlock(&(glob->x_input_mutex));
 
-        pthread_rwlock_rdlock(&(glob->config_mutex));
         HASH_ITER(hh, glob->inputs, inp, tmp) {
             if (start_input(glob, inp, todaemon, argv[0]) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start input %s",
@@ -2951,29 +3058,24 @@ int main(int argc, char *argv[]) {
             free(stat);
         }
     }
+    pthread_rwlock_unlock(&(glob->config_mutex));
 
+    pthread_rwlock_wrlock(&(glob->x_input_mutex));
     HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
         pthread_join(xinp->threadid, NULL);
         HASH_DELETE(hh, glob->x_inputs, xinp);
         destroy_x_input(xinp);
     }
+    pthread_rwlock_unlock(&(glob->x_input_mutex));
 
-    pthread_rwlock_unlock(&(glob->config_mutex));
-
-    if (glob->zmq_encoder_ctrl) {
-        /* The only control message required for encoding threads is the
-         * "halt" message, so we can just send an empty message and the
-         * recipients should treat that as a "halt" command.
-         */
-        if (zmq_send(glob->zmq_encoder_ctrl, NULL, 0, 0) < 0) {
-            logger(LOG_INFO,
-                    "OpenLI: error sending halt to encoding threads: %s",
-                    strerror(errno));
-        }
-    }
 
     if (glob->email_ingestor) {
         stop_email_mhd_daemon(glob->email_ingestor);
+    }
+    for (i = 0; i < glob->encoding_threads; i++) {
+        if (write(glob->encoders[i].control_pipe[1], "x", 1) < 0) {
+            logger(LOG_INFO, "OpenLI Collector: WARNING failed to send halt token to encoder worker %d", i);
+        }
     }
 
     pthread_join(glob->syncip.threadid, NULL);

@@ -26,6 +26,7 @@
 
 #include <unistd.h>
 #include <assert.h>
+#include <sys/eventfd.h>
 
 #include "util.h"
 #include "ipiri.h"
@@ -41,38 +42,96 @@
 #include "etsili_core.h"
 #include "encoder_worker.h"
 #include "intercept.h"
+#include "collector_integrity_check.h"
+
+static void destroy_known_liid(encoder_liid_state_t *known) {
+
+    if (known->liid_key) {
+        free(known->liid_key);
+    }
+    if (known->authcc) {
+        free(known->authcc);
+    }
+    if (known->delivcc) {
+        free(known->delivcc);
+    }
+    etsili_destroy_encrypted_templates(
+            known->encrypt_cc.saved_encryption_templates);
+    etsili_destroy_encrypted_templates(
+            known->encrypt_iri.saved_encryption_templates);
+    clear_digest_key_map(&(known->digest_cin_keys));
+    free(known);
+}
+
+static void destroy_encoding_job(openli_encoding_job_t *job,
+        uint8_t free_request) {
+
+    if (!job) {
+        return;
+    }
+    if (job->cinstr) {
+        free(job->cinstr);
+    }
+    if (job->liid) {
+        free(job->liid);
+    }
+    if (job->authcc) {
+        free(job->authcc);
+    }
+    if (job->delivcc) {
+        free(job->delivcc);
+    }
+    if (job->encryptkey) {
+        free(job->encryptkey);
+    }
+    if (job->origreq && free_request) {
+        free_published_message(job->origreq);
+    }
+}
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
     int hwm = 1000;
-    int i;
+    int i, zmq_fd;
     char sockname[128];
+    size_t fdlen;
+
+    enc->epoll_fd = epoll_create1(0);
 
     enc->encoder = init_wandder_encoder();
     enc->freegenerics = create_etsili_generic_freelist(0);
     enc->halted = 0;
 
-    enc->zmq_recvjobs = calloc(enc->seqtrackers, sizeof(void *));
-    for (i = 0; i < enc->seqtrackers; i++) {
-        enc->zmq_recvjobs[i] = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
-        snprintf(sockname, 128, "inproc://openliseqpush-%d", i);
-        if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_LINGER, &zero,
+    enc->evp_ctx = EVP_CIPHER_CTX_new();
+    enc->etsidecoder = wandder_create_etsili_decoder();
+
+    enc->zmq_recvjob = zmq_socket(enc->zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 128, "inproc://openliseqpush-%d", enc->workerid);
+    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_LINGER, &zero,
                 sizeof(zero)) != 0) {
-            logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
-            return -1;
-        }
-
-        if (zmq_setsockopt(enc->zmq_recvjobs[i], ZMQ_RCVTIMEO, &rto,
-                sizeof(rto)) != 0) {
-            logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
-            return -1;
-        }
-        if (zmq_connect(enc->zmq_recvjobs[i], sockname) != 0) {
-            logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
-            return -1;
-        }
-
+        logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
+        return -1;
     }
+
+    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_RCVTIMEO, &rto,
+                sizeof(rto)) != 0) {
+        logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
+        return -1;
+    }
+    if (zmq_connect(enc->zmq_recvjob, sockname) != 0) {
+        logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
+        return -1;
+    }
+
+    fdlen = sizeof(zmq_fd);
+    zmq_getsockopt(enc->zmq_recvjob, ZMQ_FD, &zmq_fd, &fdlen);
+    enc->zmq_job_ev = create_openli_fdevent(enc->epoll_fd, (void *)enc,
+            OPENLI_EPOLL_ENCODING_JOB, zmq_fd, EPOLLIN | EPOLLET);
+
+    enc->yield_fd = eventfd(0, EFD_NONBLOCK);
+    enc->zmq_yield_ev = create_openli_fdevent(enc->epoll_fd, (void *)enc,
+            OPENLI_EPOLL_ZMQ_YIELD, enc->yield_fd, EPOLLIN | EPOLLET);
+
 
     enc->zmq_pushresults = calloc(enc->forwarders, sizeof(void *));
     for (i = 0; i < enc->forwarders; i++) {
@@ -106,34 +165,8 @@ static int init_worker(openli_encoder_t *enc) {
         }
     }
 
-    enc->zmq_control = zmq_socket(enc->zmq_ctxt, ZMQ_SUB);
-    if (zmq_connect(enc->zmq_control, "inproc://openliencodercontrol") != 0) {
-        logger(LOG_INFO, "OpenLI: error connecting to exporter control socket");
-        return -1;
-    }
-
-    if (zmq_setsockopt(enc->zmq_control, ZMQ_LINGER, &zero, sizeof(zero))
-            != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to exporter control socket");
-        return -1;
-    }
-
-    if (zmq_setsockopt(enc->zmq_control, ZMQ_SUBSCRIBE, "", 0) != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring subscription to exporter control socket");
-        return -1;
-    }
-
-    enc->topoll = calloc(enc->seqtrackers + 1, sizeof(zmq_pollitem_t));
-
-    enc->topoll[0].socket = enc->zmq_control;
-    enc->topoll[0].fd = 0;
-    enc->topoll[0].events = ZMQ_POLLIN;
-
-    for (i = 0; i < enc->seqtrackers; i++) {
-        enc->topoll[i + 1].socket = enc->zmq_recvjobs[i];
-        enc->topoll[i + 1].fd = 0;
-        enc->topoll[i + 1].events = ZMQ_POLLIN;
-    }
+    enc->zmq_control_ev = create_openli_fdevent(enc->epoll_fd, (void *)enc,
+            OPENLI_EPOLL_ENCODING_CONTROL, enc->control_pipe[0], EPOLLIN);
 
     return 0;
 
@@ -151,60 +184,197 @@ static void free_mobileiri_parameters(etsili_generic_t *params) {
 }
 
 void destroy_encoder_worker(openli_encoder_t *enc) {
-    int x, i;
+    int x;
     openli_encoding_job_t job;
     uint32_t drained = 0;
+    encoder_liid_state_t *known, *tmp;
+    integrity_check_state_t *integ, *integtmp;
 
     destroy_all_saved_encoding_templates(enc->saved_intercept_templates);
 
     clear_global_templates(&(enc->saved_global_templates));
 
-    etsili_destroy_encrypted_templates(enc->encrypt.saved_encryption_templates);
+    HASH_ITER(hh, enc->known_liids, known, tmp) {
+        HASH_DELETE(hh, enc->known_liids, known);
+        destroy_known_liid(known);
+    }
+
+    HASH_ITER(hh, enc->integrity_state, integ, integtmp) {
+        HASH_DELETE(hh, enc->integrity_state, integ);
+        free_integrity_check_state(integ);
+    }
+
     if (enc->encoder) {
         free_wandder_encoder(enc->encoder);
+    }
+
+    if (enc->etsidecoder) {
+        wandder_free_etsili_decoder(enc->etsidecoder);
     }
 
     if (enc->freegenerics) {
         free_etsili_generics(enc->freegenerics);
     }
 
-    for (i = 0; i < enc->seqtrackers; i++) {
-        do {
-            x = zmq_recv(enc->zmq_recvjobs[i], &job,
-                    sizeof(openli_encoding_job_t), 0);
-            if (x < 0) {
-                if (errno == EAGAIN) {
-                    continue;
-                }
-                break;
+    do {
+        x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t), 0);
+        if (x < 0) {
+            if (errno == EAGAIN) {
+                continue;
             }
-            if (job.origreq) {
-                free_published_message(job.origreq);
-            }
-            if (job.liid) {
-                free(job.liid);
-            }
-            if (job.cinstr) {
-                free(job.cinstr);
-            }
-            drained ++;
+            break;
+        }
+        destroy_encoding_job(&job, 1);
+        drained ++;
 
-        } while (x > 0);
-        zmq_close(enc->zmq_recvjobs[i]);
-    }
+    } while (x > 0);
+    zmq_close(enc->zmq_recvjob);
 
-    if (enc->zmq_control) {
-        zmq_close(enc->zmq_control);
-    }
+    remove_openli_fdevent(enc->zmq_job_ev);
+    // this should close control_pipe[0]?
+    remove_openli_fdevent(enc->zmq_control_ev);
+    remove_openli_fdevent(enc->zmq_yield_ev);
 
-    free(enc->zmq_recvjobs);
     free(enc->zmq_pushresults);
-    free(enc->topoll);
 
+    if (enc->evp_ctx) {
+        EVP_CIPHER_CTX_free(enc->evp_ctx);
+    }
+
+    close(enc->control_pipe[1]);
+    close(enc->epoll_fd);
 }
 
-static inline void finalize_encoded_result(openli_encoded_result_t *res,
-        openli_encoding_job_t *job, openli_encoder_t *enc, uint8_t type) {
+static int _send_integrity_check_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics, uint8_t is_hash) {
+
+    openli_encoded_result_t res;
+    char *operatorid = NULL;
+    char *netelemid = NULL;
+    encoder_liid_state_t *found = NULL;
+    EVP_PKEY *signingkey = NULL;
+    encrypt_encode_state_t *encryptstate;
+
+    memset(&res, 0, sizeof(res));
+
+    HASH_FIND(hh, enc->known_liids, ics->liid_key, strlen(ics->liid_key),
+            found);
+    if (!found) {
+        return 0;
+    }
+
+    pthread_rwlock_rdlock(enc->shared_mutex);
+    if (enc->shared->operatorid) {
+        operatorid = strdup(enc->shared->operatorid);
+    }
+    if (enc->shared->networkelemid) {
+        netelemid = strdup(enc->shared->networkelemid);
+    }
+    pthread_rwlock_unlock(enc->shared_mutex);
+
+    if (ics->msgtype == OPENLI_PROTO_ETSI_IRI) {
+        encryptstate = &(found->encrypt_iri);
+    } else {
+        encryptstate = &(found->encrypt_cc);
+    }
+
+    if (is_hash) {
+        if (generate_integrity_check_hash_pdu(&res, ics, netelemid, operatorid,
+                enc->encoder, enc->etsidecoder, enc->evp_ctx,
+                encryptstate) < 0) {
+            free_encoded_result(&res);
+            if (operatorid) free(operatorid);
+            if (netelemid) free(netelemid);
+            return -1;
+        }
+        res.seqno = ics->self_seqno_hash - 1;
+    } else {
+        pthread_rwlock_rdlock(enc->shared_mutex);
+        if (!enc->shared->digestsigningkey) {
+            logger(LOG_INFO,
+                    "OpenLI collector: unable to generate integrity check signatures because we do not know the signing key!");
+            pthread_rwlock_unlock(enc->shared_mutex);
+            goto endzone;
+        }
+
+        signingkey = enc->shared->digestsigningkey;
+        EVP_PKEY_up_ref(signingkey);
+        pthread_rwlock_unlock(enc->shared_mutex);
+
+        if (generate_integrity_check_signature_pdu(&res, ics, netelemid,
+                operatorid, enc->encoder, signingkey, enc->etsidecoder,
+                enc->evp_ctx, encryptstate) < 0) {
+            free_encoded_result(&res);
+            EVP_PKEY_free(signingkey);
+            if (operatorid) free(operatorid);
+            if (netelemid) free(netelemid);
+            return -1;
+        }
+        EVP_PKEY_free(signingkey);
+        res.seqno = ics->self_seqno_sign - 1;
+    }
+
+    res.liid = strdup(ics->liid_key);
+    res.restype = ics->msgtype;
+    res.encodedby = enc->workerid;
+    res.cinstr = strdup(ics->cinstr);
+    res.destid = ics->destmediator;
+
+    zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
+
+endzone:
+    if (operatorid) free(operatorid);
+    if (netelemid) free(netelemid);
+    return 1;
+}
+
+static int send_integrity_check_sign_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics) {
+
+    int ret = 0;
+
+    halt_openli_timer(ics->sign_timer);
+    if (ics->hashes_since_last_signrec == 0) {
+        return 0;
+    }
+
+    ret = _send_integrity_check_pdu(enc, ics, 0);
+    if (ret > 0) {
+        ics->hashes_since_last_signrec = 0;
+    }
+    return ret;
+}
+
+static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
+        integrity_check_state_t *ics) {
+    int ret = 0;
+
+    halt_openli_timer(ics->hash_timer);
+    if (ics->pdus_since_last_hashrec == 0) {
+        return ret;
+    }
+
+    ret = _send_integrity_check_pdu(enc, ics, 1);
+
+    if (ret <= 0) {
+        return ret;
+    }
+    ics->pdus_since_last_hashrec = 0;
+
+    if (ics->hashes_since_last_signrec >= ics->agency->sign_hashlimit &&
+            ics->agency->sign_hashlimit > 0) {
+        // send signed hashes
+        ret = send_integrity_check_sign_pdu(enc, ics);
+    }
+    return ret;
+}
+
+static inline int finalize_encoded_result(openli_encoded_result_t *res,
+        openli_encoding_job_t *job, openli_encoder_t *enc,
+        encoder_liid_state_t *known, uint8_t type) {
+
+    uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
+    integrity_check_state_t *chain = NULL;
 
     res->cinstr = strdup(job->cinstr);
     res->liid = strdup(job->liid);
@@ -212,6 +382,16 @@ static inline void finalize_encoded_result(openli_encoded_result_t *res,
     res->destid = job->origreq->destid;
     res->encodedby = enc->workerid;
     res->restype = type;
+
+    // update digest state
+    if (known && !known->digest_config_disabled &&
+            known->digest_config.required) {
+        integrity_res = update_integrity_check_state(&(enc->integrity_state),
+                known, res->msgbody->encoded + res->preamblen,
+                res->msgbody->len - res->preamblen,
+                ntohs(res->header.intercepttype), job, enc->epoll_fd,
+                &chain);
+    }
 
     if (type == OPENLI_EXPORT_LAST_SEGMENT_FLAG ||
             type == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
@@ -221,8 +401,108 @@ static inline void finalize_encoded_result(openli_encoded_result_t *res,
         res->origreq = NULL;
     } else {
         res->origreq = job->origreq;
+        job->origreq = NULL;
     }
 
+
+    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (encrypt_payload_container_aes_192_cbc(enc->evp_ctx,
+                enc->etsidecoder, res->msgbody->encoded + res->preamblen,
+                res->msgbody->len - res->preamblen, job->encryptkey,
+                job->encryptkey_len) == NULL) {
+            return -1;
+        }
+    }
+
+    if (integrity_res == INTEGRITY_CHECK_SEND_HASH) {
+        return send_integrity_check_hash_pdu(enc, chain);
+    }
+
+    return 0;
+}
+
+#define AGENCY_MAPPING_CHECK_FREQ (5)
+
+static void check_agency_digest_config(openli_encoder_t *enc,
+        encoder_liid_state_t *found) {
+
+    liid_to_agency_mapping_t *agmap;
+    agency_digest_config_t *agdigest;
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+    if (tv.tv_sec - found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
+        return;
+    }
+
+    found->last_agency_check = tv.tv_sec;
+
+    pthread_rwlock_rdlock(enc->liid_agency_mutex);
+    HASH_FIND(hh, enc->liid_agencies->map, found->liid_key,
+            strlen(found->liid_key), agmap);
+
+    if (!agmap) {
+        if (found->no_agency_map_warning == 0) {
+            logger(LOG_INFO, "OpenLI Collector: encoder worker %d does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
+                    enc->workerid, found->liid_key);
+            found->no_agency_map_warning = 1;
+        }
+        found->digest_config_disabled = 1;
+        memset(&found->digest_config, 0, sizeof(found->digest_config));
+        pthread_rwlock_unlock(enc->liid_agency_mutex);
+        return;
+    }
+
+    pthread_rwlock_rdlock(enc->digest_config_mutex);
+    HASH_FIND(hh, enc->digest_config->map, agmap->agencyid,
+            strlen(agmap->agencyid), agdigest);
+
+    if (!agdigest) {
+        if (found->no_agency_map_warning == 0) {
+            logger(LOG_INFO, "OpenLI Collector: encoder worker %d does not have digest configuration for agency %s, cannot produce integrity checks for LIID %s",
+                    enc->workerid, agmap->agencyid, found->liid_key);
+            found->no_agency_map_warning = 1;
+        }
+        found->digest_config_disabled = 1;
+        memset(&found->digest_config, 0, sizeof(found->digest_config));
+        pthread_rwlock_unlock(enc->digest_config_mutex);
+        pthread_rwlock_unlock(enc->liid_agency_mutex);
+        return;
+    }
+
+    if (agdigest->disabled) {
+        found->digest_config_disabled = 1;
+        memset(&found->digest_config, 0, sizeof(found->digest_config));
+    } else {
+        found->digest_config_disabled = 0;
+        memcpy(&found->digest_config, agdigest->config,
+                sizeof(liagency_digest_config_t));
+    }
+
+    pthread_rwlock_unlock(enc->digest_config_mutex);
+    pthread_rwlock_unlock(enc->liid_agency_mutex);
+}
+
+static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
+        char *liid, char *authcc, char *delivcc) {
+
+    encoder_liid_state_t *found;
+
+    found = calloc(1, sizeof(encoder_liid_state_t));
+    found->liid_key = strdup(liid);
+    found->authcc = strdup(authcc);
+    found->delivcc = strdup(delivcc);
+    found->no_agency_map_warning = 0;
+    found->last_agency_check = 0;
+    memset(&found->digest_config, 0, sizeof(found->digest_config));
+    found->digest_cin_keys = NULL;
+    found->digest_config_disabled = 1;
+
+    found->fwd_index = hash_liid(liid) % enc->forwarders;
+
+    HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
+            strlen(found->liid_key), found);
+    return found;
 }
 
 static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
@@ -254,13 +534,14 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->header.intercepttype = htons(rawtype);
     res->header.internalid = 0;
 
-    finalize_encoded_result(res, job, enc, job->origreq->type);
+    finalize_encoded_result(res, job, enc, NULL, job->origreq->type);
 
     return 0;
 }
 
 static int encode_templated_ipiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     /* Doesn't really make sense to template the IPIRI payload itself, since
@@ -291,7 +572,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
@@ -315,7 +596,8 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
 }
 
 static int encode_templated_emailiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -338,7 +620,7 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
@@ -389,7 +671,8 @@ static inline void create_mobile_operator_identifier(openli_encoder_t *enc,
 }
 
 static int encode_templated_segflag(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res, uint8_t is_first) {
 
     wandder_encoded_result_t *body = NULL;
@@ -408,7 +691,7 @@ static int encode_templated_segflag(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
@@ -429,7 +712,8 @@ static int encode_templated_segflag(openli_encoder_t *enc,
 }
 
 static int encode_templated_epscc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -455,7 +739,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 body->encoded, body->len, epsccjob->ipcontent,
                 epsccjob->ipclen, job) < 0) {
@@ -480,7 +764,8 @@ static int encode_templated_epscc(openli_encoder_t *enc,
 
 
 static int encode_templated_epsiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -508,7 +793,7 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
 
@@ -530,7 +815,8 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
 }
 
 static int encode_templated_umtsiri(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     wandder_encoded_result_t *body = NULL;
@@ -559,7 +845,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
     }
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
 
@@ -581,8 +867,8 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
 }
 
 static int encode_templated_umtscc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res) {
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate, openli_encoded_result_t *res) {
 
     uint32_t key = 0;
     encoded_global_template_t *umtscc_tplate = NULL;
@@ -613,7 +899,7 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
      * this will not require updating */
 
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
                 umtscc_tplate->cc_content.cc_wrap_len,
@@ -637,7 +923,8 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
 
 
 static int encode_templated_emailcc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
         openli_encoded_result_t *res) {
 
     uint32_t key = 0;
@@ -691,7 +978,7 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
@@ -710,16 +997,12 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
         }
     }
 
-    if (emailccjob->segflag == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
-
-    }
-    /* Success */
     return 1;
 }
 
 static int encode_templated_ipcc(openli_encoder_t *enc,
-        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res) {
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate, openli_encoded_result_t *res) {
 
     uint32_t key = 0;
     encoded_global_template_t *ipcc_tplate = NULL;
@@ -749,7 +1032,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
     if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
-        if (create_preencrypted_message_body(enc->encoder, &enc->encrypt,
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
@@ -773,7 +1056,8 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
 }
 
 static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
-        openli_encoded_result_t *resarray, size_t *next) {
+        encoder_liid_state_t *known, openli_encoded_result_t *resarray,
+        size_t *next) {
 
     int ret = -1;
     int enccount = 1;
@@ -808,56 +1092,59 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     switch (job->origreq->type) {
         case OPENLI_EXPORT_IPCC:
             /* IPCC "header" can be templated */
-            ret = encode_templated_ipcc(enc, job, hdr_tplate, res);
+            ret = encode_templated_ipcc(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPMMCC:
-            ret = encode_templated_ipmmcc(enc->encoder, &enc->encrypt,
+            ret = encode_templated_ipmmcc(enc->encoder, &known->encrypt_cc,
                     job, hdr_tplate, res, &(enc->saved_global_templates));
             break;
         case OPENLI_EXPORT_UMTSCC:
-            ret = encode_templated_umtscc(enc, job, hdr_tplate, res);
+            ret = encode_templated_umtscc(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPIRI:
-            ret = encode_templated_ipiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_ipiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_IPMMIRI:
-            ret = encode_templated_ipmmiri(enc->encoder, &enc->encrypt,
+            ret = encode_templated_ipmmiri(enc->encoder, &known->encrypt_iri,
                     job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_UMTSIRI:
-            ret = encode_templated_umtsiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_umtsiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EPSIRI:
-            ret = encode_templated_epsiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_epsiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EMAILIRI:
-            ret = encode_templated_emailiri(enc, job, hdr_tplate, res);
+            ret = encode_templated_emailiri(enc, job, known, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EMAILCC: {
             openli_emailcc_job_t *emailccjob;
             emailccjob = (openli_emailcc_job_t *)&(job->origreq->data.emailcc);
 
             if (emailccjob->segflag == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
-                ret = encode_templated_segflag(enc, job, hdr_tplate, res, 1);
+                ret = encode_templated_segflag(enc, job, known, hdr_tplate,
+                        res, 1);
                 if (ret < 0) {
                     return ret;
                 }
-                finalize_encoded_result(res, job, enc,
+                finalize_encoded_result(res, job, enc, known,
                         OPENLI_EXPORT_FIRST_SEGMENT_FLAG);
                 (*next)++;
                 res = &(resarray[*next]);
                 enccount = 2;
             }
-            ret = encode_templated_emailcc(enc, job, hdr_tplate, res);
+            ret = encode_templated_emailcc(enc, job, known, hdr_tplate, res);
             if (ret < 0) {
                 return ret;
             }
             if (emailccjob->segflag == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
-                finalize_encoded_result(res, job, enc, job->origreq->type);
+                finalize_encoded_result(res, job, enc, known,
+                        job->origreq->type);
                 (*next)++;
                 res = &(resarray[*next]);
-                ret = encode_templated_segflag(enc, job, hdr_tplate, res, 0);
-                finalize_encoded_result(res, job, enc,
+                ret = encode_templated_segflag(enc, job, known, hdr_tplate,
+                        res, 0);
+                finalize_encoded_result(res, job, enc, known,
                         OPENLI_EXPORT_LAST_SEGMENT_FLAG);
                 // can fall through in every other case EXCEPT the one where
                 // we need to ensure the last segment TRI has the right
@@ -867,13 +1154,13 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         }
         case OPENLI_EXPORT_EPSCC:
-            ret = encode_templated_epscc(enc, job, hdr_tplate, res);
+            ret = encode_templated_epscc(enc, job, known, hdr_tplate, res);
             break;
         default:
             ret = 0;
     }
 
-    finalize_encoded_result(res, job, enc, job->origreq->type);
+    finalize_encoded_result(res, job, enc, known, job->origreq->type);
 
     if (ret < 0) {
         return ret;
@@ -884,8 +1171,9 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 static int process_job(openli_encoder_t *enc, void *socket) {
     int x, i;
     int encoded_total = 0;
-    size_t index, next;
+    size_t next;
     uint8_t fullbatch = 0;
+    encoder_liid_state_t *found = NULL;
 
     openli_encoding_job_t job;
 
@@ -920,11 +1208,42 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             goto encodejoberror;
         }
 
-        index = hash_liid(job.liid) % enc->forwarders;
-        assert(enc->forwarders > 0 && index < (size_t)enc->forwarders);
+        HASH_FIND(hh, enc->known_liids, job.liid, strlen(job.liid), found);
 
-        result = enc->result_array[index];
-        next = enc->result_batch[index];
+        if (job.origreq == NULL) {
+            /* This is a message to tell us that the intercept is no
+             * longer active
+             */
+            /* TODO remove integrity check state as well */
+            if (found) {
+                integrity_check_state_t *ics, *tmp;
+                HASH_DELETE(hh, enc->known_liids, found);
+                // remove all integrity state chains for this LIID
+                HASH_ITER(hh, enc->integrity_state, ics, tmp) {
+                    if (strcmp(job.liid, ics->liid_key) != 0) {
+                        continue;
+                    }
+                    HASH_DELETE(hh, enc->integrity_state, ics);
+                    /* make sure we send final hashes and signatures */
+                    send_integrity_check_hash_pdu(enc, ics);
+                    send_integrity_check_sign_pdu(enc, ics);
+                    free_integrity_check_state(ics);
+                }
+                destroy_known_liid(found);
+            }
+            destroy_encoding_job(&job, 0);
+            continue;
+        }
+
+        if (!found) {
+            found = create_new_known_liid(enc, job.liid, job.authcc,
+                    job.delivcc);
+        }
+
+        check_agency_digest_config(enc, found);
+
+        result = enc->result_array[found->fwd_index];
+        next = enc->result_batch[found->fwd_index];
 
         if (job.origreq->type == OPENLI_EXPORT_RAW_SYNC) {
             encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_SYNC);
@@ -936,7 +1255,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             encode_rawip(enc, &job, &(result[next]), OPENLI_PROTO_RAWIP_IRI);
             x = 1;
         } else {
-            if ((x = encode_etsi(enc, &job, result, &next)) <= 0) {
+            if ((x = encode_etsi(enc, &job, found, result, &next)) <= 0) {
                 /* What do we do in the event of an error? */
                 if (x < 0) {
                     logger(LOG_INFO,
@@ -944,31 +1263,19 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                             job.origreq->type);
                 }
 encodejoberror:
-                if (job.cinstr) {
-                    free(job.cinstr);
-                }
-                if (job.liid) {
-                    free(job.liid);
-                }
-                if (job.origreq) {
-                    free_published_message(job.origreq);
-                }
+                destroy_encoding_job(&job, 1);
                 continue;
             }
         }
 
         encoded_total += x;
-        enc->result_batch[index] = next + 1;
+        enc->result_batch[found->fwd_index] = next + 1;
 
-        if (enc->result_batch[index] >= MAX_ENCODED_RESULT_BATCH) {
+        if (enc->result_batch[found->fwd_index] >= MAX_ENCODED_RESULT_BATCH) {
             fullbatch = 1;
+
         }
-        if (job.cinstr) {
-            free(job.cinstr);
-        }
-        if (job.liid) {
-            free(job.liid);
-        }
+        destroy_encoding_job(&job, 0);
     }
 
     /* If we have multiple forwarding threads, we will need to
@@ -990,37 +1297,132 @@ encodejoberror:
         }
     }
 
+    if (fullbatch) {
+        /* More messages are possibly available. Since the ZMQ epoll event
+         * is edge-triggered, the ZMQ fd itself won't fire again in epoll to
+         * remind us that we left some jobs unread. Instead we write something
+         * into the yield fd to trigger the ZMQ_YIELD event -- our main loop
+         * then knows that it should resume reading from the ZMQ even if ZMQ
+         * itself has not triggered an event.
+         */
+        uint64_t u = 1;
+        if (write(enc->yield_fd, &u, sizeof(u)) <= 0) {
+            return -1;
+        }
+    }
+
     return encoded_total;
 }
 
-static inline void poll_nextjob(openli_encoder_t *enc) {
-    int x, i;
-    int tmpbuf;
+static int integrity_hash_timer_callback(openli_encoder_t *enc,
+        openli_epoll_ev_t *mev) {
 
-    x = zmq_recv(enc->zmq_control, &tmpbuf, sizeof(tmpbuf), ZMQ_DONTWAIT);
+    integrity_check_state_t *ics;
 
-    if (x < 0 && errno != EAGAIN) {
-        logger(LOG_INFO,
-                "OpenLI: error reading ctrl msg in encoder worker %d",
-                enc->workerid);
+    if (mev == NULL) {
+        return -1;
     }
 
-    if (x >= 0) {
-        enc->halted = 1;
-        return;
+    ics = (integrity_check_state_t *)(mev->state);
+    if (ics == NULL) {
+        return 0;
     }
 
-    /* TODO better error checking / handling for multiple seqtrackers */
-    for (i = 0; i < enc->seqtrackers; i++) {
-        x = process_job(enc, enc->topoll[i+1].socket);
-    }
-
-    return;
+    return send_integrity_check_hash_pdu(enc, ics);
 }
+
+static int integrity_sign_timer_callback(openli_encoder_t *enc,
+        openli_epoll_ev_t *mev) {
+
+    integrity_check_state_t *ics;
+
+    if (mev == NULL) {
+        return -1;
+    }
+
+    ics = (integrity_check_state_t *)(mev->state);
+    if (ics == NULL) {
+        return 0;
+    }
+
+    return send_integrity_check_sign_pdu(enc, ics);
+}
+
+static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
+
+    openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
+    int ret = 0;
+
+    switch(mev->fdtype) {
+        case OPENLI_EPOLL_ENCODING_CONTROL:
+            // Time to halt the worker
+            return -1;
+        case OPENLI_EPOLL_ZMQ_YIELD:
+        case OPENLI_EPOLL_ENCODING_JOB:
+            ret = process_job(enc, enc->zmq_recvjob);
+            break;
+        case OPENLI_EPOLL_INTEGRITY_HASH_TIMER:
+            ret = integrity_hash_timer_callback(enc, mev);
+            break;
+        case OPENLI_EPOLL_INTEGRITY_SIGN_TIMER:
+            ret = integrity_sign_timer_callback(enc, mev);
+            break;
+        default:
+            logger(LOG_INFO, "OpenLI collector: invalid epoll event type %d seen in encoder worker %d", mev->fdtype, enc->workerid);
+            ret = -1;
+    }
+
+    return ret;
+}
+
+
+static inline void poll_nextjob(openli_encoder_t *enc) {
+    int x, nfds, i;
+    struct epoll_event evs[256];
+    uint32_t zmq_events;
+    size_t size = sizeof(zmq_events);
+
+    while (!enc->halted) {
+        nfds = epoll_wait(enc->epoll_fd, evs, 256, 100);
+        if (nfds < 0) {
+            if (errno == EINTR) {
+                sched_yield();
+                continue;
+            }
+            logger(LOG_INFO, "OpenLI collector: error while waiting for epoll events in encoder worker %d: %s", enc->workerid, strerror(errno));
+            break;
+        }
+        for (i = 0; i < nfds; i++) {
+            x = handle_epoll_event(enc, &(evs[i]));
+            if (x < 0) {
+                enc->halted = 1;
+                break;
+            }
+        }
+
+        if (nfds == 0) {
+            zmq_getsockopt(enc->zmq_recvjob, ZMQ_EVENTS, &zmq_events, &size);
+            if (zmq_events & ZMQ_POLLIN) {
+                process_job(enc, enc->zmq_recvjob);
+            }
+        }
+    }
+    enc->halted = 1;
+}
+
 
 void *run_encoder_worker(void *encstate) {
     openli_encoder_t *enc = (openli_encoder_t *)encstate;
     int i;
+    sigset_t mask, verify;
+
+    sigfillset(&mask);
+    pthread_sigmask(SIG_SETMASK, &mask, NULL);
+
+    pthread_sigmask(SIG_SETMASK, NULL, &verify);
+    if (!sigismember(&verify, SIGINT)) {
+        logger(LOG_INFO, "Mask FAILED to stick immediately after setting!");
+    }
 
     if (init_worker(enc) == -1) {
         logger(LOG_INFO,

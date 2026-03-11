@@ -49,6 +49,8 @@ typedef struct udp_sink_local {
     int listen_family;
 
     char *expectedliid;
+    char *authcc;
+    char *delivcc;
     openli_export_recv_t *cept;
     uint32_t dest_mediator;
 
@@ -157,6 +159,12 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
     local->expectedliid = args->liid;
     args->liid = NULL;
 
+    local->authcc = args->authcc;
+    args->authcc = NULL;
+
+    local->delivcc = args->delivcc;
+    args->delivcc = NULL;
+
     local->encapfmt = args->encapfmt;
     local->direction = args->direction;
     local->cin = args->cin;
@@ -187,6 +195,12 @@ static void cleanup_local_udp_sink(udp_sink_local_t *local) {
     }
     if (local->expectedliid) {
         free(local->expectedliid);
+    }
+    if (local->authcc) {
+        free(local->authcc);
+    }
+    if (local->delivcc) {
+        free(local->delivcc);
     }
     if (local->zmq_control) {
         zmq_close(local->zmq_control);
@@ -409,14 +423,15 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         gettimeofday(&tv, NULL);
         job = create_rawip_job_from_ip(local->expectedliid,
                 local->dest_mediator, skipptr, iplen, tv,
-                OPENLI_EXPORT_RAW_CC);
+                OPENLI_EXPORT_RAW_CC, local->authcc);
     } else {
         if (cin == 0) {
             // no useful CIN was configured, just use '1' in its place
             cin = 1;
         }
         job = create_ipcc_job_from_ipcontent(skipptr, iplen,
-                local->expectedliid, cin, dir, local->dest_mediator);
+                local->expectedliid, cin, dir, local->dest_mediator,
+                local->authcc, local->delivcc);
     }
 
     if (!job) {
@@ -621,6 +636,12 @@ exitthread:
     }
     if (start->listenport) {
         free(start->listenport);
+    }
+    if (start->authcc) {
+        free(start->authcc);
+    }
+    if (start->delivcc) {
+        free(start->delivcc);
     }
     if (start->liid) {
         free(start->liid);

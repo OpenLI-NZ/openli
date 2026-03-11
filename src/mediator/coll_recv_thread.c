@@ -33,7 +33,7 @@
 #include "coll_recv_thread.h"
 #include "lea_send_thread.h"
 #include "mediator_rmq.h"
-#include "med_epoll.h"
+#include "openli_epoll.h"
 #include "etsili_core.h"
 
 #define COLL_OUTSTANDING_PUB_CONFIRMS(col) \
@@ -99,7 +99,6 @@ void init_med_collector_config(mediator_collector_config_t *config,
     config->sslconf = sslconf;
     config->rmqconf = rmqconf;
     config->parent_mediatorid = mediatorid;
-    config->liid_to_agency_map = NULL;
     if (operatorid) {
         config->operatorid = strdup(operatorid);
     } else {
@@ -143,125 +142,10 @@ void update_med_collector_config(mediator_collector_config_t *config,
  *  @param config       The global config to be destroyed
  */
 void destroy_med_collector_config(mediator_collector_config_t *config) {
-    added_liid_t *iter, *tmp;
-    HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
-        HASH_DELETE(hh, config->liid_to_agency_map, iter);
-        free(iter->liid);
-        free(iter->agencyid);
-        free(iter);
-    }
     if (config->operatorid) {
         free(config->operatorid);
     }
     pthread_mutex_destroy(&(config->mutex));
-}
-
-/** Adds a new LIID -> agency mapping to the map stored in the shared
- *  configuration.
- *
- *  @param config       The global config for the collector threads
- *  @param liid         The LIID to add to the map
- *  @param agencyid     The ID of the agency that this LIID is destined for.
- *  @param encmethod    The encryption method to apply to IRIs and CCs using
- *                      this LIID.
- *  @param encryptkey   The key to use when encrypting an IRI or CC.
- *  @param encryptlen   The length of the encryption key, in bytes.
- *  @param liidfmt      The format of the LIID, for encryption purposes.
- */
-void add_liid_mapping_collector_config(mediator_collector_config_t *config,
-        char *liid, char *agencyid, payload_encryption_method_t encmethod,
-        uint8_t *encryptkey, size_t encryptlen, openli_liid_format_t liidfmt) {
-    added_liid_t *found = NULL;
-
-    pthread_mutex_lock(&(config->mutex));
-    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
-    if (found) {
-        free(found->agencyid);
-    } else {
-        found = calloc(1, sizeof(added_liid_t));
-        found->liid = strdup(liid);
-        HASH_ADD_KEYPTR(hh, config->liid_to_agency_map, found->liid,
-                strlen(found->liid), found);
-    }
-    found->agencyid = strdup(agencyid);
-    found->encryptkey_len = encryptlen;
-    found->liid_format = liidfmt;
-    memcpy(found->encryptkey, encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN);
-    found->encrypt = encmethod;
-
-    pthread_mutex_unlock(&(config->mutex));
-}
-
-/** Looks up the corresponding agency ID for a given LIID in the map that
- *  is stored in the shared configuration.
- *
- *  @param config       The global config for the collector threads
- *  @param liid         The LIID to search for
- *  @param[out] liidfmt Updated to contain the required encoding format for
- *                      this LIID
- *  @return             The agency that this LIID is destined for.
- */
-static char *lookup_agencyid_for_liid_collector_config(
-        mediator_collector_config_t *config, char *liid,
-        openli_liid_format_t *liidfmt) {
-
-    added_liid_t *found = NULL;
-    char *agencyid = NULL;
-    pthread_mutex_lock(&(config->mutex));
-    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
-    if (found) {
-        agencyid = strdup(found->agencyid);
-        *liidfmt = found->liid_format;
-    }
-    pthread_mutex_unlock(&(config->mutex));
-    return agencyid;
-}
-
-/** Removes a LIID -> agency mapping from the map stored in the shared
- *  configuration.
- *
- *  @param config       The global config for the collector threads
- *  @param liid         The LIID to remove from the map
- */
-void remove_liid_mapping_collector_config(mediator_collector_config_t *config,
-        char *liid) {
-
-    added_liid_t *found = NULL;
-    pthread_mutex_lock(&(config->mutex));
-
-    HASH_FIND(hh, config->liid_to_agency_map, liid, strlen(liid), found);
-    if (found) {
-        HASH_DELETE(hh, config->liid_to_agency_map, found);
-        free(found->agencyid);
-        free(found->liid);
-        free(found);
-    }
-    pthread_mutex_unlock(&(config->mutex));
-}
-
-/** Removes all LIID -> agency mappings that refer to a particular agency
- *  from the map stored in the shared  configuration.
- *
- *  @param config       The global config for the collector threads
- *  @param agencyid     The agency to remove from the map
- */
-void remove_liid_mapping_by_agency_collector_config(
-        mediator_collector_config_t *config, char *agencyid) {
-
-    /* Not the quickest, but hopefully this won't happen very often */
-    added_liid_t *iter, *tmp;
-
-    pthread_mutex_lock(&(config->mutex));
-    HASH_ITER(hh, config->liid_to_agency_map, iter, tmp) {
-        if (strcasecmp(iter->agencyid, agencyid) == 0) {
-            HASH_DELETE(hh, config->liid_to_agency_map, iter);
-            free(iter->agencyid);
-            free(iter->liid);
-            free(iter);
-        }
-    }
-
-    pthread_mutex_unlock(&(config->mutex));
 }
 
 /** Grabs the mutex for the shared collector configuration to prevent
@@ -315,13 +199,7 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
         }
-        if (known->preencoded_etsi) {
-            etsili_clear_preencoded_fields(known->preencoded_etsi);
-            free(known->preencoded_etsi);
-        }
-        destroy_all_saved_encoding_templates(known->etsitemplates);
 
-        clear_digest_key_map(known);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -335,7 +213,7 @@ static void destroy_rmq_colev(coll_recv_t *col) {
     if (col->amqp_state) {
         amqp_destroy_connection(col->amqp_state);
     }
-    remove_mediator_fdevent(col->rmq_colev);
+    remove_openli_fdevent(col->rmq_colev);
     col->rmq_colev = NULL;
     col->amqp_state = NULL;
     col->incoming_rmq = NULL;
@@ -390,9 +268,9 @@ int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
  *
  *  @param col      The state object for this collector receive thread
  *
- *  @return -1 if an error occurs, MED_EPOLL_COLLECTOR_HANDSHAKE if the
+ *  @return -1 if an error occurs, OPENLI_EPOLL_COLLECTOR_HANDSHAKE if the
  *          connection is established but TLS handshake is incomplete,
- *          MED_EPOLL_COLLECTOR if the connection is established and the
+ *          OPENLI_EPOLL_COLLECTOR if the connection is established and the
  *          TLS handshake has completed.
  */
 static int start_collector_ssl(coll_recv_t *col) {
@@ -421,10 +299,10 @@ static int start_collector_ssl(coll_recv_t *col) {
 
     col->using_tls = 1;
     if (r == OPENLI_SSL_CONNECT_WAITING) {
-        return MED_EPOLL_COLLECTOR_HANDSHAKE;
+        return OPENLI_EPOLL_COLLECTOR_HANDSHAKE;
     }
     col->lastsslerror = 0;
-    return MED_EPOLL_COLLECTOR;
+    return OPENLI_EPOLL_COLLECTOR;
 }
 
 /** Connects to the RMQ queue for this mediator on the collector and
@@ -439,10 +317,10 @@ static int start_collector_ssl(coll_recv_t *col) {
  *          epoll event structure that was successfully created by this
  *          function.
  */
-static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
+static openli_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
         int epoll_fd) {
 
-    med_epoll_ev_t *rmqev = NULL;
+    openli_epoll_ev_t *rmqev = NULL;
     int rmq_sock = -1;
 
     /* method defined in mediator_rmq.c -- establishes the RMQ connection */
@@ -473,7 +351,7 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
     col->incoming_rmq = create_net_buffer(NETBUF_RECV, 0, NULL);
 
     /* Create an epoll event and add it to our epoll FD set */
-    rmqev = create_mediator_fdevent(epoll_fd, col, MED_EPOLL_COL_RMQ, rmq_sock,
+    rmqev = create_openli_fdevent(epoll_fd, col, OPENLI_EPOLL_COL_RMQ, rmq_sock,
             EPOLLIN | EPOLLRDHUP);
     if (rmqev == NULL) {
         if (!col->disabled_log) {
@@ -503,10 +381,10 @@ static med_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
  *          epoll event structure that was successfully created by this
  *          function.
  */
-static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
+static openli_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
         int epoll_fd) {
 
-    med_epoll_ev_t *colev = NULL;
+    openli_epoll_ev_t *colev = NULL;
     int fdtype;
 
     /* If we are supposed to be using TLS, establish a TLS session */
@@ -514,12 +392,12 @@ static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
         fdtype = start_collector_ssl(col);
     } else {
         /* Otherwise, we can use the existing socket as is */
-        fdtype = MED_EPOLL_COLLECTOR;
+        fdtype = OPENLI_EPOLL_COLLECTOR;
         col->using_tls = 0;
     }
 
     /* Create an epoll event and add it to our epoll FD set */
-    colev = create_mediator_fdevent(epoll_fd, col, fdtype, col->col_fd,
+    colev = create_openli_fdevent(epoll_fd, col, fdtype, col->col_fd,
             EPOLLIN | EPOLLRDHUP);
     if (colev == NULL && col->disabled_log == 0) {
         logger(LOG_INFO,
@@ -555,7 +433,7 @@ static med_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
  *  @return -1 if an error occurs, 0 if the handshake remains incomplete, 1
  *          if the handshake is now complete
  */
-static int continue_collector_handshake(coll_recv_t *col, med_epoll_ev_t *mev) {
+static int continue_collector_handshake(coll_recv_t *col, openli_epoll_ev_t *mev) {
 
     int ret = SSL_accept(col->ssl);
 
@@ -571,7 +449,7 @@ static int continue_collector_handshake(coll_recv_t *col, med_epoll_ev_t *mev) {
     }
     logger(LOG_INFO, "OpenLI Mediator: Pending SSL handshake for collector %s completed", col->ipaddr);
     col->lastsslerror = 0;
-    mev->fdtype = MED_EPOLL_COLLECTOR;
+    mev->fdtype = OPENLI_EPOLL_COLLECTOR;
 
     return 1;
 }
@@ -613,43 +491,6 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
     return 1;
 }
 
-static void preencode_etsi_for_known_liid(coll_recv_t *col,
-        col_known_liid_t *found, openli_liid_format_t liid_format) {
-
-    etsili_intercept_details_t intdetails;
-    char netelemid[128];
-
-    intdetails.liid = found->liid;
-    intdetails.liid_format = liid_format;
-    if (found->digest_config->config->agencycc) {
-        intdetails.authcc = found->digest_config->config->agencycc;
-        intdetails.delivcc = found->digest_config->config->agencycc;
-    } else {
-        intdetails.authcc = "--";
-        intdetails.delivcc = "--";
-    }
-    intdetails.intpointid = NULL;
-
-    lock_med_collector_config(col->parentconfig);
-    if (col->parentconfig->operatorid) {
-        intdetails.operatorid = col->parentconfig->operatorid;
-    } else {
-        intdetails.operatorid = "unspecified";
-    }
-
-    if (intdetails.authcc && strcmp(intdetails.authcc, "NL") == 0) {
-        snprintf(netelemid, 16, "%u", col->parentconfig->parent_mediatorid);
-    } else {
-        snprintf(netelemid, 16, "med-%u", col->parentconfig->parent_mediatorid);
-    }
-    intdetails.networkelemid = netelemid;
-
-    etsili_preencode_static_fields(found->preencoded_etsi, &intdetails);
-    found->preencode_version ++;
-    unlock_med_collector_config(col->parentconfig);
-
-}
-
 static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
         unsigned char *liidstr) {
 
@@ -664,15 +505,7 @@ static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
     found->lastseen = 0;
     found->declared_raw_rmq = 0;
     found->declared_int_rmq = 0;
-    found->no_agency_map_warning = 0;
-    found->last_agency_check = 0;
-    found->digest_config = NULL;
     found->provisioner_withdrawn = 0;
-    found->preencoded_etsi = calloc(OPENLI_PREENCODE_LAST,
-            sizeof(wandder_encode_job_t));
-    found->preencode_version = 0;
-    found->digest_cin_keys = NULL;
-    found->etsitemplates = NULL;
 
     snprintf(qname, 1024, "%s-iri", found->liid);
     found->queuenames[0] = strdup(qname);
@@ -690,59 +523,6 @@ static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
     return found;
 }
 
-static void check_agency_digest_config(coll_recv_t *col,
-        col_known_liid_t *found) {
-
-    char *agencyid = NULL;
-    agency_digest_config_t *agdigest = NULL;
-    uint8_t reencode_needed = 0;
-    openli_liid_format_t liid_format = OPENLI_LIID_FORMAT_ASCII;
-
-    if (found->lastseen-found->last_agency_check < AGENCY_MAPPING_CHECK_FREQ) {
-        return;
-    }
-
-    /* Look up the integrity check configuration for the recipient of
-     * this intercept */
-    agencyid = lookup_agencyid_for_liid_collector_config(col->parentconfig,
-            found->liid, &liid_format);
-    found->last_agency_check = found->lastseen;
-
-    if (agencyid == NULL) {
-        if (found->no_agency_map_warning == 0) {
-            logger(LOG_INFO, "OpenLI Mediator: collector thread %s does not have a usable agency mapping for LIID %s, cannot produce integrity checks for this LIID",
-                    col->ipaddr, found->liid);
-            found->no_agency_map_warning = 1;
-        }
-        found->digest_config = NULL;
-    } else {
-
-        HASH_FIND(hh, col->known_agencies, agencyid, strlen(agencyid),
-                agdigest);
-        if (!agdigest) {
-            if (found->no_agency_map_warning == 0) {
-                logger(LOG_INFO, "OpenLI Mediator: collector thread %s is missing expected agency digest configuration for agency %s, will not be able to produce integrity checks for LIID %s",
-                        col->ipaddr, agencyid, found->liid);
-                found->no_agency_map_warning = 1;
-            }
-            found->digest_config = NULL;
-        } else {
-            if (agdigest != found->digest_config) {
-                reencode_needed = 1;
-            }
-            found->digest_config = agdigest;
-        }
-    }
-
-    found->liid_format = liid_format;
-    if (reencode_needed) {
-        preencode_etsi_for_known_liid(col, found, liid_format);
-    }
-    if (agencyid) {
-        free(agencyid);
-    }
-}
-
 static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
         uint16_t msglen, openli_proto_msgtype_t msgtype, unsigned char *liidstr,
         uint16_t liidlen) {
@@ -750,11 +530,6 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
     col_known_liid_t *found;
     struct timeval tv;
     int r = 0;
-    uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
-    integrity_check_state_t *chain = NULL;
-    uint8_t enckey[OPENLI_MAX_ENCRYPTKEY_LEN];
-    size_t enckeylen = 0;
-    payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
 
     /* The queue that this record must be published to is derived from
      * the LIID for the record and the record type
@@ -792,35 +567,6 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     gettimeofday(&tv, NULL);
     found->lastseen = tv.tv_sec;
-    check_agency_digest_config(col, found);
-
-    if (found->digest_config && found->digest_config->config &&
-            !found->digest_config->disabled &&
-            found->digest_config->config->digest_required) {
-
-        integrity_res = update_integrity_check_state(&(col->integrity_state),
-                found, msgbody, msglen,
-                msgtype, col->epoll_fd, col->etsidecoder, &chain);
-    }
-
-    if (msgtype == OPENLI_PROTO_ETSI_IRI || msgtype == OPENLI_PROTO_ETSI_CC) {
-        encmethod = check_encryption_requirements(col->parentconfig,
-                found->liid, enckey, &enckeylen);
-    }
-
-    if (encmethod == OPENLI_PAYLOAD_ENCRYPTION_AES_192_CBC) {
-        if (enckeylen != OPENLI_AES192_KEY_LEN) {
-            logger(LOG_INFO, "OpenLI Mediator: unable to encrypt ETSI record for LIID %s in collector thread %s -- the encryption key provided is not a valid length", found->liid, col->ipaddr);
-            return -1;
-        }
-
-        if (encrypt_payload_container_aes_192_cbc(col->evp_ctx,
-                col->etsidecoder, msgbody, msglen, enckey, enckeylen) == NULL) {
-
-            logger(LOG_INFO, "OpenLI Mediator: error while attempting to encrypt ETSI record for LIID %s in collector thread %s", found->liid, col->ipaddr);
-            return -1;
-        }
-    }
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
@@ -887,14 +633,6 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
             increment_col_drop_counter(col);
             r = 0;
         }
-    }
-
-    if (r >= 0 && integrity_res == INTEGRITY_CHECK_SEND_HASH) {
-        integrity_res = send_integrity_check_hash_pdu(col, chain);
-    }
-
-    if (r >= 0 && integrity_res == INTEGRITY_CHECK_REQUEST_SIGN) {
-        return send_integrity_check_signing_request(col, chain);
     }
 
     return r;
@@ -1015,7 +753,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
  *
  *  @return -1 if an error occurs, 0 otherwise
  */
-static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
+static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
 
     uint8_t *msgbody = NULL;
     uint16_t msglen = 0;
@@ -1041,7 +779,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
     do {
         /* Read the next available message -- see netcomms.c for the
          * implementation of these methods */
-        if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+        if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
             msgtype = receive_RMQ_buffer(col->incoming_rmq, col->amqp_state,
                     &msgbody, &msglen, &internalid);
         } else {
@@ -1054,7 +792,7 @@ static int receive_collector(coll_recv_t *col, med_epoll_ev_t *mev) {
                 nb_log_receive_error(msgtype);
                 logger(LOG_INFO, "OpenLI Mediator: error receiving message from collector %s.", col->ipaddr);
             }
-            if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+            if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
                 destroy_rmq_colev(col);
                 return 0;
             }
@@ -1139,11 +877,11 @@ processacks:
 static int collector_thread_epoll_event(coll_recv_t *col,
         struct epoll_event *ev) {
 
-    med_epoll_ev_t *mev = (med_epoll_ev_t *)(ev->data.ptr);
+    openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
 
     switch(mev->fdtype) {
-        case MED_EPOLL_SIGCHECK_TIMER:
+        case OPENLI_EPOLL_SIGCHECK_TIMER:
             /* Time to check for control messages -- fires once per second */
             if (ev->events & EPOLLIN) {
                 ret = 1;
@@ -1154,13 +892,13 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 ret = -1;
             }
             break;
-        case MED_EPOLL_QUEUE_EXPIRE_TIMER:
+        case OPENLI_EPOLL_QUEUE_EXPIRE_TIMER:
             /* Time to purge any state for inactive LIIDs */
-            halt_mediator_timer(mev);
+            halt_openli_timer(mev);
 
             remove_expired_liid_queues(col);
 
-            if (start_mediator_timer(mev, 120) < 0) {
+            if (start_openli_timer(mev, 120) < 0) {
                 logger(LOG_INFO, "OpenLI Mediator: unable to reset queue expiry timer in collector thread for %s: %s", col->ipaddr, strerror(errno));
                 ret =  -1;
             } else {
@@ -1168,7 +906,7 @@ static int collector_thread_epoll_event(coll_recv_t *col,
             }
             break;
 
-        case MED_EPOLL_COLLECTOR_HANDSHAKE:
+        case OPENLI_EPOLL_COLLECTOR_HANDSHAKE:
             /* A socket with an incomplete SSL handshake is active -- try
              * to complete the handshake.
              */
@@ -1177,10 +915,10 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 return -1;
             }
             break;
-        case MED_EPOLL_COLLECTOR:
-        case MED_EPOLL_COL_RMQ:
+        case OPENLI_EPOLL_COLLECTOR:
+        case OPENLI_EPOLL_COL_RMQ:
             if (ev->events & EPOLLRDHUP) {
-                if (mev->fdtype == MED_EPOLL_COL_RMQ) {
+                if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
                     /* RMQ failed, but no need to trash the whole thread */
                     destroy_rmq_colev(col);
                     ret = 0;
@@ -1192,16 +930,6 @@ static int collector_thread_epoll_event(coll_recv_t *col,
                 ret = receive_collector(col, mev);
             }
             break;
-        case MED_EPOLL_INTEGRITY_HASH_TIMER:
-            ret = integrity_hash_timer_callback(col, mev);
-            break;
-        case MED_EPOLL_INTEGRITY_SIGN_TIMER:
-            ret = integrity_sign_timer_callback(col, mev);
-            break;
-        case MED_EPOLL_INTEGRITY_SIGN_REQUEST_TIMER:
-            integrity_sign_reply_timer_callback(col, mev);
-            break;
-
         /* TODO handle timer for expired signature request to provisioner */
         default:
             logger(LOG_INFO,
@@ -1219,12 +947,10 @@ static int collector_thread_epoll_event(coll_recv_t *col,
  */
 static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
-    agency_digest_config_t *ag, *tmpag;
-    integrity_check_state_t *integ, *integtmp;
     size_t i;
 
     if (col->colev) {
-        remove_mediator_fdevent(col->colev);
+        remove_openli_fdevent(col->colev);
     }
     if (col->incoming) {
         destroy_net_buffer(col->incoming, NULL);
@@ -1264,20 +990,6 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         SSL_free(col->ssl);
     }
 
-    if (col->evp_ctx) {
-        EVP_CIPHER_CTX_free(col->evp_ctx);
-    }
-
-    HASH_ITER(hh, col->known_agencies, ag, tmpag) {
-        HASH_DELETE(hh, col->known_agencies, ag);
-        free_agency_digest_config(ag);
-    }
-
-    HASH_ITER(hh, col->integrity_state, integ, integtmp) {
-        HASH_DELETE(hh, col->integrity_state, integ);
-        free_integrity_check_state(integ);
-    }
-
     if (col->internalpass) {
         free(col->internalpass);
     }
@@ -1294,18 +1006,8 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
         }
-        if (known->preencoded_etsi) {
-            etsili_clear_preencoded_fields(known->preencoded_etsi);
-            free(known->preencoded_etsi);
-        }
-        destroy_all_saved_encoding_templates(known->etsitemplates);
-        clear_digest_key_map(known);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
-    }
-
-    if (col->zmq_requests) {
-        zmq_close(col->zmq_requests);
     }
 
     if (col->ipaddr && col->forwarder_id >= 0) {
@@ -1320,20 +1022,12 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         free(col->ipaddr);
     }
 
-    if (col->etsidecoder) {
-        wandder_free_etsili_decoder(col->etsidecoder);
-    }
-
-    if (col->etsiencoder) {
-        free_wandder_encoder(col->etsiencoder);
-    }
-
 }
 
 static inline void move_thread_into_error_state(coll_recv_t *col, uint8_t log) {
 
     if (col->colev) {
-        remove_mediator_fdevent(col->colev);
+        remove_openli_fdevent(col->colev);
         col->colev = NULL;
     }
     if (col->rmq_colev) {
@@ -1360,9 +1054,8 @@ static void *start_collector_thread(void *params) {
     int is_halted = 0, i, r;
     col_thread_msg_t msg;
     int epoll_fd = -1, timerexpired, nfds;
-    med_epoll_ev_t *timerev, *queuecheck = NULL;
+    openli_epoll_ev_t *timerev, *queuecheck = NULL;
     struct epoll_event evs[64];
-    int zero = 0;
 
     if (col->ipaddr == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: started collector thread for NULL collector IP??");
@@ -1380,26 +1073,6 @@ static void *start_collector_thread(void *params) {
     }
     unlock_med_collector_config(col->parentconfig);
 
-    /* create ZMQ requests queue for publishing requests */
-    col->zmq_requests = zmq_socket(col->zmq_ctxt, ZMQ_PUSH);
-    if (zmq_connect(col->zmq_requests, "inproc://openlimed_collrecv_requests")
-            < 0) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: collector thread for %s failed to connect to the ZMQ for pushing requests back to the main thread: %s",
-                col->ipaddr, strerror(errno));
-        zmq_close(col->zmq_requests);
-        col->zmq_requests = NULL;
-    }
-
-    if (col->zmq_requests && zmq_setsockopt(col->zmq_requests, ZMQ_LINGER,
-            &zero, sizeof(zero)) != 0) {
-        logger(LOG_INFO,
-                "OpenLI Mediator: collector thread for %s failed to configure the ZMQ for pushing requests back to the main thread: %s",
-                col->ipaddr, strerror(errno));
-        zmq_close(col->zmq_requests);
-        col->zmq_requests = NULL;
-    }
-
     epoll_fd = epoll_create1(0);
 
     timerev = col->colev = col->rmq_colev = NULL;
@@ -1411,14 +1084,14 @@ static void *start_collector_thread(void *params) {
     /* timerev is used to regularly break from epoll_wait() so we can check
      * for incoming messages on our control socket.
      */
-    timerev = create_mediator_timer(epoll_fd, NULL, MED_EPOLL_SIGCHECK_TIMER, 0);
+    timerev = create_openli_timer(epoll_fd, NULL, OPENLI_EPOLL_SIGCHECK_TIMER, 0);
     if (timerev == NULL) {
         logger(LOG_INFO, "OpenLI Mediator: failed to create main loop timer in collector thread for %s", col->ipaddr);
         goto threadexit;
     }
 
-    queuecheck = create_mediator_timer(epoll_fd, NULL,
-            MED_EPOLL_QUEUE_EXPIRE_TIMER, 60);
+    queuecheck = create_openli_timer(epoll_fd, NULL,
+            OPENLI_EPOLL_QUEUE_EXPIRE_TIMER, 60);
 
     col->epoll_fd = epoll_fd;
     while (!is_halted) {
@@ -1471,7 +1144,7 @@ static void *start_collector_thread(void *params) {
                  */
                 if (col->using_tls != col->parentconfig->usingtls) {
                     if (col->colev) {
-                        remove_mediator_fdevent(col->colev);
+                        remove_openli_fdevent(col->colev);
                         col->colev = NULL;
                     }
                 }
@@ -1481,6 +1154,7 @@ static void *start_collector_thread(void *params) {
                 col->rmqenabled = col->parentconfig->rmqconf->enabled;
 
                 unlock_med_collector_config(col->parentconfig);
+
 
             }
 
@@ -1496,7 +1170,7 @@ static void *start_collector_thread(void *params) {
                  * epoll events to the new socket.
                  */
                 if (col->colev) {
-                    remove_mediator_fdevent(col->colev);
+                    remove_openli_fdevent(col->colev);
                     col->colev = NULL;
                 }
                 if (col->rmq_colev) {
@@ -1506,29 +1180,9 @@ static void *start_collector_thread(void *params) {
                 col->was_dropped = 0;
             }
 
-            if (msg.type == MED_COLL_LEA_ANNOUNCE) {
-                liagency_t *ag = (liagency_t *)(msg.arg);
-
-                update_agency_digest_config_map(&(col->known_agencies), ag);
-            }
-
-            if (msg.type == MED_COLL_LEA_WITHDRAW) {
-                char *agencyid = (char *)(msg.arg);
-
-                /* Do the integrity check update before removing the agency
-                 * digest config!
-                 */
-                handle_lea_withdrawal_within_integrity_check_state(
-                        &(col->integrity_state), agencyid);
-                remove_agency_digest_config(&(col->known_agencies), agencyid);
-                free(agencyid);
-            }
-
             if (msg.type == MED_COLL_LIID_WITHDRAW) {
                 char *thisliid = (char *)(msg.arg);
                 col_known_liid_t *flagged;
-                handle_liid_withdrawal_within_integrity_check_state(
-                        &(col->integrity_state), thisliid, col);
                 HASH_FIND(hh, col->known_liids, thisliid, strlen(thisliid),
                         flagged);
                 if (flagged) {
@@ -1536,14 +1190,6 @@ static void *start_collector_thread(void *params) {
                 }
                 free(thisliid);
             }
-
-            if (msg.type == MED_COLL_INTEGRITY_SIGN_RESULT) {
-                struct ics_sign_response_message *resp;
-                resp = (struct ics_sign_response_message *)(msg.arg);
-                handle_integrity_check_signature_response(col, resp);
-            }
-
-
         }
 
         if (col->was_dropped) {
@@ -1581,7 +1227,7 @@ static void *start_collector_thread(void *params) {
             col->colev = prepare_collector_receive_fd(col, epoll_fd);
         }
 
-        if (col->colev && col->colev->fdtype == MED_EPOLL_COLLECTOR &&
+        if (col->colev && col->colev->fdtype == OPENLI_EPOLL_COLLECTOR &&
                 col->rmqenabled && col->forwarder_using_rmq &&
                 col->rmq_colev == NULL) {
             col->rmq_colev = prepare_collector_receive_rmq(col, epoll_fd);
@@ -1590,7 +1236,7 @@ static void *start_collector_thread(void *params) {
         /* Start our timer to break out and check for control messages once
          * per second.
          */
-        if (start_mediator_timer(timerev, 1) < 0) {
+        if (start_openli_timer(timerev, 1) < 0) {
             logger(LOG_INFO, "OpenLI Mediator: failed to add timer to epoll in collector thread for %s", col->ipaddr);
             break;
         }
@@ -1627,13 +1273,13 @@ static void *start_collector_thread(void *params) {
         /* If we get here, the message timer expired -- loop around and
          * check for new messages.
          */
-        halt_mediator_timer(timerev);
+        halt_openli_timer(timerev);
     }
 
 threadexit:
 
-    destroy_mediator_timer(queuecheck);
-    destroy_mediator_timer(timerev);
+    destroy_openli_timer(queuecheck);
+    destroy_openli_timer(timerev);
     cleanup_collector_thread(col);
 
     close(epoll_fd);
@@ -1660,13 +1306,7 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->next = NULL;
     newcol->rmq_queuename = NULL;
     newcol->creation = tv.tv_sec;
-    newcol->known_agencies = NULL;
-    newcol->integrity_state = NULL;
     newcol->epoll_fd = -1;
-    newcol->evp_ctx = EVP_CIPHER_CTX_new();
-
-    newcol->etsidecoder = wandder_create_etsili_decoder();
-    newcol->etsiencoder = init_wandder_encoder();
 
     if (head) {
         newcol->head = head;
@@ -1696,7 +1336,6 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
             sizeof(col_thread_msg_t));
 
     newcol->zmq_ctxt = medcol->zmq_ctxt;
-    newcol->zmq_requests = NULL;
 
     pthread_create(&(newcol->tid), NULL, start_collector_thread, newcol);
 }
@@ -1865,10 +1504,6 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
 
             pthread_join(tofree->tid, NULL);
             libtrace_message_queue_destroy(&(tofree->in_main));
-
-            if (tofree->zmq_requests) {
-                zmq_close(tofree->zmq_requests);
-            }
 
             if (tofree == col && newhead != oldhead) {
                 /* we are removing the head, so we need

@@ -163,12 +163,16 @@ typedef enum {
     OPENLI_PROTO_RAWIP_CC,
     OPENLI_PROTO_RAWIP_IRI,
     OPENLI_PROTO_COLLECTOR_FORWARDER_HELLO,
-    OPENLI_PROTO_X2X3_LISTENER,
-    OPENLI_PROTO_INTEGRITY_SIGNATURE_REQUEST,
-    OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,
+    OPENLI_PROTO_X2X3_LISTENER_DETAILS,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_KEY,
+    OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,  // no longer used
     OPENLI_PROTO_ADD_UDPSINK,
     OPENLI_PROTO_MODIFY_UDPSINK,
     OPENLI_PROTO_REMOVE_UDPSINK,
+    OPENLI_PROTO_UPDATE_COMPONENT_CONFIG,
+    OPENLI_PROTO_WITHDRAW_X2X3LISTENER,
+    OPENLI_PROTO_ANNOUNCE_X2X3LISTENER,
+    OPENLI_PROTO_ANNOUNCE_LEA_DIGEST,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -235,7 +239,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT,
     OPENLI_PROTO_FIELD_INTEGRITY_ENABLED,
     OPENLI_PROTO_FIELD_COMPONENT_NAME,
-    OPENLI_PROTO_FIELD_DIGEST,
+    OPENLI_PROTO_FIELD_PRIV_SIGN_KEY,
     OPENLI_PROTO_FIELD_LENGTH_BYTES,
     OPENLI_PROTO_FIELD_COLLECTORID,
     OPENLI_PROTO_FIELD_HANDOVER_RETRY,
@@ -248,6 +252,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_UDP_ENCAPSULATION,
     OPENLI_PROTO_FIELD_ACL_IPADDR,
     OPENLI_PROTO_FIELD_ACL_PORT,
+    OPENLI_PROTO_FIELD_UUID,
+    OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for
@@ -267,6 +273,7 @@ void destroy_net_buffer(net_buffer_t *nb, amqp_connection_state_t amqp_state);
 int construct_netcomm_protocol_header(ii_header_t *hdr, uint32_t contentlen,
         uint16_t msgtype, uint64_t internalid, uint32_t *hdrlen);
 
+int push_updated_component_configuration(net_buffer_t *nb, const char *config);
 int push_default_email_compression_onto_net_buffer(net_buffer_t *nb,
         uint8_t defaultcompress);
 int push_default_radius_onto_net_buffer(net_buffer_t *nb,
@@ -274,10 +281,8 @@ int push_default_radius_onto_net_buffer(net_buffer_t *nb,
 int push_default_radius_withdraw_onto_net_buffer(net_buffer_t *nb,
         default_radius_user_t *defuser);
 int push_mediator_onto_net_buffer(net_buffer_t *nb, openli_mediator_t *med);
-int push_ics_signing_request_onto_net_buffer(net_buffer_t *nb,
-        struct ics_sign_request_message *req);
-int push_ics_signing_response_onto_net_buffer(net_buffer_t *nb,
-        struct ics_sign_response_message *resp);
+int push_ics_signing_key_onto_net_buffer(net_buffer_t *nb, EVP_PKEY *pkey);
+
 int push_mediator_withdraw_onto_net_buffer(net_buffer_t *nb,
         openli_mediator_t *med);
 int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *ipint);
@@ -289,16 +294,15 @@ int push_intercept_withdrawal_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t wdtype);
 int push_intercept_modify_onto_net_buffer(net_buffer_t *nb,
         void *cept, openli_proto_msgtype_t modtype);
+int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype, char *name);
+        authtype, char *jsonconfig, char *uuidstr);
 int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
         char *port, char *identifier, uint64_t ts);
-int push_x2x3_listener_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,
         payload_encryption_method_t method, openli_liid_format_t liidformat);
@@ -334,6 +338,12 @@ int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
 int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
+int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
+        char *port, uint64_t ts);
+int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port);
+int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
+        const char *ipaddr, const char *port);
 
 int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
         uint8_t using_rmq);
@@ -351,10 +361,7 @@ int decode_default_radius_withdraw(uint8_t *msgbody, uint16_t len,
         default_radius_user_t *defuser);
 int decode_mediator_announcement(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
-int decode_ics_signing_request(uint8_t *msgbody, uint16_t len,
-        struct ics_sign_request_message *req);
-int decode_ics_signing_response(uint8_t *msgbody, uint16_t len,
-        struct ics_sign_response_message *resp);
+int decode_ics_signing_key(uint8_t *msgbody, uint16_t len, EVP_PKEY **pkey);
 int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
         openli_mediator_t *med);
 int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
@@ -377,6 +384,8 @@ int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
         emailintercept_t *mailint);
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
+int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
+        liagency_digest_config_t **digest);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, uint8_t *encryptkey, size_t *encryptlen,
         payload_encryption_method_t *method,
@@ -410,10 +419,13 @@ int decode_intercept_udpsink_modify(uint8_t *msgbody, uint16_t len,
         intercept_udp_sink_t *sink);
 int decode_intercept_udpsink_removal(uint8_t *msgbody, uint16_t len,
         intercept_udp_sink_t *sink);
+int decode_updated_component_configuration(uint8_t *msgbody, uint16_t len,
+        char **config);
 
 int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
         hi1_notify_data_t *ndata);
-int decode_component_name(uint8_t *msgbody, uint16_t len, char **name);
+int decode_component_name(uint8_t *msgbody, uint16_t len, char **jsonconfig,
+        char **uuidstr);
 void nb_log_receive_error(openli_proto_msgtype_t err);
 void nb_log_transmit_error(openli_proto_msgtype_t err);
 #endif

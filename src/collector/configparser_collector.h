@@ -32,4 +32,5 @@
 #include "collector/x2x3_ingest.h"
 
 int parse_collector_config(char *configfile, collector_global_t *glob);
+char *collector_config_to_json(collector_global_t *glob);
 #endif

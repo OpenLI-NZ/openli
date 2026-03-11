@@ -41,6 +41,8 @@ int create_mobiri_job_from_session(collector_sync_t *sync,
     irimsg->type = OPENLI_EXPORT_UMTSIRI;
     irimsg->destid = ipint->common.destid;
     irimsg->data.mobiri.liid = strdup(ipint->common.liid);
+    irimsg->data.mobiri.authcc = strdup(ipint->common.authcc);
+    irimsg->data.mobiri.delivcc = strdup(ipint->common.delivcc);
     irimsg->data.mobiri.cin = sess->cin;
     irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
     irimsg->data.mobiri.customparams = NULL;
@@ -52,14 +54,12 @@ int create_mobiri_job_from_session(collector_sync_t *sync,
         logger(LOG_INFO,
                 "OpenLI: error whle creating UMTSIRI from existing session %s.",
                 irimsg->data.mobiri.liid);
-        free(irimsg->data.mobiri.liid);
-        free(irimsg);
+        free_published_message(irimsg);
         return -1;
     }
 
     if (irimsg->data.mobiri.iritype == ETSILI_IRI_NONE) {
-            free(irimsg->data.mobiri.liid);
-            free(irimsg);
+            free_published_message(irimsg);
             return 0;
     }
 
@@ -82,6 +82,8 @@ int create_mobiri_job_from_packet(collector_sync_t *sync,
     irimsg->type = OPENLI_EXPORT_UMTSIRI;
     irimsg->destid = ipint->common.destid;
     irimsg->data.mobiri.liid = strdup(ipint->common.liid);
+    irimsg->data.mobiri.authcc = strdup(ipint->common.authcc);
+    irimsg->data.mobiri.delivcc = strdup(ipint->common.delivcc);
     irimsg->data.mobiri.cin = sess->cin;
     irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
     irimsg->data.mobiri.customparams = NULL;
@@ -95,15 +97,13 @@ int create_mobiri_job_from_packet(collector_sync_t *sync,
             logger(LOG_INFO,
                     "OpenLI: error whle creating UMTSIRI from session state change for %s.",
                     irimsg->data.mobiri.liid);
-            free(irimsg->data.mobiri.liid);
-            free(irimsg);
+            free_published_message(irimsg);
             return -1;
         }
     }
 
     if (irimsg->data.mobiri.iritype == ETSILI_IRI_NONE) {
-            free(irimsg->data.mobiri.liid);
-            free(irimsg);
+            free_published_message(irimsg);
             return 0;
     }
 

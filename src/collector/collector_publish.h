@@ -31,6 +31,7 @@
 #include <libtrace.h>
 #include <zmq.h>
 
+#include "agency.h"
 #include "netcomms.h"
 #include "etsili_core.h"
 #include "intercept.h"
@@ -49,6 +50,8 @@ typedef struct udp_sink_worker_args {
     char *listenaddr;
     char *listenport;
     char *liid;
+    char *authcc;
+    char *delivcc;
     int trackerid;
     uint8_t direction;
     uint8_t encapfmt;
@@ -87,10 +90,13 @@ enum {
     OPENLI_EXPORT_UDP_SINK_ARGS = 27,
     OPENLI_EXPORT_FIRST_SEGMENT_FLAG = 28,
     OPENLI_EXPORT_LAST_SEGMENT_FLAG = 29,
+    OPENLI_EXPORT_AGENCY_DIGEST_CONFIG = 30,
 };
 
 typedef struct openli_ipcc_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint8_t *ipcontent;
     uint32_t ipclen;
     uint32_t ipcalloc;
@@ -101,6 +107,8 @@ typedef struct openli_ipcc_job {
 
 typedef struct openli_ipmmcc_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint8_t *content;
     uint32_t contentlen;
     uint32_t contentalloc;
@@ -113,6 +121,8 @@ typedef struct openli_ipmmcc_job {
 
 typedef struct openli_mobcc_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint32_t cin;
     uint8_t dir;
     uint8_t *ipcontent;
@@ -123,6 +133,8 @@ typedef struct openli_mobcc_job {
 
 typedef struct openli_emailiri_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint32_t cin;
     etsili_iri_type_t iritype;
     etsili_email_iri_content_t content;
@@ -131,6 +143,8 @@ typedef struct openli_emailiri_job {
 
 typedef struct openli_emailcc_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint32_t cin;
     uint8_t format;
     uint8_t dir;
@@ -141,6 +155,8 @@ typedef struct openli_emailcc_job {
 
 typedef struct openli_ipmmiri_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint32_t cin;
     etsili_iri_type_t iritype;
     uint8_t ipmmiri_style;
@@ -160,6 +176,8 @@ typedef struct openli_ipmmiri_job {
 
 typedef struct openli_mobiri_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint32_t cin;
     etsili_iri_type_t iritype;
     etsili_generic_t *customparams;
@@ -168,6 +186,8 @@ typedef struct openli_mobiri_job {
 
 typedef struct openli_ipiri_job {
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint32_t cin;
     char *username;
 
@@ -186,6 +206,7 @@ typedef struct openli_ipiri_job {
 
 typedef struct openli_rawip_job {
     char *liid;
+    char *authcc;
     uint8_t *ipcontent;
     uint32_t ipclen;
     uint32_t seqno;
@@ -269,6 +290,7 @@ struct openli_export_recv {
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
         udp_sink_worker_args_t udpargs;
+        liagency_digest_config_t digest;
     	halt_info_t *haltinfo;
     } data;
 };
@@ -281,18 +303,20 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
 
 openli_export_recv_t *create_ipcc_job(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
-        uint8_t dir);
+        uint8_t dir, char *authcc, char *delivcc);
 
 openli_export_recv_t *create_ipmmcc_job_from_packet(
         uint32_t cin, char *liid, uint32_t destid, libtrace_packet_t *pkt,
-        uint8_t dir, uint8_t mmccproto);
+        uint8_t dir, uint8_t mmccproto, char *authcc, char *delivcc);
 
 openli_export_recv_t *create_ipmmcc_job_from_rtp(
         uint32_t cin, char *liid, uint32_t destid, uint8_t *rtpstart,
-        uint32_t rtplen, uint8_t dir, struct timeval timestamp);
+        uint32_t rtplen, uint8_t dir, struct timeval timestamp,
+        char *authcc, char *delivcc);
 
 openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
-        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir);
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir, char *authcc,
+        char *delivcc);
 
 /** Creates a raw IP packet encoding job from a pointer to an IP header.
  *  Supports creating messages using both the OPENLI_EXPORT_RAW_CC type and
@@ -310,13 +334,14 @@ openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
  *  @param tv       The timestamp for the intercepted packet
  *  @param msgtype  The type of job to encode (either OPENLI_EXPORT_RAW_CC
  *                  or OPENLI_EXPORT_RAW_IRI)
+ *  @param authcc   The authorized country code for the intercept recipient
  *
  *  @return an encoding job that is ready to be published using
  *          publish_openli_msg()
  */
 openli_export_recv_t *create_rawip_job_from_ip(char *liid,
         uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
-        uint8_t msgtype);
+        uint8_t msgtype, char *authcc);
 
 /** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_CC type.
  *
@@ -325,13 +350,14 @@ openli_export_recv_t *create_rawip_job_from_ip(char *liid,
  *
  *  @param liid     The LIID that this packet has been intercepted for
  *  @param destid   The mediator that should receive the raw IP packet
+ *  @param authcc   The authorized country code for the intercept recipient
  *  @param pkt      The packet that was intercepted
  *
  *  @return an encoding job that is ready to be published using
  *          publish_openli_msg()
  */
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
-        libtrace_packet_t *pkt);
+        char *authcc, libtrace_packet_t *pkt);
 
 /** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_IRI type.
  *
@@ -340,13 +366,14 @@ openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
  *
  *  @param liid     The LIID that this packet has been intercepted for
  *  @param destid   The mediator that should receive the raw IP packet
+ *  @param authcc   The authorized country code for the intercept recipient
  *  @param pkt      The packet that was intercepted
  *
  *  @return an encoding job that is ready to be published using
  *          publish_openli_msg()
  */
 openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
-        libtrace_packet_t *pkt);
+        char *authcc, libtrace_packet_t *pkt);
 
 int push_vendor_mirrored_ipcc_job(void *pubqueue,
         intercept_common_t *common, struct timeval tv,
@@ -354,7 +381,7 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
 
 openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
         uint16_t iplen, char *liid, uint32_t cin, uint8_t dir,
-        uint32_t destid);
+        uint32_t destid, char *authcc, char *delivcc);
 
 void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
         openli_location_t *loc, int loc_count);

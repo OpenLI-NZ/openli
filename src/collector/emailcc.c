@@ -32,9 +32,10 @@
 #include "logger.h"
 #include "etsili_core.h"
 
-static openli_export_recv_t *create_emailcc_job(char *liid,
+static openli_export_recv_t *create_emailcc_job(char *liid, char *authcc,
         emailsession_t *sess, uint32_t destid, time_t timestamp,
-        uint8_t *content, int content_len, uint8_t format, uint8_t dir) {
+        uint8_t *content, int content_len, uint8_t format, uint8_t dir,
+        char *delivcc) {
 
     openli_export_recv_t *msg = NULL;
 
@@ -50,6 +51,8 @@ static openli_export_recv_t *create_emailcc_job(char *liid,
     msg->data.emailcc.format = format;
     msg->data.emailcc.dir = dir;
     msg->data.emailcc.liid = strdup(liid);
+    msg->data.emailcc.authcc = strdup(authcc);
+    msg->data.emailcc.delivcc = strdup(delivcc);
     msg->data.emailcc.cin = sess->cin;
     msg->data.emailcc.cc_content_len = content_len;
 
@@ -133,9 +136,10 @@ static void create_emailccs_for_intercept_list(openli_email_worker_t *state,
         }
 
 
-        ccjob = create_emailcc_job(ref->em->common.liid, sess,
+        ccjob = create_emailcc_job(ref->em->common.liid,
+                ref->em->common.authcc, sess,
                 ref->em->common.destid, timestamp, content, content_len,
-                format, dir);
+                format, dir, ref->em->common.delivcc);
         if (ccjob == NULL) {
             continue;
         }
