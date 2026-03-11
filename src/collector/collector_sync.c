@@ -466,6 +466,8 @@ static int create_udp_sink_thread(collector_sync_t *sync,
     args->listenport = strdup(sink->listenport);
     args->listenaddr = strdup(sink->listenaddr);
     args->liid = strdup(sink->attached_liid);
+    args->authcc = strdup(ipint->common.authcc);
+    args->delivcc = strdup(ipint->common.delivcc);
     args->zmq_ctxt = sync->glob->zmq_ctxt;
     args->trackerid = ipint->common.seqtrackerid;
     args->direction = sink->direction;
@@ -764,6 +766,7 @@ static int export_raw_sync_packet_content(access_plugin_t *p,
         msg->type = OPENLI_EXPORT_RAW_SYNC;
         msg->destid = ipint->common.destid;
         msg->data.rawip.liid = strdup(ipint->common.liid);
+        msg->data.rawip.authcc = strdup(ipint->common.authcc);
 
         msg->data.rawip.ipcontent = malloc(iplen +
                 sizeof(openli_pcap_header_t));

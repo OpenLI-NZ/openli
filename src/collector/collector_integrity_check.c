@@ -230,7 +230,7 @@ static inline void populate_integrity_check_pshdr_data(
     hdrdata->liid_len = strlen(ics->liid_key);
     hdrdata->liid_format = ics->liid_format;
     hdrdata->authcc = ics->authcc;
-    hdrdata->delivcc = ics->authcc;
+    hdrdata->delivcc = ics->delivcc;
     hdrdata->authcc_len = strlen(hdrdata->authcc);
     hdrdata->delivcc_len = strlen(hdrdata->delivcc);
 
@@ -336,6 +336,7 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->msgtype = msgtype;
         found->liid_key = strdup(known->liid_key);
         found->authcc = strdup(known->authcc);
+        found->delivcc = strdup(known->delivcc);
         found->hashed_seqnos = calloc(32, sizeof(int64_t));
         found->signing_seqnos = calloc(16, sizeof(int64_t));
         found->seqno_array_size = 32;
@@ -661,6 +662,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->key) free(integ->key);
     if (integ->liid_key) free(integ->liid_key);
     if (integ->authcc) free(integ->authcc);
+    if (integ->delivcc) free(integ->delivcc);
     if (integ->cinstr) free(integ->cinstr);
     if (integ->hash_ctx) EVP_MD_CTX_free(integ->hash_ctx);
     if (integ->signature_ctx) EVP_MD_CTX_free(integ->signature_ctx);

@@ -66,6 +66,60 @@ static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
     }
 }
 
+static inline char *extract_authcc_from_job(openli_export_recv_t *recvd) {
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.authcc;
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
+            return recvd->data.ipcc.authcc;
+        case OPENLI_EXPORT_IPIRI:
+            return recvd->data.ipiri.authcc;
+        case OPENLI_EXPORT_IPMMIRI:
+            return recvd->data.ipmmiri.authcc;
+        case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
+            return recvd->data.mobiri.authcc;
+        case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
+        case OPENLI_EXPORT_RAW_IRI:
+            return recvd->data.rawip.authcc;
+        case OPENLI_EXPORT_EMAILIRI:
+            return recvd->data.emailiri.authcc;
+        case OPENLI_EXPORT_EMAILCC:
+            return recvd->data.emailcc.authcc;
+        case OPENLI_EXPORT_EPSCC:
+            return recvd->data.mobcc.authcc;
+    }
+    return NULL;
+}
+
+static inline char *extract_delivcc_from_job(openli_export_recv_t *recvd) {
+
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMCC:
+            return recvd->data.ipmmcc.delivcc;
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_UMTSCC:
+            return recvd->data.ipcc.delivcc;
+        case OPENLI_EXPORT_IPIRI:
+            return recvd->data.ipiri.delivcc;
+        case OPENLI_EXPORT_IPMMIRI:
+            return recvd->data.ipmmiri.delivcc;
+        case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
+            return recvd->data.mobiri.delivcc;
+        case OPENLI_EXPORT_EMAILIRI:
+            return recvd->data.emailiri.delivcc;
+        case OPENLI_EXPORT_EMAILCC:
+            return recvd->data.emailcc.delivcc;
+        case OPENLI_EXPORT_EPSCC:
+            return recvd->data.mobcc.delivcc;
+    }
+    return NULL;
+}
+
 static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
 
     switch(recvd->type) {
@@ -401,7 +455,8 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
 
 static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd, exporter_intercept_state_t *intstate,
-        cin_seqno_t *cinseq, char *liid, uint32_t *seqno) {
+        cin_seqno_t *cinseq, char *liid, uint32_t *seqno, char *authcc,
+        char *delivcc) {
 
     openli_encoding_job_t job;
     int ret = 1;
@@ -411,6 +466,8 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.preencoded = intstate->preencoded;
 	job.origreq = recvd;
 	job.liid = strdup(liid);
+    job.authcc = strdup(authcc);
+    job.delivcc = strdup(delivcc);
     job.cinstr = strdup(cinseq->cin_string);
     job.cin = (int64_t)cinseq->cin;
     job.cept_version = intstate->version;
@@ -448,7 +505,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 
 static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd, exporter_intercept_state_t *intstate,
-        cin_seqno_t *cinseq, char *liid) {
+        cin_seqno_t *cinseq, char *liid, char *authcc, char *delivcc) {
 
     openli_export_recv_t *replace;
     openli_emailcc_job_t *req;
@@ -459,7 +516,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
     req = &(recvd->data.emailcc);
     if (req->cc_content_len < MAX_CONTENT_PER_JOB) {
         return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
-                &cinseq->cc_seqno);
+                &cinseq->cc_seqno, authcc, delivcc);
     }
 
     cc_rem = (uint32_t)req->cc_content_len;
@@ -472,6 +529,8 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
         replace->destid = recvd->destid;
         replace->ts = recvd->ts;
         replace->data.emailcc.liid = strdup(liid);
+        replace->data.emailcc.authcc = strdup(authcc);
+        replace->data.emailcc.delivcc = strdup(delivcc);
         replace->data.emailcc.cin = cinseq->cin;
         replace->data.emailcc.format = req->format;
         replace->data.emailcc.dir = req->dir;
@@ -493,7 +552,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
         cc_rem -= tocopy;
 
         res = generate_encoding_job(seqdata, replace, intstate, cinseq, liid,
-                &cinseq->cc_seqno);
+                &cinseq->cc_seqno, authcc, delivcc);
         if (res < 0) {
             return -1;
         }
@@ -506,7 +565,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
 static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd) {
 
-    char *liid;
+    char *liid, *authcc, *delivcc;
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
@@ -516,6 +575,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
+    authcc = extract_authcc_from_job(recvd);
+    delivcc = extract_delivcc_from_job(recvd);
     cin = extract_cin_from_job(recvd);
     iritype = extract_iritype_from_job(recvd);
 
@@ -554,7 +615,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     switch(recvd->type) {
         case OPENLI_EXPORT_EMAILCC:
-            return handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid);
+            return handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid,
+                    authcc, delivcc);
     }
 
 
@@ -586,7 +648,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 	}
 
     return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
-            seqno);
+            seqno, authcc, delivcc);
 
 }
 

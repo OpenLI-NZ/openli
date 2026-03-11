@@ -145,12 +145,24 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipcc.ipcontent) {
             free(msg->data.ipcc.ipcontent);
         }
+        if (msg->data.ipcc.authcc) {
+            free(msg->data.ipcc.authcc);
+        }
+        if (msg->data.ipcc.delivcc) {
+            free(msg->data.ipcc.delivcc);
+        }
     } else if (msg->type == OPENLI_EXPORT_IPMMCC) {
         if (msg->data.ipmmcc.liid) {
             free(msg->data.ipmmcc.liid);
         }
         if (msg->data.ipmmcc.content) {
             free(msg->data.ipmmcc.content);
+        }
+        if (msg->data.ipmmcc.authcc) {
+            free(msg->data.ipmmcc.authcc);
+        }
+        if (msg->data.ipmmcc.delivcc) {
+            free(msg->data.ipmmcc.delivcc);
         }
 
     } else if (msg->type == OPENLI_EXPORT_EPSCC) {
@@ -160,6 +172,12 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.mobcc.ipcontent) {
             free(msg->data.mobcc.ipcontent);
         }
+        if (msg->data.mobcc.authcc) {
+            free(msg->data.mobcc.authcc);
+        }
+        if (msg->data.mobcc.delivcc) {
+            free(msg->data.mobcc.delivcc);
+        }
     }else if (msg->type == OPENLI_EXPORT_EMAILCC) {
         if (msg->data.emailcc.liid) {
             free(msg->data.emailcc.liid);
@@ -167,9 +185,21 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.emailcc.cc_content) {
             free(msg->data.emailcc.cc_content);
         }
+        if (msg->data.emailcc.authcc) {
+            free(msg->data.emailcc.authcc);
+        }
+        if (msg->data.emailcc.delivcc) {
+            free(msg->data.emailcc.delivcc);
+        }
     } else if (msg->type == OPENLI_EXPORT_EMAILIRI) {
         if (msg->data.emailiri.liid) {
             free(msg->data.emailiri.liid);
+        }
+        if (msg->data.emailiri.authcc) {
+            free(msg->data.emailiri.authcc);
+        }
+        if (msg->data.emailiri.delivcc) {
+            free(msg->data.emailiri.delivcc);
         }
         free_email_iri_content(&(msg->data.emailiri.content));
 
@@ -183,6 +213,12 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipmmiri.locations) {
             free(msg->data.ipmmiri.locations);
         }
+        if (msg->data.ipmmiri.authcc) {
+            free(msg->data.ipmmiri.authcc);
+        }
+        if (msg->data.ipmmiri.delivcc) {
+            free(msg->data.ipmmiri.delivcc);
+        }
     } else if (msg->type == OPENLI_EXPORT_IPIRI) {
         if (msg->data.ipiri.liid) {
             free(msg->data.ipiri.liid);
@@ -193,10 +229,22 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.ipiri.assignedips) {
             free(msg->data.ipiri.assignedips);
         }
+        if (msg->data.ipiri.authcc) {
+            free(msg->data.ipiri.authcc);
+        }
+        if (msg->data.ipiri.delivcc) {
+            free(msg->data.ipiri.delivcc);
+        }
     } else if (msg->type == OPENLI_EXPORT_UMTSIRI ||
             msg->type == OPENLI_EXPORT_EPSIRI) {
         if (msg->data.mobiri.liid) {
             free(msg->data.mobiri.liid);
+        }
+        if (msg->data.mobiri.authcc) {
+            free(msg->data.mobiri.authcc);
+        }
+        if (msg->data.mobiri.delivcc) {
+            free(msg->data.mobiri.delivcc);
         }
     } else if (msg->type == OPENLI_EXPORT_RAW_SYNC ||
             msg->type == OPENLI_EXPORT_RAW_CC ||
@@ -206,6 +254,9 @@ void free_published_message(openli_export_recv_t *msg) {
         }
         if (msg->data.rawip.ipcontent) {
             free(msg->data.rawip.ipcontent);
+        }
+        if (msg->data.rawip.authcc) {
+            free(msg->data.rawip.authcc);
         }
     } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
         if (msg->data.udpargs.sourceport) {
@@ -221,7 +272,7 @@ void free_published_message(openli_export_recv_t *msg) {
 
 openli_export_recv_t *create_rawip_job_from_ip(char *liid,
         uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
-        uint8_t msgtype) {
+        uint8_t msgtype, char *authcc) {
 
     openli_export_recv_t *msg = NULL;
     openli_pcap_header_t *pcap;
@@ -236,6 +287,7 @@ openli_export_recv_t *create_rawip_job_from_ip(char *liid,
     msg->ts = tv;
 
     msg->data.rawip.liid = strdup(liid);
+    msg->data.rawip.authcc = strdup(authcc);
     msg->data.rawip.ipcontent = malloc(l3_len + sizeof(openli_pcap_header_t));
 
     pcap = (openli_pcap_header_t *)msg->data.rawip.ipcontent;
@@ -254,7 +306,7 @@ openli_export_recv_t *create_rawip_job_from_ip(char *liid,
 }
 
 openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
-        libtrace_packet_t *pkt) {
+        char *authcc, libtrace_packet_t *pkt) {
 
     void *l3;
     uint32_t rem;
@@ -270,12 +322,12 @@ openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
 
     tv = trace_get_timeval(pkt);
     return create_rawip_job_from_ip(liid, destid, l3, rem, tv,
-            OPENLI_EXPORT_RAW_CC);
+            OPENLI_EXPORT_RAW_CC, authcc);
 
 }
 
 openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
-        libtrace_packet_t *pkt) {
+        char *authcc, libtrace_packet_t *pkt) {
 
     void *l3;
     uint32_t rem;
@@ -291,7 +343,7 @@ openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
 
     tv = trace_get_timeval(pkt);
     return create_rawip_job_from_ip(liid, destid, l3, rem, tv,
-            OPENLI_EXPORT_RAW_IRI);
+            OPENLI_EXPORT_RAW_IRI, authcc);
 
 }
 
@@ -304,7 +356,8 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
     if (common->targetagency == NULL || strcmp(common->targetagency,
             "pcapdisk") == 0) {
         msg = create_rawip_job_from_ip(common->liid,
-                common->destid, l3, rem, tv, OPENLI_EXPORT_RAW_CC);
+                common->destid, l3, rem, tv, OPENLI_EXPORT_RAW_CC,
+                common->authcc);
     } else {
         msg = calloc(1, sizeof(openli_export_recv_t));
 
@@ -312,6 +365,8 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
         msg->ts = tv;
         msg->destid = common->destid;
         msg->data.ipcc.liid = strdup(common->liid);
+        msg->data.ipcc.authcc = strdup(common->authcc);
+        msg->data.ipcc.delivcc = strdup(common->delivcc);
         msg->data.ipcc.cin = cin;
         msg->data.ipcc.dir = dir;
         msg->data.ipcc.ipcontent = (uint8_t *)calloc(1, rem);
@@ -328,7 +383,8 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
 }
 
 openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
-        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir,
+        char *authcc, char *delivcc) {
 
     void *l3;
     uint32_t rem;
@@ -351,6 +407,8 @@ openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
     msg->destid = destid;
     msg->ts = trace_get_timeval(pkt);
     msg->data.mobcc.liid = strdup(liid);
+    msg->data.mobcc.authcc = strdup(authcc);
+    msg->data.mobcc.delivcc = strdup(delivcc);
     msg->data.mobcc.ipcontent = calloc(rem, sizeof(uint8_t));
     memcpy(msg->data.mobcc.ipcontent, l3, rem);
     msg->data.mobcc.ipclen = rem;
@@ -365,7 +423,7 @@ openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
 
 openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
         uint32_t destid, uint8_t *rtpstart, uint32_t rtplen, uint8_t dir,
-        struct timeval timestamp) {
+        struct timeval timestamp, char *authcc, char *delivcc) {
 
     openli_export_recv_t *msg = NULL;
     uint32_t x;
@@ -379,6 +437,9 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
     msg->type = OPENLI_EXPORT_IPMMCC;
     msg->destid = destid;
     msg->ts = timestamp;
+
+    msg->data.ipmmcc.authcc = strdup(authcc);
+    msg->data.ipmmcc.delivcc = strdup(delivcc);
 
     if (liidlen + 1 > msg->data.ipmmcc.liidalloc) {
         if (liidlen + 1 < 32) {
@@ -425,7 +486,7 @@ openli_export_recv_t *create_ipmmcc_job_from_rtp(uint32_t cin, char *liid,
 
 openli_export_recv_t *create_ipmmcc_job_from_packet(uint32_t cin, char *liid,
         uint32_t destid, libtrace_packet_t *pkt, uint8_t dir,
-        uint8_t mmccproto) {
+        uint8_t mmccproto, char *authcc, char *delivcc) {
 
     void *l3;
     uint32_t rem;
@@ -444,6 +505,8 @@ openli_export_recv_t *create_ipmmcc_job_from_packet(uint32_t cin, char *liid,
     msg->type = OPENLI_EXPORT_IPMMCC;
     msg->destid = destid;
     msg->ts = trace_get_timeval(pkt);
+    msg->data.ipmmcc.authcc = strdup(authcc);
+    msg->data.ipmmcc.delivcc = strdup(delivcc);
 
     if (liidlen + 1 > msg->data.ipmmcc.liidalloc) {
         if (liidlen + 1 < 32) {
@@ -489,7 +552,8 @@ openli_export_recv_t *create_ipmmcc_job_from_packet(uint32_t cin, char *liid,
 }
 
 openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
-        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir) {
+        uint32_t destid, libtrace_packet_t *pkt, uint8_t dir,
+        char *authcc, char *delivcc) {
 
     void *l3;
     uint32_t rem;
@@ -510,6 +574,8 @@ openli_export_recv_t *create_ipcc_job(uint32_t cin, char *liid,
     msg->ts = trace_get_timeval(pkt);
     msg->data.ipcc.liid = strdup(liid);
     msg->data.ipcc.liidalloc = liidlen + 1;
+    msg->data.ipcc.authcc = strdup(authcc);
+    msg->data.ipcc.delivcc = strdup(delivcc);
 
     if (rem > msg->data.ipcc.ipcalloc) {
         if (rem < 512) {

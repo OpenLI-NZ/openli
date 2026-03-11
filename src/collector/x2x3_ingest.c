@@ -809,7 +809,8 @@ static int handle_x3_rtp_pdu(x_input_t *xinp, x2x3_base_header_t *hdr,
     msg = create_ipmmcc_job_from_rtp(
             x2x3_correlation_to_cin(hdr->correlation),
             vint->common.liid, vint->common.destid, payload, plen,
-            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), tv);
+            x2x3dir_to_etsidir(ntohs(hdr->payloaddir)), tv,
+            vint->common.authcc, vint->common.delivcc);
     publish_openli_msg(xinp->zmq_pubsocks[vint->common.seqtrackerid], msg);
 
     return 1;
