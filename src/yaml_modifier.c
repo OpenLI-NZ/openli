@@ -332,7 +332,7 @@ static void update_context(openli_yaml_context_t *ctx, const char *line,
 static bool path_matches(const char *current_path, const char *key,
         const char *target_path) {
 
-    char full_path[OPENLI_YAML_MAX_KEY_LENGTH * 2];
+    char full_path[OPENLI_YAML_MAX_KEY_LENGTH * 4];
     if (current_path[0] != '\0') {
         snprintf(full_path, sizeof(full_path), "%s.%s", current_path, key);
     } else {
