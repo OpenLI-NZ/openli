@@ -502,6 +502,8 @@ static void create_iri_from_gtp_action(openli_gtp_worker_t *worker,
     irimsg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
     irimsg->destid = ipint->common.destid;
     irimsg->data.mobiri.liid = strdup(ipint->common.liid);
+    irimsg->data.mobiri.authcc = strdup(ipint->common.authcc);
+    irimsg->data.mobiri.delivcc = strdup(ipint->common.delivcc);
     irimsg->data.mobiri.cin = sess->cin;
     irimsg->data.mobiri.iritype = ETSILI_IRI_NONE;
     irimsg->data.mobiri.customparams = NULL;
@@ -518,14 +520,12 @@ static void create_iri_from_gtp_action(openli_gtp_worker_t *worker,
     if (ret == -1) {
         logger(LOG_INFO,
                 "OpenLI: error while creating IRI from GTP session state change for %s (worker=%d)", irimsg->data.mobiri.liid, worker->workerid);
-        free(irimsg->data.mobiri.liid);
-        free(irimsg);
+        free_published_message(irimsg);
         return;
     }
 
     if (irimsg->data.mobiri.iritype == ETSILI_IRI_NONE) {
-        free(irimsg->data.mobiri.liid);
-        free(irimsg);
+        free_published_message(irimsg);
         return;
     }
     pthread_mutex_lock(worker->stats_mutex);
@@ -618,7 +618,7 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
                     strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
                 expmsg = create_rawip_job_from_ip(ipint->common.liid,
                         ipint->common.destid, payload, plen, tv,
-                        OPENLI_EXPORT_RAW_CC);
+                        OPENLI_EXPORT_RAW_CC, ipint->common.authcc);
 
             } else if (sess->gtp_version == 2) {
                 /* TODO define ICE types and figure out how we decide what
@@ -626,7 +626,7 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
                  */
                 expmsg = create_epscc_job(ipint->common.liid, found->cin,
                         ipint->common.destid, found->dir, payload, plen, 0,
-                        gtpseqno);
+                        gtpseqno, ipint->common.authcc, ipint->common.delivcc);
             } else {
                 /* XXX don't bother with UMTSCC right now */
                 continue;

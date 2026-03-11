@@ -345,6 +345,8 @@ static inline openli_export_recv_t *_create_ipiri_job_basic(
     irimsg->type = OPENLI_EXPORT_IPIRI;
     irimsg->destid = ipint->common.destid;
     irimsg->data.ipiri.liid = strdup(ipint->common.liid);
+    irimsg->data.ipiri.authcc = strdup(ipint->common.authcc);
+    irimsg->data.ipiri.delivcc = strdup(ipint->common.delivcc);
     irimsg->data.ipiri.access_tech = ipint->accesstype;
     irimsg->data.ipiri.cin = cin;
     irimsg->data.ipiri.username = strdup(username);
@@ -492,9 +494,7 @@ int create_ipiri_job_from_packet(collector_sync_t *sync,
                 logger(LOG_INFO,
                         "OpenLI: error while creating IPIRI from session state change for %s.",
                         irimsg->data.ipiri.liid);
-                free(irimsg->data.ipiri.username);
-                free(irimsg->data.ipiri.liid);
-                free(irimsg);
+                free_published_message(irimsg);
                 return -1;
             }
         }
@@ -532,9 +532,7 @@ int create_ipiri_job_from_session(collector_sync_t *sync,
                     irimsg->data.ipiri.liid);
         }
 
-        free(irimsg->data.ipiri.username);
-        free(irimsg->data.ipiri.liid);
-        free(irimsg);
+        free_published_message(irimsg);
         return ret;
     }
     finish_ipiri_job(sync, sess, ipint, irimsg);

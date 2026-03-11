@@ -1479,7 +1479,7 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
                 continue;
             }
             copy = create_rawip_iri_job(vint->common.liid, vint->common.destid,
-                pkts[i]);
+                vint->common.authcc, pkts[i]);
             publish_openli_msg(
                     sipworker->zmq_pubsocks[vint->common.seqtrackerid],
                     copy);
@@ -1498,6 +1498,8 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     copy->destid = vint->common.destid;
     copy->data.ipmmiri.iritype = iritype;
     copy->data.ipmmiri.cin = cin;
+    copy->data.ipmmiri.authcc = strdup(vint->common.authcc);
+    copy->data.ipmmiri.delivcc = strdup(vint->common.delivcc);
 
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,

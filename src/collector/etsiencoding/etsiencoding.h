@@ -137,6 +137,8 @@ typedef struct encoder_job {
     char *cinstr;
     openli_export_recv_t *origreq;
     char *liid;
+    char *authcc;
+    char *delivcc;
     uint8_t cept_version;
     payload_encryption_method_t encryptmethod;
     uint8_t *encryptkey;

@@ -153,11 +153,12 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
             if (rtp->common.targetagency == NULL ||
                     strcmp(rtp->common.targetagency, "pcapdisk") == 0) {
                 msg = create_rawip_cc_job(rtp->common.liid,
-                        rtp->common.destid, pkt);
+                        rtp->common.destid, rtp->common.authcc, pkt);
             } else {
                 msg = create_ipmmcc_job_from_packet(rtp->cin, rtp->common.liid,
                         rtp->common.destid, pkt, ETSI_DIR_FROM_TARGET,
-                        OPENLI_IPMMCC_MMCC_PROTOCOL_RTP);
+                        OPENLI_IPMMCC_MMCC_PROTOCOL_RTP, rtp->common.authcc,
+                        rtp->common.delivcc);
             }
             publish_openli_msg(loc->zmq_pubsocks[rtp->common.seqtrackerid],
                     msg);
@@ -173,10 +174,11 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
             if (rtp->common.targetagency == NULL ||
                     strcmp(rtp->common.targetagency, "pcapdisk") == 0) {
                 msg = create_rawip_cc_job(rtp->common.liid,
-                        rtp->common.destid, pkt);
+                        rtp->common.destid, rtp->common.authcc, pkt);
             } else {
                 msg = create_ipcc_job(rtp->cin, rtp->common.liid,
-                        rtp->common.destid, pkt, ETSI_DIR_TO_TARGET);
+                        rtp->common.destid, pkt, ETSI_DIR_TO_TARGET,
+                        rtp->common.authcc, rtp->common.delivcc);
                 msg->type = OPENLI_EXPORT_IPMMCC;
             }
             publish_openli_msg(loc->zmq_pubsocks[rtp->common.seqtrackerid],

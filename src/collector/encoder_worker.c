@@ -52,6 +52,9 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->authcc) {
         free(known->authcc);
     }
+    if (known->delivcc) {
+        free(known->delivcc);
+    }
     etsili_destroy_encrypted_templates(
             known->encrypt_cc.saved_encryption_templates);
     etsili_destroy_encrypted_templates(
@@ -71,6 +74,12 @@ static void destroy_encoding_job(openli_encoding_job_t *job,
     }
     if (job->liid) {
         free(job->liid);
+    }
+    if (job->authcc) {
+        free(job->authcc);
+    }
+    if (job->delivcc) {
+        free(job->delivcc);
     }
     if (job->encryptkey) {
         free(job->encryptkey);
@@ -475,13 +484,14 @@ static void check_agency_digest_config(openli_encoder_t *enc,
 }
 
 static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
-        char *liid, char *authcc) {
+        char *liid, char *authcc, char *delivcc) {
 
     encoder_liid_state_t *found;
 
     found = calloc(1, sizeof(encoder_liid_state_t));
     found->liid_key = strdup(liid);
     found->authcc = strdup(authcc);
+    found->delivcc = strdup(delivcc);
     found->no_agency_map_warning = 0;
     found->last_agency_check = 0;
     memset(&found->digest_config, 0, sizeof(found->digest_config));
@@ -1226,7 +1236,8 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         if (!found) {
-            found = create_new_known_liid(enc, job.liid, "NZ");
+            found = create_new_known_liid(enc, job.liid, job.authcc,
+                    job.delivcc);
         }
 
         check_agency_digest_config(enc, found);
