@@ -215,8 +215,8 @@ static inline int common_intercept_equal(intercept_common_t *a,
     }
 
     /* Binary key comparison: lengths must match; if >0, bytes must match */
-    if (a->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE ||
-        b->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (a->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE ||
+        b->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (a->encryptkey_len != b->encryptkey_len) {
             return 0;
         }

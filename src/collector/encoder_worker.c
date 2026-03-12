@@ -404,8 +404,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
         job->origreq = NULL;
     }
 
-
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (encrypt_payload_container_aes_192_cbc(enc->evp_ctx,
                 enc->etsidecoder, res->msgbody->encoded + res->preamblen,
                 res->msgbody->len - res->preamblen, job->encryptkey,
@@ -571,7 +570,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
@@ -619,7 +618,7 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
@@ -690,7 +689,7 @@ static int encode_templated_segflag(openli_encoder_t *enc,
         return -1;
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
@@ -738,7 +737,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
         return -1;
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 body->encoded, body->len, epsccjob->ipcontent,
@@ -792,7 +791,7 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
@@ -844,7 +843,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
         return -1;
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_iri,
                 res, hdr_tplate,
                 body->encoded, body->len, NULL, 0, job) < 0) {
@@ -898,7 +897,7 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
@@ -977,7 +976,7 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
     }
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
@@ -1031,7 +1030,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
     }
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,

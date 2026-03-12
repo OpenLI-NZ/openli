@@ -711,7 +711,7 @@ static void start_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.liid_format = em->common.liid_format;
         expmsg->data.cept.targetagency = strdup(em->common.targetagency);
 
-        if (em->common.encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+        if (em->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
             em->common.encryptkey_len > 0) {
             expmsg->data.cept.encryptkey_len = em->common.encryptkey_len;
             expmsg->data.cept.encryptkey =
