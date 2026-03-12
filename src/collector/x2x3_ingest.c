@@ -237,7 +237,7 @@ static inline void update_intercept_common(published_intercept_msg_t *src,
 
 	/* binary key: copy bytes or clear */
     if (src->encryptkey && src->encryptkey_len > 0 &&
-        dst->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        dst->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         dst->encryptkey_len = openli_copy_encryptkey(
             dst->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
             src->encryptkey, src->encryptkey_len);
@@ -286,7 +286,7 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
 
     /* move binary key from published msg into inline buffer */
     if (src->encryptkey && src->encryptkey_len > 0 &&
-        dst->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        dst->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         dst->encryptkey_len = openli_move_encryptkey(
             dst->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,
             &src->encryptkey, src->encryptkey_len);

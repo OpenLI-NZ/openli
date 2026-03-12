@@ -306,7 +306,7 @@ int encode_templated_ipmmcc(wandder_encoder_t *encoder,
         }
     }
 
-    if (job->encryptmethod != OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(encoder, encrypt,
                 res, hdr_tplate,
                 ipmmcc_tplate->cc_content.cc_wrap,

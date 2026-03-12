@@ -60,7 +60,7 @@ static inline void update_intercept_common(intercept_common_t *found,
     replace->targetagency = tmp;
 
     /* copy binary key + set length; clear when encryption is NONE */
-    if (replace->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+    if (replace->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
         replace->encryptkey_len > 0) {
         found->encryptkey_len = openli_copy_encryptkey(
             found->encryptkey, OPENLI_MAX_ENCRYPTKEY_LEN,

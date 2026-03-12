@@ -84,7 +84,7 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     }
     expmsg->data.cept.xid_count = common->xid_count;
 
-    if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+    if (common->encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
         common->encryptkey_len > 0) {
 		expmsg->data.cept.encryptkey_len = common->encryptkey_len;
 		expmsg->data.cept.encryptkey =
