@@ -541,19 +541,6 @@ key-value elements:
                        "MicroSecondTimeStamp" field, and "generalized" to use
                        the "GeneralizedTime" field. The default is
                        "microseconds".
-* `payloadencryption`     -- Specifies if the CC and IRI contents sent to this
-                             agency should be encrypted and, if so, which
-                             encryption method to use. If set to "none", no
-                             encryption is performed.
-                             The only encryption method supported right now is
-                             "aes-192-cbc".
-                             The default setting is "none".
-* `encryptionkey`         -- The encryption key to use when encrypting CC and
-                             IRI contents. This option is mandatory if
-                             `payloadencryption` is NOT set to "none". The
-                             ideal key length is 24 characters. Shorter keys
-                             will be padded with null bytes, longer keys will be
-                             truncated to 24 characters.
 * `integrity` -- a YAML mapping object that defines whether integrity check
                  messages should be sent to this agency, and how these messages
                  should be generated.
@@ -780,22 +767,21 @@ All intercept types also support the following optional key-value elements:
                              If set to "cconly", then only CCs will be produced
                              by OpenLI for this intercept.
                              The default setting is "all".
-* `payloadencryption`     -- Specifies if the CC and IRI contents should be
-                             encrypted and, if so, which encryption method to
-                             use. If set to "none", no encryption is performed.
-                             The encryption method supported right now is
+* `payloadencryption`     -- Specifies if the CC and IRI contents for this
+                             intercept should be encrypted and, if so, which
+                             encryption method to use. If set to "none", no
+                             encryption is performed.
+                             The only encryption method supported right now is
                              "aes-192-cbc".
                              The default setting is "none".
 * `encryptionkey`         -- The encryption key to use when encrypting CC and
                              IRI contents. This option is mandatory if
                              `payloadencryption` is NOT set to "none". The
-                             ideal key length is 24 characters. Shorter keys
-                             will be padded with null bytes, longer keys will be
-                             truncated to 24 characters.
-
-Note that encryption configuration provided at the intercept level will
-override any encryption configuration that has been set at the agency level
-for the agency that the intercept is destined for.
+                             required key length is 24 octets. Keys should
+                             be specified beginning with the characters '0x',
+                             followed by the hexadecimal representation of the
+                             key octets (i.e. 48 ASCII characters, 2 per
+                             octet, in the range 0-9A-F).
 
 ---
 
