@@ -210,8 +210,8 @@ ipintercepts:
    mobileident: "msisdn"        # Intercept sessions where the MSISDN matches
                                 # the "user" value
    payloadencryption: "aes-192-cbc"     # Encrypt IP content using AES-192-CBC
-   encryptionkey: "alongencryptionkeyisgood"  # Key to use for encryption,
-                                              # should be provided by the agency
+    # Key to use for encryption, should be provided by the agency
+   encryptionkey: "0xd130001df958c0fba209c471dc51efcdbb142a9b0ecdbe1d"
 
 # This intercept demonstrates how to configure an intercept for a target that
 # has static IP allocations. The target has both an IPv4 and IPv6 allocation
