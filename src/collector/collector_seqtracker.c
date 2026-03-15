@@ -467,7 +467,6 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.origreq = recvd;
 	job.liid = strdup(liid);
     job.authcc = strdup(authcc);
-    job.delivcc = strdup(delivcc);
     job.cinstr = strdup(cinseq->cin_string);
     job.cin = (int64_t)cinseq->cin;
     job.cept_version = intstate->version;
@@ -479,6 +478,11 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;
 
+    if (delivcc) {
+        job.delivcc = strdup(delivcc);
+    } else {
+        job.delivcc = NULL;
+    }
     /* TODO we should be able to store this index per LIID, alongside its
      * encryption and integrity check state so we don't have to re-calculate
      * it every time

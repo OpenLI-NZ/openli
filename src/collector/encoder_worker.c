@@ -457,7 +457,8 @@ static void check_agency_digest_config(openli_encoder_t *enc,
             strlen(agmap->agencyid), agdigest);
 
     if (!agdigest) {
-        if (found->no_agency_map_warning == 0) {
+        if (found->no_agency_map_warning == 0 &&
+                strcmp(agmap->agencyid, "pcapdisk") != 0) {
             logger(LOG_INFO, "OpenLI Collector: encoder worker %d does not have digest configuration for agency %s, cannot produce integrity checks for LIID %s",
                     enc->workerid, agmap->agencyid, found->liid_key);
             found->no_agency_map_warning = 1;
@@ -490,7 +491,9 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
     found = calloc(1, sizeof(encoder_liid_state_t));
     found->liid_key = strdup(liid);
     found->authcc = strdup(authcc);
-    found->delivcc = strdup(delivcc);
+    if (delivcc) {
+        found->delivcc = strdup(delivcc);
+    }
     found->no_agency_map_warning = 0;
     found->last_agency_check = 0;
     memset(&found->digest_config, 0, sizeof(found->digest_config));
