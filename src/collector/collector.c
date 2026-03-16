@@ -2187,6 +2187,8 @@ static void init_collector_global(collector_global_t *glob) {
     glob->email_timeouts.imap = 30;
     glob->mask_imap_creds = 1;      // defaults to "enabled"
     glob->mask_pop3_creds = 1;      // defaults to "enabled"
+    glob->allow_imap_id_overrides = 0;  // defaults to "disabled"
+    glob->delayed_imap_id_override = 1; // defaults to "enabled"
     glob->default_email_domain = NULL;
     glob->email_forwarding_headers = NULL;
     glob->email_ingest_use_targetid = 0; // defaults to "disabled"   XXX for now
@@ -2291,6 +2293,14 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (glob->mask_pop3_creds) {
         logger(LOG_INFO, "Email interception: rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
     }
+
+    if (glob->allow_imap_id_overrides) {
+        logger(LOG_INFO, "Email interception: allowing IMAP ID commands to override the server and client IP addresses");
+        if (glob->delayed_imap_id_override) {
+            logger(LOG_INFO, "Email interception: collector will wait for an subsequent ID command before generating login IRIs");
+        }
+    }
+
 
     if (glob->default_email_domain) {
         logger(LOG_INFO, "Using '%s' as the default email domain",
@@ -2492,6 +2502,14 @@ static int reload_collector_config(collector_global_t *glob,
         }
     }
 
+    if (glob->allow_imap_id_overrides != newstate.allow_imap_id_overrides) {
+        if (newstate.allow_imap_id_overrides) {
+            logger(LOG_INFO, "OpenLI: Email interception: IMAP ID commands can be used to override server and client IP addresses");
+        } else {
+            logger(LOG_INFO, "OpenLI: Email interception: IMAP ID commands can no longer be used to override server and client IP addresses");
+        }
+    }
+
     if (glob->mask_pop3_creds != newstate.mask_pop3_creds) {
         if (newstate.mask_pop3_creds) {
             logger(LOG_INFO, "OpenLI: Email interception: rewriting POP3 plain text passwords to avoid leaking passwords to agencies");
@@ -2532,6 +2550,8 @@ static int reload_collector_config(collector_global_t *glob,
 
     glob->mask_imap_creds = newstate.mask_imap_creds;
     glob->mask_pop3_creds = newstate.mask_pop3_creds;
+    glob->allow_imap_id_overrides = newstate.allow_imap_id_overrides;
+    glob->delayed_imap_id_override = newstate.delayed_imap_id_override;
     glob->email_ingest_use_targetid = newstate.email_ingest_use_targetid;
     glob->email_timeouts.smtp = newstate.email_timeouts.smtp;
     glob->email_timeouts.imap = newstate.email_timeouts.imap;
@@ -2895,6 +2915,10 @@ int main(int argc, char *argv[]) {
                     &(glob->email_config_mutex);
             glob->emailworkers[i].mask_imap_creds =
                     &(glob->mask_imap_creds);
+            glob->emailworkers[i].allow_imap_id_override =
+                    &(glob->allow_imap_id_overrides);
+            glob->emailworkers[i].delayed_imap_id_override =
+                    &(glob->delayed_imap_id_override);
             glob->emailworkers[i].mask_pop3_creds = &(glob->mask_pop3_creds);
             glob->emailworkers[i].email_ingest_use_targetid =
                     &(glob->email_ingest_use_targetid);

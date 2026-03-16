@@ -366,6 +366,8 @@ typedef struct collector_global {
     openli_email_timeouts_t email_timeouts;
     uint8_t mask_imap_creds;
     uint8_t mask_pop3_creds;
+    uint8_t allow_imap_id_overrides;
+    uint8_t delayed_imap_id_override;
     char *default_email_domain;
     string_set_t *email_forwarding_headers;
     uint8_t email_ingest_use_targetid;
