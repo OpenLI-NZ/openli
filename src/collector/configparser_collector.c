@@ -688,6 +688,24 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value,
+                    "allowImapIdOverrides") == 0) {
+
+        glob->allow_imap_id_overrides = config_check_onoff((char *)value->data.scalar.value);
+        return 0;
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "delayedImapLoginIri") == 0) {
+
+        glob->delayed_imap_id_override = config_check_onoff((char *)value->data.scalar.value);
+        return 0;
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
                     "maskimapcreds") == 0) {
 
         glob->mask_imap_creds = config_check_onoff((char *)value->data.scalar.value);

@@ -31,6 +31,8 @@
 #include <b64/cdecode.h>
 #include <b64/cencode.h>
 #include <zlib.h>
+#include <stdbool.h>
+#include <ctype.h>
 
 #include "email_worker.h"
 #include "logger.h"
@@ -131,6 +133,10 @@ typedef struct imapsession {
     size_t auth_read_from;
     openli_email_auth_type_t auth_type;
 
+    uint8_t allow_id_to_override_ips;
+    uint8_t wait_for_followup_id;
+    bool login_pending;
+
     struct compress_state decompress_server;
     struct compress_state decompress_client;
 
@@ -212,25 +218,16 @@ static int update_deflate_ccs(imap_session_t *imapsess, int start, int end,
 }
 
 static int extract_imap_email_sender(emailsession_t *sess,
-        imap_session_t *imapsess, imap_command_t *comm) {
+        imap_session_t *imapsess, const char *content, size_t contentlen) {
 
     int r = 0;
     char *extracted = NULL;
     char *safecopy;
-    int copylen;
-    char *search = (char *)(comm->commbuffer + comm->reply_start);
-    char *end = (char *)(comm->commbuffer + comm->reply_end);
 
-    copylen = (end - search) + 1;
-    safecopy = calloc(copylen, sizeof(char));
-    memcpy(safecopy, search, (end - search));
+    safecopy = calloc(contentlen + 1, sizeof(char));
+    memcpy(safecopy, content, contentlen);
 
     r = extract_email_sender_from_body(safecopy, &extracted);
-
-    if (r == 0 || extracted == NULL) {
-        free(safecopy);
-        return r;
-    }
 
     imapsess->mail_sender = extracted;
     add_email_participant(sess, imapsess->mail_sender, 1);
@@ -242,12 +239,15 @@ static int extract_imap_email_sender(emailsession_t *sess,
 static int complete_imap_append(openli_email_worker_t *state,
         emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
 
+    char *search = (char *)(comm->commbuffer + comm->reply_start);
+    char *end = (char *)(comm->commbuffer + comm->reply_end);
+
     if (imapsess->mailbox == NULL) {
         return 1;
     }
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
-        extract_imap_email_sender(sess, imapsess, comm);
+        extract_imap_email_sender(sess, imapsess, search, end - search);
         if (imapsess->mail_sender) {
             generate_email_upload_success_iri(state, sess, imapsess->mailbox);
         }
@@ -263,6 +263,93 @@ static int complete_imap_append(openli_email_worker_t *state,
 
     return 1;
 
+}
+
+static void walk_fetch_reply(openli_email_worker_t *state,
+        emailsession_t *sess, imap_session_t *imapsess, imap_command_t *comm) {
+
+    char *search = (char *)(comm->commbuffer + comm->reply_start);
+    char *end = (char *)(comm->commbuffer + comm->reply_end);
+    const char *ptr;
+    //int r = 0;
+    //char *extracted = NULL;
+    char *safecopy;
+    int copylen;
+
+    copylen = (end - search) + 1;
+    safecopy = calloc(copylen, sizeof(char));
+    memcpy(safecopy, search, (end - search));
+
+    ptr = safecopy;
+
+    (void)state;
+    (void)sess;
+    (void)imapsess;
+
+    // TODO make this a bit tidier?
+    while (*ptr) {
+        if (*ptr == '*') {
+            const char *msgstart = ptr;
+            const char *cursor = ptr + 1;
+            int nesting = 0;
+            size_t msg_len = 0;
+
+            // skip sequence number
+            while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+            while (*cursor && isdigit((unsigned char)*cursor)) cursor++;
+            while (*cursor && isspace((unsigned char)*cursor)) cursor++;
+
+            if (strncasecmp(cursor, "FETCH", 5) == 0) {
+                cursor += 5;
+                while (*cursor && *cursor != '(') cursor ++;
+
+                if (*cursor == '\0') {
+                    break;
+                }
+                while (*cursor) {
+                    if (*cursor == '(') {
+                        nesting ++;
+                    } else if (*cursor == ')') {
+                        nesting --;
+                        if (nesting == 0) {
+                            // End of the message, skip to \n
+                            while (*cursor && *cursor != '\n') cursor ++;
+                            if (*cursor == '\0') break;
+                            cursor ++;
+
+                            msg_len = cursor - msgstart;
+                            extract_imap_email_sender(sess, imapsess, msgstart,
+                                    msg_len);
+                            if (imapsess->mail_sender) {
+                                generate_email_partial_download_success_iri(
+                                        state, sess, imapsess->mailbox);
+                            }
+
+                            ptr = cursor;
+                            goto next_msg;
+                        }
+                    } else if (*cursor == '{') {
+                        // use any literal byte counts to skip ahead
+                        char *endlit;
+                        const char *data_start;
+                        long lit_len = strtoul(cursor + 1, &endlit, 10);
+
+                        if (*endlit == '}') {
+                            data_start = strchr(endlit, '\n');
+                            if (data_start) {
+                                cursor = data_start + 1 + lit_len;
+                                continue;
+                            }
+                        }
+                    }
+                    cursor ++;
+                }
+            }
+        }
+        ptr ++;
+next_msg:
+    }
+    free(safecopy);
 }
 
 static int complete_imap_fetch(openli_email_worker_t *state,
@@ -283,11 +370,9 @@ static int complete_imap_fetch(openli_email_worker_t *state,
      */
 
     if (strcmp(comm->imap_reply, "OK") == 0) {
-        extract_imap_email_sender(sess, imapsess, comm);
-        if (imapsess->mail_sender) {
-            generate_email_partial_download_success_iri(state, sess,
-                    imapsess->mailbox);
-        }
+        walk_fetch_reply(state, sess, imapsess, comm);
+        /*
+        */
     } else {
         generate_email_partial_download_failure_iri(state, sess,
                 imapsess->mailbox);
@@ -314,7 +399,11 @@ static int complete_imap_authentication(openli_email_worker_t *state,
         sess->currstate = OPENLI_IMAP_STATE_AUTHENTICATED;
         /* generate login success iri */
 
-        generate_email_login_success_iri(state, sess, imapsess->mailbox);
+        if (!imapsess->wait_for_followup_id) {
+            generate_email_login_success_iri(state, sess, imapsess->mailbox);
+        } else {
+            imapsess->login_pending = true;
+        }
     } else {
         sess->currstate = OPENLI_IMAP_STATE_PRE_AUTH;
 
@@ -1377,7 +1466,8 @@ static int find_command_end(emailsession_t *sess, imap_session_t *imapsess) {
     /* if command was ID, update session endpoint details using
      * command content */
 
-    if (imapsess->next_command_type == OPENLI_IMAP_COMMAND_ID) {
+    if (imapsess->next_command_type == OPENLI_IMAP_COMMAND_ID &&
+            imapsess->allow_id_to_override_ips) {
         parse_id_command(sess, imapsess);
     }
 
@@ -1424,6 +1514,25 @@ static int find_reply_end(openli_email_worker_t *state,
     if (comm->imap_command == NULL) {
         reset_imap_saved_command(comm);
         return r;
+    }
+
+    if (strcasecmp(comm->imap_command, "ID") == 0) {
+        /* We got the follow up ID with the "real" client and server IP
+         * addresses, so we can finally send our login IRI with the
+         * correct addresses in it */
+        if (imapsess->login_pending) {
+            generate_email_login_success_iri(state, sess, imapsess->mailbox);
+            imapsess->login_pending = false;
+        }
+    } else if (imapsess->login_pending) {
+        /* We didn't see an ID immediately after the authentication completed,
+         * but the configuration told us to expect one.
+         *
+         * Best option here is to send the login success IRI anyway, even if
+         * the endpoint IP addresses might be wrong.
+         */
+         generate_email_login_success_iri(state, sess, imapsess->mailbox);
+         imapsess->login_pending = false;
     }
 
     if (strcasecmp(comm->imap_command, "LOGOUT") == 0) {
@@ -2035,6 +2144,19 @@ int update_imap_session_by_ingestion(openli_email_worker_t *state,
         imapsess->deflate_ccs = NULL;
         imapsess->deflate_ccs_size = 0;
         imapsess->deflate_ccs_current = 0;
+
+        pthread_rwlock_rdlock(state->glob_config_mutex);
+
+        if ((*(state->allow_imap_id_override)) &&
+                (*(state->delayed_imap_id_override))) {
+            imapsess->wait_for_followup_id = 1;
+        }
+        if (*(state->allow_imap_id_override)) {
+            imapsess->allow_id_to_override_ips = 1;
+        }
+
+
+        pthread_rwlock_unlock(state->glob_config_mutex);
 
         for (i = 0; i < imapsess->commands_size; i++) {
             init_imap_command(&(imapsess->commands[i]));

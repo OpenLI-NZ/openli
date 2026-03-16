@@ -164,6 +164,8 @@ typedef struct openli_email_worker {
     uint8_t *mask_imap_creds;
     uint8_t *mask_pop3_creds;
     uint8_t *email_ingest_use_targetid;
+    uint8_t *allow_imap_id_override;
+    uint8_t *delayed_imap_id_override;
 
     /* The default domain to apply to authenticated usernames that do not
      * include a domain.
