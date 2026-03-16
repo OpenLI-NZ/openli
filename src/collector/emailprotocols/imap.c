@@ -347,7 +347,7 @@ static void walk_fetch_reply(openli_email_worker_t *state,
             }
         }
         ptr ++;
-next_msg:
+next_msg: ;
     }
     free(safecopy);
 }
