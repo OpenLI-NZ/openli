@@ -267,6 +267,15 @@ The basic option keys are:
                        credentials in IMAP traffic that have been
                        intercepted using an email intercept with "XXX".
                        Defaults to "yes".
+* allowimapidoverrides -- set to 'yes' to enable IMAP ID commands to
+                          override the IP addresses and ports for an IMAP
+                          session. Defaults to "no".
+* delayedimaploginiri -- set to 'yes' to force OpenLI to not send the email
+                         login IRI for IMAP sessions immediately, but instead
+                         to wait for the next IMAP command (which may be an ID
+                         command that provides the correct server and client
+                         IP addresses). Has no effect if allowimapidoverrides
+                         is disabled, otherwise defaults to "yes".
 * defaultemaildomain -- during email interception, any authenticated email
                         users that do not explicitly include their domain
                         in their username will be assumed to be using the
