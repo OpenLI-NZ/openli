@@ -58,6 +58,20 @@ maskimapcreds: yes
 # POP3 traffic captured using an email intercept, not an IP intercept.
 maskpop3creds: yes
 
+# Set this to yes if your IMAP service is using custom ID commands to
+# inform OpenLI of the real IP addresses and ports being used by an
+# IMAP session. The information in the ID command will replace the
+# IP addresses and ports extracted from the packet headers.
+allowimapidoverrides: no
+
+
+# Set this to yes if you want OpenLI to slightly delay the creation of
+# email login IRI events for IMAP sessions to allow for the possible
+# arrival of a custom ID command that contains critical information that
+# should be included in that IRI. Has no effect unless the
+# 'allowimapidoverrides' option above is set to yes.
+delayedimaploginiri: yes
+
 # Email users who supply a domain-less username during authentication will
 # be assumed to have an email address of '<username>@<defaultemaildomain>'.
 # Obviously, you would want to replace this config option with the domain
