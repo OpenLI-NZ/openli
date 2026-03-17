@@ -181,6 +181,27 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
     return 0;
 }
 
+static void replace_job_iritype(openli_export_recv_t *recvd,
+        etsili_iri_type_t newiri) {
+    switch(recvd->type) {
+        case OPENLI_EXPORT_IPMMIRI:
+            recvd->data.ipmmiri.iritype = newiri;
+            break;
+        case OPENLI_EXPORT_IPIRI:
+            recvd->data.ipiri.iritype = newiri;
+            break;
+        case OPENLI_EXPORT_EMAILIRI:
+            recvd->data.emailiri.iritype = newiri;
+            break;
+        case OPENLI_EXPORT_EPSIRI:
+            recvd->data.mobiri.iritype = newiri;
+            break;
+        default:
+            break;
+    }
+}
+
+
 static inline etsili_iri_type_t extract_iritype_from_job(
         openli_export_recv_t *recvd) {
     uint8_t special = 255;
@@ -208,11 +229,11 @@ static inline etsili_iri_type_t extract_iritype_from_job(
         // we'll encode this as IRI-Report, but for the purposes of
         // tracking if we've sent an "END" or not then we should consider
         // this to be one
-        return ETSILI_IRI_END;
+        return ETSILI_IRI_END_DISCARDABLE;
     } else if (special == OPENLI_IPIRI_STARTWHILEACTIVE) {
-        return ETSILI_IRI_BEGIN;
+        return ETSILI_IRI_BEGIN_DISCARDABLE;
     } else if (special == OPENLI_IPIRI_SILENTLOGOFF) {
-        return ETSILI_IRI_END;
+        return ETSILI_IRI_END_DISCARDABLE;
     }
 
     // special flag is not set, so this is just a standard IRI
@@ -633,20 +654,32 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         seqno = &(cinseq->cc_seqno);
 
 	} else {
-        if (iritype == ETSILI_IRI_BEGIN) {
-            if (cinseq->iri_begin) {
+        if (iritype == ETSILI_IRI_BEGIN ||
+                iritype == ETSILI_IRI_BEGIN_DISCARDABLE) {
+            if (cinseq->iri_begin && iritype == ETSILI_IRI_BEGIN) {
                 // already produced a BEGIN for this session/call
+                iritype = ETSILI_IRI_CONTINUE;
+                replace_job_iritype(recvd, iritype);
+            } else if (cinseq->iri_begin) {
+                // duplicate, please discard
                 free_published_message(recvd);
                 return 0;
+            } else {
+                cinseq->iri_begin = 1;
             }
-            cinseq->iri_begin = 1;
-        } else if (iritype == ETSILI_IRI_END) {
-            if (cinseq->iri_end) {
+        } else if (iritype == ETSILI_IRI_END ||
+                iritype == ETSILI_IRI_END_DISCARDABLE) {
+            if (cinseq->iri_end && iritype == ETSILI_IRI_END) {
                 // already produced a END for this session/call
+                iritype = ETSILI_IRI_REPORT;
+                replace_job_iritype(recvd, iritype);
+            } else if (cinseq->iri_end) {
+                // duplicate, please discard
                 free_published_message(recvd);
                 return 0;
+            } else {
+                cinseq->iri_end = 1;
             }
-            cinseq->iri_end = 1;
         }
         seqno = &(cinseq->iri_seqno);
 	}
