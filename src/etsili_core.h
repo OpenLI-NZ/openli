@@ -114,7 +114,13 @@ typedef enum {
     ETSILI_IRI_BEGIN = 1,
     ETSILI_IRI_END = 2,
     ETSILI_IRI_CONTINUE = 3,
-    ETSILI_IRI_REPORT = 4
+    ETSILI_IRI_REPORT = 4,
+
+
+    // Internal use only, not to be encoded into ETSI records!
+    ETSILI_IRI_BEGIN_DISCARDABLE = 1000,
+    ETSILI_IRI_END_DISCARDABLE = 1001,
+
 } etsili_iri_type_t;
 
 enum {
