@@ -317,7 +317,7 @@ fi
 
 
 %changelog
-* Thu Jan 15 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.17-1
+* Wed Mar 18 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.17-1
 - Updated for 1.1.17 release
 
 * Thu Dec 18 2025 Shane Alcock <salcock@searchlight.nz> - 1.1.16-1
