@@ -1,11 +1,49 @@
 openli (1.1.17-1) unstable; urgency=medium
 
-  * Fix interception of email communication content when the message
+  * Email: correct interception of email communication content when the message
     includes a large attachment.
-  * Add "nokia-l3" encapsulation type for UDP sink intercepts to
+  * IMAP: FETCH responses that contain multiple mail messages are now
+    fully parsed and IRIs will be generated for each message in the response
+    that has a valid sender. Previously, OpenLI would only generate an IRI
+    for the first message.
+  * Integrity check messages are now encrypted if the corresponding
+    intercept is meant to be encrypted.
+  * The hash digests for the signed hash integrity checks now calculated
+    across the entire IntegrityCheck PDU, including the outermost sequence
+    element.
+  * Moved encryption and integrity check computation from the mediator to
+    the collector.
+  * Collector: all encoding jobs for the same LIID are now handled by the same
+    encoder worker thread on the collector (for the purposes of maintaining
+    consistent encryption state).
+  * Encryption: fixed misinterpretation of the encryption implementation
+    standard with regard to the scope of the byteCounter element. Encryption
+    state is now tracked separately for IRIs and CCs within each active
+    encrypted intercept.
+  * Specification of encryption methods and keys at the agency level will no
+    longer have any effect.
+  * UDP sinks: add "nokia-l3" encapsulation type for UDP sink intercepts to
     support Nokia mirroring that does not include any layer 2 headers.
+  * SIP: fix bug where some duplicate proxied SIP messages would not generate
+    the expected IRI records.
+  * IMAP: add configuration option to collector to enable or disable the use
+    of ID commands to override the client and server endpoint details
+    for an IMAP session.
+  * IMAP: add configuration option to delay the email logon IRI for IMAP
+    sessions to allow for an ID command that will be sent after IMAP
+    authentication has completed that contains the correct client and
+    server endpoint details for the IMAP session.
+  * REST API: add x2x3listener/ endpoint to provisioner REST API to allow
+    users to add or remove x2x3 listening sockets for a particular collector.
+  * REST API: add UUID to collector objects, which now acts as an immutable
+    collector identifier instead of the previous one which was based on
+    the operator ID, network element ID and intercept point ID.
+  * REST API: collectors/ endpoint will now include the full collector
+    configuration as a JSON string.
+  * REST API: a PUT to the collectors/ endpoint can now be used to make
+    modifications to the SIP worker configuration for that collector.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 27 Jan 2026 17:06:49 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 18 Mar 2026 14:04:18 +1300
 
 openli (1.1.16-1) unstable; urgency=medium
 
