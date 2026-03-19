@@ -1097,12 +1097,14 @@ static int respond_collector_auth(provision_state_t *state,
         return -1;
     }
 
-    if (push_ics_signing_key_onto_net_buffer(outgoing,
-            state->integrity_sign_private_key) == -1) {
-        logger(LOG_INFO,
-                "OpenLI provisioner: unable to send ICS private key to new collector on fd %s", pev->fd);
-        pthread_mutex_unlock(&(state->interceptconf.safelock));
-        return -1;
+    if (state->integrity_sign_private_key) {
+        if (push_ics_signing_key_onto_net_buffer(outgoing,
+                state->integrity_sign_private_key) == -1) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: unable to send ICS private key to new collector on fd %s", pev->fd);
+            pthread_mutex_unlock(&(state->interceptconf.safelock));
+            return -1;
+        }
     }
 
     if (push_all_agency_digest_configs(state->interceptconf.leas,
