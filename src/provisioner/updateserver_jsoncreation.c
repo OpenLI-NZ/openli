@@ -602,7 +602,7 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
                 ipaddr = json_object_new_string(sinks[j].ipaddr);
                 port = json_object_new_string(sinks[j].port);
                 lastseen = openli_json_object_new_uint64(sinks[j].lastseen);
-                ident = json_object_new_string(sinks[j].identifier);
+                ident = json_object_new_string(cols[i].colname);
 
                 json_object_object_add(base, "ipaddress", ipaddr);
                 json_object_object_add(base, "port", port);
