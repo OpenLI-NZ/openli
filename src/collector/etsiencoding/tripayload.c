@@ -45,15 +45,13 @@ static int _encode_etsi_integrity_check_payload(
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
     ENC_CSEQUENCE(encoder, 0);          // integrityCheck
     ENC_CSEQUENCE(encoder, 0);          // includedSequenceNumbers
-    ENC_USEQUENCE(encoder);             // start sequence
 
     for (i = 0; i < numseqnos; i++) {
         wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
                 WANDDER_CLASS_UNIVERSAL_PRIMITIVE,
                 WANDDER_TAG_INTEGER, &(inclseqnos[i]), sizeof(int64_t));
     }
-    END_ENCODED_SEQUENCE(encoder, 2);   // End universal sequence
-                                        // End includedSequenceNumbers
+    END_ENCODED_SEQUENCE(encoder, 1);    // End includedSequenceNumbers
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
         datatype_val = 1;
