@@ -1,3 +1,11 @@
+openli (1.1.18-1) unstable; urgency=medium
+
+  * Collector: fix bad encoding of ASN.1 elements that were sequences of
+    primitive types, such as emailRecipients in email IRIs and
+    includeSequenceNumbers in integrity check PDUs.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 24 Mar 2026 14:08:46 +1300
+
 openli (1.1.17-1) unstable; urgency=medium
 
   * Email: correct interception of email communication content when the message
