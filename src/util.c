@@ -187,10 +187,12 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     int optval;
     int flags;
     int success = 0;
-    fd_set fdset;
     socklen_t optlen;
-    struct timeval tv;
     int so_error = 0;
+    int epfd = -1;
+    struct epoll_event ev;
+    struct epoll_event events[1];
+    int nfds = -1;
 
     if (ipstr == NULL || portstr == NULL) {
         logger(LOG_INFO,
@@ -254,23 +256,28 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
 
     connect(sockfd, res->ai_addr, res->ai_addrlen);
 
-    tv.tv_sec = 1;
-    tv.tv_usec = 0;
-    FD_ZERO(&fdset);
-    FD_SET(sockfd, &fdset);
+    epfd = epoll_create1(0);
+    ev.events = EPOLLOUT | EPOLLERR | EPOLLHUP;
+    ev.data.fd = sockfd;
 
-    if (select(sockfd + 1, NULL, &fdset, NULL, &tv) == 1) {
+    if (epoll_ctl(epfd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
+        logger(LOG_INFO, "OpenLI: error trying to setup epoll to monitor new socket connection attempt: %s", strerror(errno));
+        goto failconnect;
+    }
+
+    nfds = epoll_wait(epfd, events, 1, 1000);
+    if (nfds > 0) {
         socklen_t len = sizeof(so_error);
 
-        getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len);
-
-        if (so_error == 0) {
-            success = 1;
+        if (getsockopt(sockfd, SOL_SOCKET, SO_ERROR, &so_error, &len) == 0) {
+            success = (so_error == 0) ? 1: 0;
         } else {
             success = 0;
         }
-    } else {
+    } else if (nfds == 0) {
         so_error = ETIMEDOUT;
+        success = 0;
+    } else {
         success = 0;
     }
 
@@ -302,6 +309,9 @@ failconnect:
     }
 
 endconnect:
+    if (epfd != -1) {
+        close(epfd);
+    }
     freeaddrinfo(res);
     return sockfd;
 }
