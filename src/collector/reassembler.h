@@ -99,6 +99,9 @@ typedef struct ip_reass_stream {
     uint16_t endfrag;
     uint8_t subproto;
     ip_reass_fragment_t *fragments;
+    libtrace_packet_t **packets;
+    int pkt_cnt;
+    int pkt_alloc;
     UT_hash_handle hh;
 } ip_reassemble_stream_t;
 
@@ -138,9 +141,11 @@ ip_reassemble_stream_t *create_new_ipfrag_reassemble_stream(
         ip_streamid_t *ipid, uint8_t proto);
 void destroy_ip_reassemble_stream(ip_reassemble_stream_t *stream);
 int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
-        uint16_t *len, uint8_t *proto);
+        uint16_t *len, uint8_t *proto, libtrace_packet_t ***packets,
+        int *pkt_cnt);
 int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
-        libtrace_packet_t *pkt, uint16_t fragoff, uint8_t moreflag);
+        libtrace_packet_t *pkt, uint16_t fragoff, uint8_t moreflag,
+        uint8_t hold_packet);
 int is_ip_reassembled(ip_reassemble_stream_t *stream);
 int get_ipfrag_ports(ip_reassemble_stream_t *stream, uint16_t *src,
         uint16_t *dest);

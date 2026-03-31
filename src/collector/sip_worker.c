@@ -558,8 +558,6 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
                 SIP_PROCESSING_EXTRACTING_IPS);
         return;
     }
-    baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packet);
-    baseirimsg.data.ipmmiri.dstport = trace_get_destination_port(packet);
 
     do {
         if (packets != NULL) {
@@ -584,6 +582,13 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
         }
         baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
                 sipworker->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
+
+        if (pkt_cnt > 0) {
+            baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packets[0]);
+            baseirimsg.data.ipmmiri.dstport =
+                    trace_get_destination_port(packets[0]);
+        }
+
         if (sipworker_update_sip_state(sipworker, packets, pkt_cnt,
                     &baseirimsg) < 0) {
             handle_bad_sip_update(sipworker, packets, pkt_cnt,
@@ -622,6 +627,9 @@ static void process_received_sip_packet(openli_sip_worker_t *sipworker,
         packet = NULL;        // consumed by the reassembler
     } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
         sip_update_slow_path(sipworker, packet, 1);
+        packet = NULL;
+    } else if (ret == SIP_ACTION_HOLDING) {
+        packet = NULL;
     }
 
     if (packet) {

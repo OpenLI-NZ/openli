@@ -56,6 +56,7 @@ enum {
     SIP_ACTION_USE_PACKET,
     SIP_ACTION_REASSEMBLE_TCP,
     SIP_ACTION_REASSEMBLE_IPFRAG,
+    SIP_ACTION_HOLDING,
 };
 
 enum {
@@ -103,6 +104,8 @@ typedef struct openli_sip_parser {
     uint16_t sipoffset;
     uint16_t siplen;
     tcp_reassemble_stream_t *thisstream;
+    libtrace_packet_t **fragment_packets;
+    int fragment_packet_count;
     uint8_t badsip;
 } openli_sip_parser_t;
 

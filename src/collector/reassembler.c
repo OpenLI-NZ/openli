@@ -270,12 +270,22 @@ ip_reassemble_stream_t *create_new_ipfrag_reassemble_stream(
 
 void destroy_ip_reassemble_stream(ip_reassemble_stream_t *stream) {
     ip_reass_fragment_t *seg, *tmp;
+    int i;
 
     HASH_ITER(hh, stream->fragments, seg, tmp) {
         HASH_DELETE(hh, stream->fragments, seg);
         free(seg->content);
         free(seg);
     }
+    if (stream->packets) {
+        for (i = 0; i < stream->pkt_cnt; i++) {
+            if (stream->packets[i]) {
+                trace_destroy_packet(stream->packets[i]);
+            }
+        }
+        free(stream->packets);
+    }
+    stream->pkt_cnt = 0;
     free(stream);
 }
 
@@ -497,13 +507,15 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
 }
 
 int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
-        libtrace_packet_t *pkt, uint16_t fragoff, uint8_t moreflag) {
+        libtrace_packet_t *pkt, uint16_t fragoff, uint8_t moreflag,
+        uint8_t hold_packet) {
 
     libtrace_ip_t *ipheader;
     uint16_t ethertype, iprem;
     uint32_t rem;
     void *transport;
     ip_reass_fragment_t *newfrag;
+    int i;
 
     /* assumes we already know pkt is IPv4 */
     ipheader = (libtrace_ip_t *)trace_get_layer3(pkt, &ethertype, &rem);
@@ -545,6 +557,18 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
 
         HASH_ADD_KEYPTR(hh, stream->fragments, &(newfrag->fragoff),
                 sizeof(newfrag->fragoff), newfrag);
+        if (hold_packet && pkt) {
+            if (stream->pkt_cnt == stream->pkt_alloc) {
+                stream->packets = realloc(stream->packets,
+                        (stream->pkt_alloc + 4) * sizeof(libtrace_packet_t *));
+                for (i = stream->pkt_alloc; i < stream->pkt_alloc + 4; i++) {
+                    stream->packets[i] = NULL;
+                }
+                stream->pkt_alloc += 4;
+            }
+            stream->packets[stream->pkt_cnt] = pkt;
+            stream->pkt_cnt ++;
+        }
     }
 
     if (!moreflag) {
@@ -738,7 +762,8 @@ int is_ip_reassembled(ip_reassemble_stream_t *stream) {
 }
 
 int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
-        uint16_t *len, uint8_t *proto) {
+        uint16_t *len, uint8_t *proto, libtrace_packet_t ***packets,
+        int *pkt_cnt) {
 
     ip_reass_fragment_t *iter, *tmp;
     uint16_t expfrag = 0;
@@ -781,6 +806,26 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
         /* Still not seen the last fragment */
         *len = 0;
         return 0;
+    }
+
+    /* give all of the packets thus far back to the caller, so
+     * they can decide if they need to "intercept" them -- the
+     * raw packets are only required for pcapdisk intercepts, but
+     * we may not be able to know if the packets are part of a
+     * pcapdisk intercept until after we have reassembled the
+     * initial INVITE.
+     */
+    if (packets) {
+        *packets = NULL;
+        *pkt_cnt = 0;
+    }
+
+    if (packets && stream->pkt_cnt > 0) {
+        *packets = stream->packets;
+        *pkt_cnt = stream->pkt_cnt;
+        stream->packets = calloc(4, sizeof(libtrace_packet_t *));
+        stream->pkt_cnt = 0;
+        stream->pkt_alloc = 4;
     }
 
     *proto = stream->subproto;
