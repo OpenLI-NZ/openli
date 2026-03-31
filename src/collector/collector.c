@@ -1134,7 +1134,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             }
 
             ret = update_ipfrag_reassemble_stream(ipstream, pkt, fragoff,
-                    moreflag);
+                    moreflag, 0);
+
             if (ret < 0) {
                 logger(LOG_INFO, "OpenLI: error while trying to reassemble IP fragment in collector.");
                 return pkt;

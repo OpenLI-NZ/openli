@@ -191,6 +191,11 @@ int parse_next_sip_message(openli_sip_parser_t *p,
                 }
                 gottcpsip = 1;
             } while (!gottcpsip);
+        } else if (p->fragment_packets && p->fragment_packet_count > 0) {
+            *packets = p->fragment_packets;
+            *pkt_cnt = p->fragment_packet_count;
+            p->fragment_packets = NULL;
+            p->fragment_packet_count = 0;
         }
     }
 
@@ -297,7 +302,7 @@ static int _add_sip_packet(openli_sip_parser_t *p, libtrace_packet_t *packet,
 
 static int _add_sip_fragment(openli_sip_parser_t *p,
         ip_reassemble_stream_t *stream, char *completefrag, uint16_t fraglen,
-        struct timeval *tv) {
+        struct timeval *tv, libtrace_packet_t **packets, int pkt_cnt) {
 
     int ret;
 
@@ -316,6 +321,9 @@ static int _add_sip_fragment(openli_sip_parser_t *p,
         p->sipalloced = 1;
         p->siplen = fraglen - sizeof(libtrace_udp_t);
         p->sipoffset = sizeof(libtrace_udp_t);
+        p->fragment_packets = packets;
+        p->fragment_packet_count = pkt_cnt;
+
         return SIP_ACTION_REASSEMBLE_IPFRAG;
     }
 
@@ -371,6 +379,8 @@ int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
         p->sipoffset = 0;
         p->thisstream = NULL;
         p->sipalloced = 0;
+        p->fragment_packets = NULL;
+        p->fragment_packet_count = 0;
         *parser = p;
     } else {
         p = *parser;
@@ -381,10 +391,20 @@ int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
         free(p->sipmessage);
         p->sipalloced = 0;
     }
+
+    if (p->fragment_packet_count > 0 && p->fragment_packets) {
+        int i;
+        for (i = 0; i < p->fragment_packet_count; i++) {
+            trace_destroy_packet(p->fragment_packets[i]);
+        }
+        free(p->fragment_packets);
+    }
     p->thisstream = NULL;
     p->sipmessage = ((char *)content);
     p->siplen = contentlen;
     p->sipoffset = 0;
+    p->fragment_packets = NULL;
+    p->fragment_packet_count = 0;
 
     return SIP_ACTION_USE_PACKET;
 }
@@ -399,6 +419,9 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
     uint16_t fragoff, fraglen;
     struct timeval tstamp;
     ip_reassemble_stream_t *ipstream = NULL;
+    libtrace_packet_t **packets = NULL;
+    int pkt_cnt = 0;
+
 
     if (*parser == NULL) {
     	p = (openli_sip_parser_t *)malloc(sizeof(openli_sip_parser_t));
@@ -412,6 +435,8 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         p->sipoffset = 0;
         p->thisstream = NULL;
         p->sipalloced = 0;
+        p->fragment_packets = NULL;
+        p->fragment_packet_count = 0;
         *parser = p;
     } else {
         p = *parser;
@@ -447,7 +472,7 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         }
 
         ret = update_ipfrag_reassemble_stream(ipstream, packet, fragoff,
-                moreflag);
+                moreflag, 1);
         if (ret < 0) {
             if (logallowed) {
                 logger(LOG_INFO, "OpenLI: unable to update IP stream for received SIP packet.");
@@ -456,7 +481,7 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         }
         if (ret == 0) {
             ret = get_next_ip_reassembled(ipstream, &completefrag, &fraglen,
-                    &proto);
+                    &proto, &packets, &pkt_cnt);
             if (ret < 0) {
                 return SIP_ACTION_ERROR;
             } else if (ret == 0) {
@@ -464,7 +489,7 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
                 if (completefrag) {
                     free(completefrag);
                 }
-                return SIP_ACTION_IGNORE;
+                return SIP_ACTION_HOLDING;
             }
             /* complete fragment in completefrag */
             isfrag = 1;
@@ -477,7 +502,8 @@ int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         return _add_sip_packet(p, packet, &tstamp);
     } else {
         assert(ipstream != NULL);
-        ret = _add_sip_fragment(p, ipstream, completefrag, fraglen, &tstamp);
+        ret = _add_sip_fragment(p, ipstream, completefrag, fraglen, &tstamp,
+                packets, pkt_cnt);
         remove_ipfrag_reassemble_stream(p->ipreass, ipstream);
         return ret;
     }
@@ -502,6 +528,12 @@ void release_sip_parser(openli_sip_parser_t *parser) {
     }
     if (parser->sipmessage && parser->sipalloced) {
         free(parser->sipmessage);
+    }
+    if (parser->fragment_packets) {
+        for (int i = 0; i < parser->fragment_packet_count; i++) {
+            trace_destroy_packet(parser->fragment_packets[i]);
+        }
+        free(parser->fragment_packets);
     }
     free(parser);
 

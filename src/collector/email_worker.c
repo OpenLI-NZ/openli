@@ -179,7 +179,7 @@ static int handle_fragments(openli_email_worker_t *state,
     }
 
     r = update_ipfrag_reassemble_stream(ipstream, pkt, fraginfo->fragoff,
-            fraginfo->moreflag);
+            fraginfo->moreflag, 0);
     if (r < 0) {
         logger(LOG_INFO, "OpenLI: error while trying to reassemble IP fragment in email worker thread");
         return -1;
@@ -188,7 +188,7 @@ static int handle_fragments(openli_email_worker_t *state,
     fraginfo->src_port = fraginfo->dest_port = 0;
 
     if ((r = get_next_ip_reassembled(ipstream, &(fraginfo->fragbuffer),
-            &(fraglen), &proto)) <= 0) {
+            &(fraglen), &proto, NULL, NULL)) <= 0) {
         return r;
     }
 
