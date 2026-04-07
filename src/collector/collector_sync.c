@@ -79,6 +79,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->sipconfig_mutex = &(glob->sipconfig_mutex);
     sync->glob_xinputs = &(glob->x_inputs);
     sync->xinput_mutex = &(glob->x_input_mutex);
+    sync->sip_call_state = &(glob->sip_call_state);
+    sync->sip_call_state_mutex = &(glob->sip_call_state_mutex);
 
     sync->digest_config = &(glob->digest_config);
     sync->digest_config_mutex = &(glob->digestconfig_mutex);

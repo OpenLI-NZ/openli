@@ -407,6 +407,33 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
     return dir;
 }
 
+static voipsessmap_t *update_cin_sess_map(voipintercept_t *vint,
+        char *session_id, voipintshared_t *vshared, char *targetuser,
+        char *targetrealm) {
+
+    voipsessmap_t *newsessmap;
+    newsessmap = (voipsessmap_t *)calloc(1, sizeof(voipsessmap_t));
+    if (!newsessmap) {
+        exit(-2);
+    }
+    newsessmap->sessionid = strdup(session_id);
+    newsessmap->username = strdup(targetuser);
+    if (targetrealm) {
+        newsessmap->realm = strdup(targetrealm);
+    } else {
+        newsessmap->realm = NULL;
+    }
+    newsessmap->shared = vshared;
+    if (newsessmap->shared) {
+        newsessmap->shared->refs ++;
+    }
+
+    HASH_ADD_KEYPTR(hh, vint->cin_sess_map, newsessmap->sessionid,
+            strlen(newsessmap->sessionid), newsessmap);
+    return newsessmap;
+}
+
+
 static voipsdpmap_t *update_cin_sdp_map(voipintercept_t *vint,
         sip_sdp_identifier_t *sdpo, voipintshared_t *vshared, char *targetuser,
         char *targetrealm) {
@@ -488,6 +515,30 @@ static voipcinmap_t *update_cin_callid_map(voipcinmap_t **cinmap,
     HASH_ADD_KEYPTR(hh_callid, *cinmap, newcinmap->callid,
             strlen(newcinmap->callid), newcinmap);
     return newcinmap;
+}
+
+static void remove_cin_sdpkey_from_map(voipsdpmap_t **cinmap,
+        sip_sdp_identifier_t *sdpo) {
+
+    voipsdpmap_t *s;
+    HASH_FIND(hh_sdp, *cinmap, sdpo, sizeof(sip_sdp_identifier_t), s);
+    if (s) {
+        HASH_DELETE(hh_sdp, *cinmap, s);
+        if (s->shared) {
+            s->shared->refs --;
+            if (s->shared->refs == 0) {
+                free(s->shared);
+            }
+            if (s->username) {
+                free(s->username);
+            }
+            if (s->realm) {
+                free(s->realm);
+            }
+
+            free(s);
+        }
+    }
 }
 
 static void remove_cin_callid_from_map(voipcinmap_t **cinmap, char *callid) {
@@ -613,7 +664,7 @@ static rtpstreaminf_t *create_new_voipcin(rtpstreaminf_t **activecins,
 static voipintshared_t *create_new_voip_session(openli_sip_worker_t *sipworker,
         char *callid, sip_sdp_identifier_t *sdpo, voipintercept_t *vint,
         openli_sip_identity_t *targetuser, rtpstreaminf_t **thisrtp,
-        struct timeval *tv) {
+        struct timeval *tv, char *session_id) {
 
     uint32_t cin_id = 0;
     voipintshared_t *vshared = NULL;
@@ -652,6 +703,18 @@ static voipintshared_t *create_new_voip_session(openli_sip_worker_t *sipworker,
         remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
         remove_cin_callid_from_map(&(sipworker->knowncallids), callid);
 
+        free(vshared);
+        return NULL;
+    }
+
+    if (session_id && update_cin_sess_map(vint, session_id, vshared,
+                targetuser->username, targetuser->realm) == NULL) {
+
+        if (sdpo) {
+            remove_cin_sdpkey_from_map(&(vint->cin_sdp_map), sdpo);
+        }
+        remove_cin_callid_from_map(&(vint->cin_callid_map), callid);
+        remove_cin_callid_from_map(&(sipworker->knowncallids), callid);
         free(vshared);
         return NULL;
     }
@@ -742,13 +805,15 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
 static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
         voipintercept_t *vint, char *callid, sip_sdp_identifier_t *sdpo,
         etsili_iri_type_t *iritype, uint32_t *cin, uint8_t trust_sip_from,
-        struct timeval *tv, openli_sip_identity_set_t *all_identities) {
+        struct timeval *tv, openli_sip_identity_set_t *all_identities,
+        char *session_id) {
 
     openli_sip_identity_t *matched = NULL;
     voipintshared_t *vshared;
     voipcinmap_t *lookup;
     rtpstreaminf_t *thisrtp;
     voipsdpmap_t *lookup_sdp = NULL;
+    voipsessmap_t *lookup_sessid = NULL;
     char rtpkey[256];
 
     vshared = NULL;
@@ -759,6 +824,11 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     if (!sipworker->shared->ignore_sdpo_matches && sdpo != NULL) {
         HASH_FIND(hh_sdp, vint->cin_sdp_map, sdpo,
                 sizeof(sip_sdp_identifier_t), lookup_sdp);
+    }
+
+    if (!sipworker->shared->ignore_sessionid_matches && session_id) {
+        HASH_FIND(hh, vint->cin_sess_map, session_id, strlen(session_id),
+                lookup_sessid);
     }
     pthread_rwlock_unlock(sipworker->shared_mutex);
 
@@ -773,22 +843,48 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
                 sipworker->sipparser->badsip = 1;
                 return NULL;
             }
+        } else {
+            if (sdpo) {
+                update_cin_sdp_map(vint, sdpo, lookup->shared, lookup->username,
+                        lookup->realm);
+            }
         }
-        if (sdpo) {
-            update_cin_sdp_map(vint, sdpo, lookup->shared, lookup->username,
-                    lookup->realm);
+
+        if (!lookup_sessid && session_id) {
+            update_cin_sess_map(vint, session_id, lookup->shared,
+                    lookup->username, lookup->realm);
         }
+
         lookup->lastsip = tv->tv_sec;
         *iritype = ETSILI_IRI_CONTINUE;
         vshared = lookup->shared;
-    } else if (lookup_sdp) {
-        /* The SDP identifiers match but the call ID is new, so this must
-         * be a new leg for a call we have already seen
-         */
-        update_cin_callid_map(&(vint->cin_callid_map), callid,
-                lookup_sdp->shared, lookup_sdp->username, lookup_sdp->realm,
-                tv);
-        vshared = lookup_sdp->shared;
+    } else if (lookup_sdp || lookup_sessid) {
+        char *username = NULL;
+        char *realm = NULL;
+        if (lookup_sdp) {
+            /* The SDP identifiers match but the call ID is new, so this must
+             * be a new leg for a call we have already seen
+             */
+            update_cin_callid_map(&(vint->cin_callid_map), callid,
+                    lookup_sdp->shared, lookup_sdp->username, lookup_sdp->realm,
+                    tv);
+            realm = lookup_sdp->realm;
+            username = lookup_sdp->username;
+            vshared = lookup_sdp->shared;
+        }
+        if (lookup_sessid) {
+            /* The Session-ID header matches a known existing Session-ID
+             * so let's combine the two legs together
+             */
+            update_cin_callid_map(&(vint->cin_callid_map), callid,
+                    lookup_sessid->shared, lookup_sessid->username,
+                    lookup_sessid->realm, tv);
+            realm = lookup_sessid->realm;
+            username = lookup_sessid->username;
+            vshared = lookup_sessid->shared;
+        }
+        update_cin_callid_map(&(sipworker->knowncallids), callid, NULL,
+                username, realm, tv);
         *iritype = ETSILI_IRI_CONTINUE;
     } else {
         /* Call is definitely new, so check if any of the identities in the
@@ -800,7 +896,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
             return NULL;
         }
         vshared = create_new_voip_session(sipworker, callid, NULL, vint,
-                matched, &thisrtp, tv);
+                matched, &thisrtp, tv, session_id);
         *iritype = ETSILI_IRI_BEGIN;
     }
 
@@ -866,6 +962,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
     openli_sip_identity_set_t all_identities;
     char *invitecseq = NULL;
     uint8_t dir = 0xff;
+    char *session_id = NULL;
 
     if (extract_sip_identities(sipworker->sipparser, &all_identities,
             sipworker->debug.log_bad_sip) < 0) {
@@ -880,12 +977,15 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
     gettimeofday(&tv, NULL);
     invitecseq = get_sip_cseq(sipworker->sipparser);
 
+    get_sip_header_session_id(sipworker->sipparser, &session_id);
+
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
         if (sipworker->sipparser->badsip) {
             break;
         }
         thisrtp = match_call_to_intercept(sipworker, vint, callid, sdpo,
-                &iritype, &cin, trust_sip_from, &tv, &all_identities);
+                &iritype, &cin, trust_sip_from, &tv, &all_identities,
+                session_id);
         if (thisrtp == NULL) {
             continue;
         }
@@ -912,6 +1012,9 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
 
     if (invitecseq) {
         free(invitecseq);
+    }
+    if (session_id) {
+        free(session_id);
     }
     release_openli_sip_identity_set(&all_identities);
     if (sipworker->sipparser->badsip) {
@@ -950,7 +1053,7 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
             break;
         }
         thisrtp = match_call_to_intercept(sipworker, vint, callid, NULL,
-                &iritype, &cin, trust_sip_from, &tv, &all_identities);
+                &iritype, &cin, trust_sip_from, &tv, &all_identities, NULL);
         if (thisrtp == NULL) {
             continue;
         }
