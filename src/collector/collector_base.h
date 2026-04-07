@@ -182,6 +182,12 @@ typedef struct sync_thread_global {
     void *zmq_ctxt;
 } sync_thread_global_t;
 
+typedef struct shared_voice_call_state {
+    intercepted_voice_call_t *cept_calls;
+    intercepted_callid_t *known_callids;
+    target_call_ref_t *live_targets;
+} shared_voice_call_state_t;
+
 enum {
     OPENLI_UPCOMING_INTERCEPT_EVENT_START,
     OPENLI_UPCOMING_INTERCEPT_EVENT_END
@@ -233,6 +239,11 @@ typedef struct collector_sip_configuration {
      * of their call ID
      */
     uint8_t ignore_sdpo_matches;
+    /* Flag that indicates whether we should avoid treating calls with the
+     * same "Session-ID" in their SIP INVITE as separate legs of the same
+     * call.
+     */
+    uint8_t ignore_sessionid_matches;
     char *sipdebugfile;
 
 } collector_sip_config_t;

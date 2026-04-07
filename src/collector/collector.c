@@ -1123,9 +1123,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         in4 = (struct sockaddr_in *)(&(pinfo.destip));
         in4->sin_addr = ipheader->ip_dst;
 
-	offset = ntohs(ipheader->ip_off);
-	/* fast check for IP fragmentation */
-	if ((offset & 0x2000) || (offset & 0x1FFF)) {
+        offset = ntohs(ipheader->ip_off);
+        /* fast check for IP fragmentation */
+        if ((offset & 0x2000) || (offset & 0x1FFF)) {
             fragoff = trace_get_fragment_offset(pkt, &moreflag);
             ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
             if (!ipstream) {
@@ -1155,6 +1155,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             } else {
                 proto = ipheader->ip_p;
             }
+            pinfo.trans_proto = proto;
 
         } else {
             uint8_t *postip = ((uint8_t *)l3) + ipheader->ip_hl * 4;
@@ -1162,6 +1163,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             pinfo.srcport = ntohs(*((uint16_t *)postip));
             pinfo.destport = ntohs(*((uint16_t *)(postip + 2)));
             proto = ipheader->ip_p;
+            pinfo.trans_proto = proto;
         }
         pinfo.family = AF_INET;
     } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
@@ -1174,6 +1176,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = ntohs(*((uint16_t *)(postip6 + 2)));
         proto = ip6header->nxt;
         pinfo.family = AF_INET6;
+        pinfo.trans_proto = proto;
 
         in6 = (struct sockaddr_in6 *)(&(pinfo.srcip));
         in6->sin6_addr = ip6header->ip_src;
@@ -1184,6 +1187,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         pinfo.destport = 0;
         proto = 0;
         pinfo.family = 0;
+        pinfo.trans_proto = 0;
     }
 
     if (fast_coreserver_check(loc, &pinfo) == 0) {
@@ -1911,10 +1915,13 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(loc);
     }
 
+    // TODO clean up shared SIP call state
+
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
+    pthread_rwlock_destroy(&glob->sip_call_state_mutex);
     pthread_rwlock_destroy(&glob->x_input_mutex);
     pthread_rwlock_destroy(&glob->sipconfig_mutex);
     pthread_rwlock_destroy(&glob->digestconfig_mutex);
@@ -2085,6 +2092,8 @@ static int prepare_collector_glob(collector_global_t *glob) {
 
     glob->expired_inputs = libtrace_list_init(sizeof(colinput_t *));
 
+    memset(&(glob->sip_call_state), 0, sizeof(glob->sip_call_state));
+
     init_sync_thread_data(glob, &(glob->syncip));
 
     glob->collocals = NULL;
@@ -2166,6 +2175,7 @@ static void init_collector_global(collector_global_t *glob) {
 
     glob->etsitls = 1;
     glob->sipconfig.ignore_sdpo_matches = 0;
+    glob->sipconfig.ignore_sessionid_matches = 0;
     glob->sipconfig.sipdebugfile = NULL;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
@@ -2209,6 +2219,7 @@ static collector_global_t *parse_global_config(char *configfile) {
     pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
+    pthread_rwlock_init(&glob->sip_call_state_mutex, NULL);
     pthread_rwlock_init(&glob->sipconfig_mutex, NULL);
     pthread_rwlock_init(&glob->digestconfig_mutex, NULL);
     pthread_rwlock_init(&glob->liid_agency_mutex, NULL);
@@ -2487,6 +2498,8 @@ static int reload_collector_config(collector_global_t *glob,
             newstate.sipconfig.disable_sip_redirect;
     glob->sipconfig.ignore_sdpo_matches =
             newstate.sipconfig.ignore_sdpo_matches;
+    glob->sipconfig.ignore_sessionid_matches =
+            newstate.sipconfig.ignore_sessionid_matches;
     if (glob->sipconfig.sipdebugfile) {
         free(glob->sipconfig.sipdebugfile);
     }
@@ -2698,6 +2711,8 @@ static int init_sip_worker_thread(openli_sip_worker_t *sipworker,
     sipworker->stats = &(glob->stats);
     sipworker->shared = &(glob->sipconfig);
     sipworker->shared_mutex = &(glob->sipconfig_mutex);
+    sipworker->call_state = &(glob->sip_call_state);
+    sipworker->call_state_mutex = &(glob->sip_call_state_mutex);
     sipworker->collector_queues = NULL;
     sipworker->haltinfo = NULL;
 

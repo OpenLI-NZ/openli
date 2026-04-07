@@ -1181,6 +1181,30 @@ int get_sip_paccess_network_info(openli_sip_parser_t *parser,
     return *loc_cnt;
 }
 
+int get_sip_header_session_id(openli_sip_parser_t *parser, char **idstr) {
+
+    osip_header_t *hdr;
+    char *sid;
+
+    if (*idstr) {
+        free(*idstr);
+        *idstr = NULL;
+    }
+
+    osip_message_header_get_byname(parser->osip, "Session-ID", 0, &hdr);
+    if (hdr == NULL) {
+        return 0;
+    }
+
+    sid = osip_header_get_value(hdr);
+    if (sid == NULL) {
+        return 0;
+    }
+
+    *idstr = strdup(sid);
+    return 1;
+}
+
 int get_sip_identity_by_header_name(openli_sip_parser_t *parser,
         openli_sip_identity_t *sipid, const char *header) {
 

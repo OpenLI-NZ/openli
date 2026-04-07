@@ -317,6 +317,9 @@ typedef struct collector_global {
     pthread_rwlock_t config_mutex;
     pthread_mutex_t configupdate_mutex;
 
+    pthread_rwlock_t sip_call_state_mutex;
+    shared_voice_call_state_t sip_call_state;
+
     sync_thread_global_t syncip;
     etsili_generic_freelist_t *syncgenericfreelist;
 
@@ -376,6 +379,8 @@ typedef struct collector_global {
 
     x_input_t *x_inputs;
     pthread_rwlock_t x_input_mutex;
+
+    
 
 } collector_global_t;
 

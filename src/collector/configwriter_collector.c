@@ -298,6 +298,8 @@ static int emit_basic_collector_options(collector_global_t *conf,
 
     YAML_EMIT_BOOLEAN(event, "sipignoresdpo",
             conf->sipconfig.ignore_sdpo_matches);
+    YAML_EMIT_BOOLEAN(event, "sipignoresessionid",
+            conf->sipconfig.ignore_sessionid_matches);
     YAML_EMIT_BOOLEAN(event, "sipallowfromident",
             conf->sipconfig.trust_sip_from);
     YAML_EMIT_BOOLEAN(event, "sipdisableredirect",

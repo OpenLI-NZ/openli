@@ -255,6 +255,7 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
     voipintercept_t *vint;
     voipcinmap_t *cin_callid, *tmpcin;
     voipsdpmap_t *cin_sdp, *tmpsdp;
+    voipsessmap_t *cin_sess, *tmpsess;
     uint8_t stop;
 
     if (!rtp) {
@@ -326,6 +327,31 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
             free(cin_callid);
             if (stop) {
                 break;
+            }
+        }
+    }
+
+    HASH_ITER(hh, vint->cin_sess_map, cin_sess, tmpsess) {
+        stop = 0;
+        if (cin_sess->shared->cin == rtp->cin) {
+            HASH_DELETE(hh, vint->cin_sess_map, cin_sess);
+            cin_sess->shared->refs --;
+            if (cin_sess->shared->refs == 0) {
+                free(cin_sess->shared);
+                stop = 1;
+            }
+            if (cin_sess->username) {
+                free(cin_sess->username);
+            }
+            if (cin_sess->realm) {
+                free(cin_sess->realm);
+            }
+            if (cin_sess->sessionid) {
+                free(cin_sess->sessionid);
+            }
+            free(cin_sess);
+            if (stop) {
+               break;
             }
         }
     }
@@ -923,6 +949,41 @@ static void remove_cin_callids_for_target(voipcinmap_t **cinmap,
 
 }
 
+static void remove_cin_sessionids_for_target(voipsessmap_t **sessmap,
+        char *username, char *realm) {
+
+    voipsessmap_t *s, *tmp;
+    openli_sip_identity_t a, b;
+
+    a.username = username;
+    a.realm = realm;
+
+    HASH_ITER(hh, *sessmap, s, tmp) {
+        b.username = s->username;
+        b.realm = s->realm;
+        if (!are_sip_identities_same(&a, &b)) {
+            continue;
+        }
+        HASH_DELETE(hh, *sessmap, s);
+        if (s->shared) {
+            s->shared->refs --;
+            if (s->shared->refs == 0) {
+                free(s->shared);
+            }
+        }
+        if (s->username) {
+            free(s->username);
+        }
+        if (s->realm) {
+            free(s->realm);
+        }
+        if (s->sessionid) {
+            free(s->sessionid);
+        }
+        free(s);
+    }
+}
+
 static void remove_cin_sdpkeys_for_target(voipsdpmap_t **sdpmap,
         char *username, char *realm) {
 
@@ -975,6 +1036,8 @@ static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
     remove_cin_callids_for_target(&(v->cin_callid_map), sipid->username,
             sipid->realm);
     remove_cin_sdpkeys_for_target(&(v->cin_sdp_map), sipid->username,
+            sipid->realm);
+    remove_cin_sessionids_for_target(&(v->cin_sess_map), sipid->username,
             sipid->realm);
     remove_cin_callids_for_target(&(sipworker->knowncallids), sipid->username,
             sipid->realm);

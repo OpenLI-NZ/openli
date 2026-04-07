@@ -135,6 +135,9 @@ typedef struct openli_sip_worker {
     /* The timestamp when this thread was started */
     time_t started;
 
+    shared_voice_call_state_t *call_state;
+    pthread_rwlock_t *call_state_mutex;
+
 } openli_sip_worker_t;
 
 void *start_sip_worker_thread(void *arg);

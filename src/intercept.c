@@ -732,6 +732,23 @@ void free_voip_cinmap(voipcinmap_t *cins) {
 
 }
 
+static inline void free_voip_sessmap(voipsessmap_t *sessions) {
+    voipsessmap_t *s, *tmp;
+    HASH_ITER(hh, sessions, s, tmp) {
+        HASH_DELETE(hh, sessions, s);
+        if (s->username) {
+            free(s->username);
+        }
+        if (s->realm) {
+            free(s->realm);
+        }
+        if (s->sessionid) {
+            free(s->sessionid);
+        }
+        free(s);
+    }
+}
+
 static inline void free_voip_sdpmap(voipsdpmap_t *sdps) {
     voipsdpmap_t *s, *tmp;
 
@@ -994,7 +1011,9 @@ void free_single_voipintercept(voipintercept_t *v) {
     if (v->cin_sdp_map) {
         free_voip_sdpmap(v->cin_sdp_map);
     }
-
+    if (v->cin_sess_map) {
+        free_voip_sessmap(v->cin_sess_map);
+    }
     if (v->cin_callid_map) {
         free_voip_cinmap(v->cin_callid_map);
     }

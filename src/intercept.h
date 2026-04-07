@@ -313,10 +313,73 @@ typedef struct sdpidentifier {
     char address[32];
 } sip_sdp_identifier_t;
 
+typedef struct voice_call_id {
+    char *callid;
+    UT_hash_handle hh;
+} voice_callid_t;
+
+typedef struct voice_participant {
+    char *username;
+    char *realm;
+    uint8_t is_target;
+    UT_hash_handle hh;
+} voice_participant_t;
+
 typedef struct voipintshared {
     uint32_t cin;
     int refs;
 } voipintshared_t;
+
+typedef struct intercepted_voice_call {
+    char *key;
+    char *liid;
+    uint32_t cin;
+
+    voice_callid_t *callids;
+    sip_sdp_identifier_t sdpkey;
+    char *sessionid;
+    voice_participant_t *participants;
+
+    UT_hash_handle hh_sdp;
+    UT_hash_handle hh_sessionid;
+
+} intercepted_voice_call_t;
+
+/** Used to track the set of active, intercepted calls for a particular
+ *  intercept target -- so if the target is withdrawn, we can stop
+ *  interception for calls where the target was a participant.
+ */
+typedef struct {
+    char *callkey;      // key from the intercepted_voice_call_t
+    intercepted_voice_call_t *call;
+
+    UT_hash_handle hh;
+} target_call_map_t;
+
+typedef struct target_call_ref {
+    char *key;                      // LIID + username + realm
+    target_call_map_t *tgtcalls;    // all intercepted calls for this target
+    UT_hash_handle hh;
+} target_call_ref_t;
+
+
+/** Structs to support a many-to-many relationship between call IDs and
+ *  active intercepts -- since a call ID may be subject to multiple
+ *  concurrent intercepts, and an intercept may be capturing multiple
+ *  concurrent calls (although the latter is relatively unlikely in practice...)
+ */
+typedef struct {
+    /* Maps a call ID to all of its active intercepts */
+    char *callid;
+    struct callid_intercept_t *intercepts;
+    UT_hash_handle hh;
+} intercepted_callid_t;
+
+typedef struct {
+    char *liid;
+    intercepted_voice_call_t *instance;
+    UT_hash_handle hh;
+} callid_intercept_t;
 
 /* Two types of VOIP intercept structure -- one for the target which stores
  * all CINs for that target, and another for each target/CIN combination
@@ -342,6 +405,13 @@ typedef struct voipsdpmap {
     UT_hash_handle hh_sdp;
 } voipsdpmap_t;
 
+typedef struct voipsessmap {
+    char *sessionid;
+    char *username;
+    char *realm;
+    voipintshared_t *shared;
+    UT_hash_handle hh;
+} voipsessmap_t;
 
 typedef struct rtpstreaminf rtpstreaminf_t;
 typedef struct ipsession ipsession_t;
@@ -361,6 +431,8 @@ typedef struct voipintercept {
     uint8_t active;
     voipcinmap_t *cin_callid_map;
     voipsdpmap_t *cin_sdp_map;
+    voipsessmap_t *cin_sess_map;
+
     rtpstreaminf_t *active_cins;
     sipregister_t *active_registrations;
 

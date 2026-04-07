@@ -58,6 +58,9 @@ typedef struct colsync_data {
     shared_agency_digest_config_t *digest_config;
     pthread_rwlock_t *digest_config_mutex;
 
+    shared_voice_call_state_t *sip_call_state;
+    pthread_rwlock_t *sip_call_state_mutex;
+
     shared_liid_to_agency_mapping_t *liid_agency_map;
     pthread_rwlock_t *liid_agency_mutex;
 
