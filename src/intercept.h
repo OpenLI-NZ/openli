@@ -319,6 +319,7 @@ typedef struct voice_call_id {
 } voice_callid_t;
 
 typedef struct voice_participant {
+    char *key;
     char *username;
     char *realm;
     uint8_t is_target;
@@ -331,12 +332,13 @@ typedef struct voipintshared {
 } voipintshared_t;
 
 typedef struct intercepted_voice_call {
-    char *key;
-    char *liid;
     uint32_t cin;
+    int owner;
+    time_t created;
 
     voice_callid_t *callids;
     sip_sdp_identifier_t sdpkey;
+    uint8_t sdpvalid;
     char *sessionid;
     voice_participant_t *participants;
 
@@ -345,41 +347,41 @@ typedef struct intercepted_voice_call {
 
 } intercepted_voice_call_t;
 
+typedef struct sip_message_state {
+    char *callid;
+    time_t created;
+    uint32_t cin;
+
+    UT_hash_handle hh;
+} sip_message_state_t;
+
 /** Used to track the set of active, intercepted calls for a particular
  *  intercept target -- so if the target is withdrawn, we can stop
  *  interception for calls where the target was a participant.
  */
 typedef struct {
-    char *callkey;      // key from the intercepted_voice_call_t
-    intercepted_voice_call_t *call;
+    uint32_t cin;      // from the intercepted_voice_call_t
+    char *callid;
+
+    sip_message_state_t *msg;
 
     UT_hash_handle hh;
 } target_call_map_t;
 
 typedef struct target_call_ref {
-    char *key;                      // LIID + username + realm
+    char *key;                      // username + realm
     target_call_map_t *tgtcalls;    // all intercepted calls for this target
     UT_hash_handle hh;
 } target_call_ref_t;
 
 
-/** Structs to support a many-to-many relationship between call IDs and
- *  active intercepts -- since a call ID may be subject to multiple
- *  concurrent intercepts, and an intercept may be capturing multiple
- *  concurrent calls (although the latter is relatively unlikely in practice...)
- */
+/** Used to lookup a known call by its Call ID */
 typedef struct {
     /* Maps a call ID to all of its active intercepts */
     char *callid;
-    struct callid_intercept_t *intercepts;
+    struct intercepted_voice_call_t *call;
     UT_hash_handle hh;
 } intercepted_callid_t;
-
-typedef struct {
-    char *liid;
-    intercepted_voice_call_t *instance;
-    UT_hash_handle hh;
-} callid_intercept_t;
 
 /* Two types of VOIP intercept structure -- one for the target which stores
  * all CINs for that target, and another for each target/CIN combination
@@ -429,12 +431,12 @@ typedef struct voipintercept {
     uint32_t options;
     uint8_t awaitingconfirm;
     uint8_t active;
-    voipcinmap_t *cin_callid_map;
-    voipsdpmap_t *cin_sdp_map;
-    voipsessmap_t *cin_sess_map;
 
+    sip_message_state_t *active_messages;
     rtpstreaminf_t *active_cins;
     sipregister_t *active_registrations;
+
+    target_call_ref_t *target_cin_map;
 
     UT_hash_handle hh_liid;
     UT_hash_handle *hh_xid;
@@ -504,6 +506,7 @@ struct emailsession {
 
 struct rtpstreaminf {
     char *streamkey;
+    char *callid;
     uint32_t cin;
 
     int ai_family;
@@ -657,7 +660,8 @@ char *list_email_targets(emailintercept_t *m, int maxchars);
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
         uint32_t cin);
 
-rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin);
+rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin,
+        char *callid);
 rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *rtp);
 
 ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,

@@ -3,8 +3,13 @@ openli (1.1.18-1) unstable; urgency=medium
   * Collector: fix bad encoding of ASN.1 elements that were sequences of
     primitive types, such as emailRecipients in email IRIs and
     includeSequenceNumbers in integrity check PDUs.
+  * Mediator: fix crash when the number of agencies is large.
+  * SIP: fix call tracking problems that occur when the INVITE message is
+    fragmented.
+  * pcapdisk: ensure that all packets that comprise a fragmented SIP message
+    are written to the pcap file
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 24 Mar 2026 14:08:46 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 8 Apr 2026 10:18:10 +1200
 
 openli (1.1.17-1) unstable; urgency=medium
 
