@@ -52,7 +52,6 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
         release_sip_parser(sipworker->sipparser);
     }
 
-    free_voip_cinmap(sipworker->knowncallids);
     HASH_ITER(hh, sipworker->timeouts, syncev, tmp) {
         HASH_DELETE(hh, sipworker->timeouts, syncev);
     }
@@ -233,30 +232,9 @@ static size_t setup_pollset(openli_sip_worker_t *sipworker,
     return i;
 }
 
-static void purge_old_sms_sessions(openli_sip_worker_t *sipworker) {
-    struct timeval tv;
-    voipcinmap_t *cid, *tmp;
-
-    gettimeofday(&tv, NULL);
-    HASH_ITER(hh_callid, sipworker->knowncallids, cid, tmp) {
-        if (!cid->smsonly) {
-            continue;
-        }
-        if (cid->lastsip != 0 && tv.tv_sec - cid->lastsip >
-                SMS_SESSION_EXPIRY) {
-            HASH_DELETE(hh_callid, sipworker->knowncallids, cid);
-            free_single_voip_cinmap_entry(cid);
-        }
-    }
-}
-
 static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *rtp) {
     voipintercept_t *vint;
-    voipcinmap_t *cin_callid, *tmpcin;
-    voipsdpmap_t *cin_sdp, *tmpsdp;
-    voipsessmap_t *cin_sess, *tmpsess;
-    uint8_t stop;
 
     if (!rtp) {
         return 0;
@@ -301,82 +279,11 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
 
     HASH_DEL(vint->active_cins, rtp);
 
-    /* Iterating through the corresponding voipintercept's call maps seems
-     * a bit clunky at first glance, but there shouldn't be too many
-     * entries in these maps at any given time so it isn't really worth
-     * the effort of trying to maintain reverse references to the map
-     * entries in the RTP stream info structure
-     */
+    remove_target_call_reference(vint, rtp->cin);
 
-    HASH_ITER(hh_callid, vint->cin_callid_map, cin_callid, tmpcin) {
-        stop = 0;
-        if (cin_callid->shared->cin == rtp->cin) {
-            HASH_DELETE(hh_callid, vint->cin_callid_map, cin_callid);
-            free(cin_callid->callid);
-            cin_callid->shared->refs --;
-            if (cin_callid->shared->refs == 0) {
-                free(cin_callid->shared);
-                stop = 1;
-            }
-            if (cin_callid->username) {
-                free(cin_callid->username);
-            }
-            if (cin_callid->realm) {
-                free(cin_callid->realm);
-            }
-            free(cin_callid);
-            if (stop) {
-                break;
-            }
-        }
-    }
+    remove_voice_call_by_callid(sipworker->call_state,
+            sipworker->call_state_mutex, rtp->callid);
 
-    HASH_ITER(hh, vint->cin_sess_map, cin_sess, tmpsess) {
-        stop = 0;
-        if (cin_sess->shared->cin == rtp->cin) {
-            HASH_DELETE(hh, vint->cin_sess_map, cin_sess);
-            cin_sess->shared->refs --;
-            if (cin_sess->shared->refs == 0) {
-                free(cin_sess->shared);
-                stop = 1;
-            }
-            if (cin_sess->username) {
-                free(cin_sess->username);
-            }
-            if (cin_sess->realm) {
-                free(cin_sess->realm);
-            }
-            if (cin_sess->sessionid) {
-                free(cin_sess->sessionid);
-            }
-            free(cin_sess);
-            if (stop) {
-               break;
-            }
-        }
-    }
-
-    HASH_ITER(hh_sdp, vint->cin_sdp_map, cin_sdp, tmpsdp) {
-        stop = 0;
-        if (cin_sdp->shared->cin == rtp->cin) {
-            HASH_DELETE(hh_sdp, vint->cin_sdp_map, cin_sdp);
-            cin_sdp->shared->refs --;
-            if (cin_sdp->shared->refs == 0) {
-                free(cin_sdp->shared);
-                stop = 1;
-            }
-            if (cin_sdp->username) {
-                free(cin_sdp->username);
-            }
-            if (cin_sdp->realm) {
-                free(cin_sdp->realm);
-            }
-            free(cin_sdp);
-            if (stop) {
-                break;
-            }
-        }
-    }
     free_single_rtpstream(rtp);
     return 0;
 }
@@ -855,7 +762,7 @@ static void sip_worker_push_active_voipstream_update(
         }
         memset(&msg, 0, sizeof(openli_pushed_t));
         msg.type = OPENLI_PUSH_UPDATE_VOIPINTERCEPT;
-        msg.data.ipmmint = create_rtpstream(vint, cin->cin);
+        msg.data.ipmmint = create_rtpstream(vint, cin->cin, cin->callid);
 
         libtrace_message_queue_put(q, (void *)(&msg));
     }
@@ -914,109 +821,6 @@ endupdatevint:
     return r;
 }
 
-static void remove_cin_callids_for_target(voipcinmap_t **cinmap,
-        char *username, char *realm) {
-
-    voipcinmap_t *c, *tmp;
-    openli_sip_identity_t a, b;
-
-    a.username = username;
-    a.realm = realm;
-    HASH_ITER(hh_callid, *cinmap, c, tmp) {
-        b.username = c->username;
-        b.realm = c->realm;
-
-        if (!are_sip_identities_same(&a, &b)) {
-            continue;
-        }
-
-        HASH_DELETE(hh_callid, *cinmap, c);
-        if (c->shared) {
-            c->shared->refs --;
-            if (c->shared->refs == 0) {
-                free(c->shared);
-            }
-        }
-        if (c->username) {
-            free(c->username);
-        }
-        if (c->realm) {
-            free(c->realm);
-        }
-        free(c->callid);
-        free(c);
-    }
-
-}
-
-static void remove_cin_sessionids_for_target(voipsessmap_t **sessmap,
-        char *username, char *realm) {
-
-    voipsessmap_t *s, *tmp;
-    openli_sip_identity_t a, b;
-
-    a.username = username;
-    a.realm = realm;
-
-    HASH_ITER(hh, *sessmap, s, tmp) {
-        b.username = s->username;
-        b.realm = s->realm;
-        if (!are_sip_identities_same(&a, &b)) {
-            continue;
-        }
-        HASH_DELETE(hh, *sessmap, s);
-        if (s->shared) {
-            s->shared->refs --;
-            if (s->shared->refs == 0) {
-                free(s->shared);
-            }
-        }
-        if (s->username) {
-            free(s->username);
-        }
-        if (s->realm) {
-            free(s->realm);
-        }
-        if (s->sessionid) {
-            free(s->sessionid);
-        }
-        free(s);
-    }
-}
-
-static void remove_cin_sdpkeys_for_target(voipsdpmap_t **sdpmap,
-        char *username, char *realm) {
-
-    voipsdpmap_t *s, *tmp;
-    openli_sip_identity_t a, b;
-
-    a.username = username;
-    a.realm = realm;
-    HASH_ITER(hh_sdp, *sdpmap, s, tmp) {
-        b.username = s->username;
-        b.realm = s->realm;
-
-        if (!are_sip_identities_same(&a, &b)) {
-            continue;
-        }
-
-        HASH_DELETE(hh_sdp, *sdpmap, s);
-        if (s->shared) {
-            s->shared->refs --;
-            if (s->shared->refs == 0) {
-                free(s->shared);
-            }
-        }
-        if (s->username) {
-            free(s->username);
-        }
-        if (s->realm) {
-            free(s->realm);
-        }
-        free(s);
-    }
-}
-
 static void post_disable_unconfirmed_voip_intercept(voipintercept_t *vint,
         void *arg) {
     openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
@@ -1029,18 +833,55 @@ static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
         voipintercept_t *v, void *arg) {
 
     openli_sip_worker_t *sipworker = (openli_sip_worker_t *)arg;
+    target_call_ref_t *ref;
+    target_call_map_t *cinptr, *cintmp;
+    rtpstreaminf_t *thisrtp;
+    char rtpkey[512];
+
+    char targetid[512];
     if (sipworker == NULL || v == NULL || sipid == NULL) {
         return;
     }
+    if (sipid->username == NULL) {
+        return;
+    }
 
-    remove_cin_callids_for_target(&(v->cin_callid_map), sipid->username,
-            sipid->realm);
-    remove_cin_sdpkeys_for_target(&(v->cin_sdp_map), sipid->username,
-            sipid->realm);
-    remove_cin_sessionids_for_target(&(v->cin_sess_map), sipid->username,
-            sipid->realm);
-    remove_cin_callids_for_target(&(sipworker->knowncallids), sipid->username,
-            sipid->realm);
+    if (sipid->realm) {
+        snprintf(targetid, 512, "%s@%s", sipid->username, sipid->realm);
+    } else {
+        snprintf(targetid, 512, "%s", sipid->username);
+    }
+
+    HASH_FIND(hh, v->target_cin_map, targetid, strlen(targetid), ref);
+    if (ref == NULL) {
+        /* no active call intercepts for this target? */
+        return;
+    }
+
+    HASH_DELETE(hh, v->target_cin_map, ref);
+    HASH_ITER(hh, ref->tgtcalls, cinptr, cintmp) {
+        HASH_DELETE(hh, ref->tgtcalls, cinptr);
+
+        snprintf(rtpkey, 512, "%s-%u-%s", v->common.liid, cinptr->cin,
+                cinptr->callid);
+        HASH_FIND(hh, v->active_cins, rtpkey, strlen(rtpkey), thisrtp);
+        if (thisrtp) {
+            HASH_DELETE(hh, v->active_cins, thisrtp);
+            free_single_rtpstream(thisrtp);
+        }
+
+        if (cinptr->msg) {
+            HASH_DELETE(hh, v->active_messages, cinptr->msg);
+            free(cinptr->msg->callid);
+            free(cinptr->msg);
+        }
+
+        free(cinptr->callid);
+        free(cinptr);
+    }
+    free(ref->key);
+    free(ref);
+
 }
 
 static void sip_worker_init_voip_intercept(openli_sip_worker_t *sipworker,
@@ -1490,8 +1331,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
         if (topoll[2].revents & ZMQ_POLLIN) {
             topoll[2].revents = 0;
             close(topoll[2].fd);
-
-            purge_old_sms_sessions(sipworker);
+            purge_expired_sms_sessions(sipworker);
 
             /* also purge any "redirected to other worker" calls that have
              * not been claimed and have been idle for some time

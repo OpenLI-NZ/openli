@@ -99,6 +99,7 @@ openlicollector_SOURCES=collector/collector.c \
 				collector/x2x3_cond_attrs.c collector/udp_sink_worker.c \
                 collector/collector_integrity_check.c \
                 collector/collector_integrity_check.h \
+                collector/sip_callstate_tracker.c \
                 openli_epoll.c openli_epoll.h \
                 $(PLUGIN_SRCS)
 

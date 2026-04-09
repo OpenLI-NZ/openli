@@ -153,8 +153,25 @@ int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *rtp);
 void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *thisrtp);
+void purge_expired_sms_sessions(openli_sip_worker_t *sipworker);
 
-int lookup_sip_callid(openli_sip_worker_t *sipworker, char *callid);
+
+uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *callid);
+void add_target_call_reference(voipintercept_t *vint,
+        openli_sip_identity_t *matched, uint32_t cin,
+        char *callid, sip_message_state_t *msg);
+void remove_target_call_reference(voipintercept_t *vint, uint32_t cin);
+void remove_voice_call_by_callid(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock, char *callid);
+int create_new_intercepted_voice_call(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock,
+        char *callid, sip_sdp_identifier_t *sdpkey, char *sessionid,
+        openli_sip_identity_t *matched, voipintercept_t *vint,
+        int owner, struct timeval *tv);
+int find_existing_voice_call(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock,
+        char *callid, sip_sdp_identifier_t *sdpkey, char *sessionid);
 
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
         char *callid, libtrace_packet_t **pkts, int pkt_cnt);
