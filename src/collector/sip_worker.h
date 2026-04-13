@@ -156,6 +156,8 @@ void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
 void purge_expired_sms_sessions(openli_sip_worker_t *sipworker);
 
 
+void destroy_sip_call_state(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock);
 uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid);
 void add_target_call_reference(voipintercept_t *vint,

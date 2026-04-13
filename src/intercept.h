@@ -379,7 +379,7 @@ typedef struct target_call_ref {
 typedef struct {
     /* Maps a call ID to all of its active intercepts */
     char *callid;
-    struct intercepted_voice_call_t *call;
+    intercepted_voice_call_t *call;
     UT_hash_handle hh;
 } intercepted_callid_t;
 
