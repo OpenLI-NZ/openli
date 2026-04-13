@@ -588,7 +588,7 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
 }
 
 static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
-        voipintercept_t *vint, etsili_iri_type_t iritype, uint32_t *cin,
+        voipintercept_t *vint, uint32_t *cin,
         uint8_t trust_sip_from, struct timeval *tv,
         openli_sip_identity_set_t *all_identities,
         char *callid, char *sessionid, sip_sdp_identifier_t *sdpkey) {
@@ -623,26 +623,14 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     *cin = get_voice_call_cin_using_callid(sipworker->call_state,
             sipworker->call_state_mutex, callid);
 
+    snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, *cin, callid);
+    HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
 
-    if (iritype != ETSILI_IRI_BEGIN) {
-        /* Grab the existing RTP stream instance for this call */
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, *cin, callid);
-        HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
-
-        if (thisrtp == NULL) {
-            if (sipworker->debug.log_bad_sip) {
-                logger(LOG_INFO, "OpenLI: SIP worker %d was unable to find %s inthe active call list for LIID %s",
-                        sipworker->workerid, callid, vint->common.liid);
-            }
-            sipworker->sipparser->badsip = 1;
-            return NULL;
-        }
-    } else {
-        thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint, callid);
+    if (thisrtp == NULL) {
+        thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint,
+                callid);
     }
-
     return thisrtp;
-
 }
 
 static int extract_media_streams_from_sdp(rtpstreaminf_t *thisrtp,
@@ -717,7 +705,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
             break;
         }
         thisrtp = match_call_to_intercept(sipworker, vint,
-                iritype, &cin, trust_sip_from, &tv, &all_identities,
+                &cin, trust_sip_from, &tv, &all_identities,
                 callid, session_id, sdpo);
         if (thisrtp == NULL) {
             continue;
@@ -917,7 +905,6 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
     cin = get_voice_call_cin_using_callid(sipworker->call_state,
             sipworker->call_state_mutex, callid);
 
-    get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
     if (sipworker->sipparser->badsip) {
         return 0;
     }
@@ -1095,8 +1082,8 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         goto sipgiveup;
     }
 
+    get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
     if (sip_is_message(sipworker->sipparser)) {
-        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_message(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;
@@ -1106,7 +1093,6 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_invite(sipworker->sipparser)) {
-        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         populate_sdp_identifier(sipworker->sipparser, &sdpo,
                 sipworker->debug.log_bad_sip, callid);
         if (( ret = process_sip_invite(sipworker, callid, irimsg, pkts,
@@ -1118,7 +1104,6 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
     } else if (sip_is_register(sipworker->sipparser)) {
-        get_sip_paccess_network_info(sipworker->sipparser, &locptr, &loc_cnt);
         if (( ret = process_sip_register(sipworker, callid, irimsg, pkts,
                         pkt_cnt, locptr, loc_cnt)) < 0) {
             iserr = 1;

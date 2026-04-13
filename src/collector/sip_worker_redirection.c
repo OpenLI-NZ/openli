@@ -215,7 +215,6 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
 
     sip_saved_redirection_t *rd;
     Word_t *pval;
-    intercepted_voice_call_t *vc;
     voipintercept_t *vint, *tmp;
     uint32_t cin;
     char rtpkey[256];
@@ -252,20 +251,18 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
         *pval = (Word_t)rd;
     }
 
-
-    vc = get_voice_call_by_callid(sipworker->call_state,
+    cin = get_voice_call_cin_using_callid(sipworker->call_state,
             sipworker->call_state_mutex, msg->callid);
-    if (!vc) {
+
+    if (cin == 0) {
         /* we've never intercepted this call ID before, so reject it */
         send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
         rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
         return 0;
     }
 
-    cin = get_voice_call_cin(sipworker->call_state_mutex, vc);
-
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin, callid);
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin, msg->callid);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             continue;

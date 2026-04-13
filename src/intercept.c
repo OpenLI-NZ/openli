@@ -804,6 +804,7 @@ static void free_voip_target_cin_map(target_call_ref_t *map) {
         HASH_DELETE(hh, map, ref);
         HASH_ITER(hh, ref->tgtcalls, cin, cintmp) {
             HASH_DELETE(hh, ref->tgtcalls, cin);
+            if (cin->callid) free(cin->callid);
             free(cin);
         }
         free(ref->key);
