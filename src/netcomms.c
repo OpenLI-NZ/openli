@@ -2967,6 +2967,10 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             lea->digest.sign_timeout = *((uint32_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_SIGN_HASHLIMIT) {
             lea->digest.sign_hashlimit = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_PAYLOAD_ENCRYPTION) {
+
+        } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
+
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
