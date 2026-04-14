@@ -249,6 +249,9 @@ The basic option keys are:
 * sipignoresdpo     -- set to 'yes' to prevent OpenLI from using SDP O fields
                        to group multiple legs for the same VOIP call. See
                        notes below for more explanation. Defaults to 'no'.
+* sipignoresessionid -- set to 'yes' to prevent OpenLI from using Session ID
+                        headers as defined in RFC 7329 to group multiple legs
+                        for the same VOIP call.
 * RMQenabled        -- a flag indicating whether RabbitMQ should be used to
                        buffer encoded ETSI records that are to be sent to the
                        mediators. Defaults to 'false'. If set to 'true', the
