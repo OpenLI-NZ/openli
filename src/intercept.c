@@ -420,7 +420,8 @@ sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
     return newreg;
 }
 
-rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
+rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin,
+        char *callid) {
 
     rtpstreaminf_t *newcin = NULL;
 
@@ -435,6 +436,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
         return NULL;
     }
     newcin->cin = cin;
+    newcin->callid = strdup(callid);
     newcin->parent = vint;
     newcin->active = 0;
     newcin->changed = 0;
@@ -461,7 +463,8 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin) {
     }
 
     copy_intercept_common(&(vint->common), &(newcin->common));
-    snprintf(newcin->streamkey, 256, "%s-%u", vint->common.liid, cin);
+    snprintf(newcin->streamkey, 256, "%s-%u-%s", vint->common.liid, cin,
+            callid);
     return newcin;
 }
 
@@ -475,6 +478,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     }
 
     copy->streamkey = strdup(orig->streamkey);
+    copy->callid = strdup(orig->callid);
     copy->cin = orig->cin;
     copy->parent = NULL;
     copy->ai_family = orig->ai_family;
@@ -782,6 +786,32 @@ static void free_single_register(sipregister_t *sipr) {
     free(sipr);
 }
 
+static void free_voip_messages(sip_message_state_t *msgs) {
+    sip_message_state_t *msg, *tmp;
+
+    HASH_ITER(hh, msgs, msg, tmp) {
+        HASH_DELETE(hh, msgs, msg);
+        free(msg->callid);
+        free(msg);
+    }
+}
+
+static void free_voip_target_cin_map(target_call_ref_t *map) {
+    target_call_ref_t *ref, *reftmp;
+    target_call_map_t *cin, *cintmp;
+
+    HASH_ITER(hh, map, ref, reftmp) {
+        HASH_DELETE(hh, map, ref);
+        HASH_ITER(hh, ref->tgtcalls, cin, cintmp) {
+            HASH_DELETE(hh, ref->tgtcalls, cin);
+            if (cin->callid) free(cin->callid);
+            free(cin);
+        }
+        free(ref->key);
+        free(ref);
+    }
+}
+
 static void free_voip_registrations(sipregister_t *sipregs) {
     sipregister_t *r, *tmp;
 
@@ -1008,24 +1038,20 @@ int add_new_sip_target_to_list(voipintercept_t *vint,
 
 void free_single_voipintercept(voipintercept_t *v) {
     free_intercept_common(&(v->common));
-    if (v->cin_sdp_map) {
-        free_voip_sdpmap(v->cin_sdp_map);
-    }
-    if (v->cin_sess_map) {
-        free_voip_sessmap(v->cin_sess_map);
-    }
-    if (v->cin_callid_map) {
-        free_voip_cinmap(v->cin_callid_map);
-    }
     if (v->active_cins) {
         free_voip_cins(v->active_cins);
     }
     if (v->active_registrations) {
         free_voip_registrations(v->active_registrations);
     }
-
+    if (v->active_messages) {
+        free_voip_messages(v->active_messages);
+    }
     if (v->targets) {
         free_sip_targets(v->targets);
+    }
+    if (v->target_cin_map) {
+        free_voip_target_cin_map(v->target_cin_map);
     }
     free(v);
 }
@@ -1060,6 +1086,9 @@ void free_single_rtpstream(rtpstreaminf_t *rtp) {
     }
     if (rtp->streamkey) {
         free(rtp->streamkey);
+    }
+    if (rtp->callid) {
+        free(rtp->callid);
     }
     if (rtp->invitecseq) {
         free(rtp->invitecseq);

@@ -2175,8 +2175,8 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
     vint->internalid = 0;
     vint->active_cins = NULL;  /* Placeholder -- sync thread should populate */
     vint->active_registrations = NULL;  /* Placeholder */
-    vint->cin_callid_map = NULL;
-    vint->cin_sdp_map = NULL;
+    vint->active_messages = NULL;
+    vint->target_cin_map = NULL;
     vint->targets = libtrace_list_init(sizeof(openli_sip_identity_t *));
     vint->active = 1;
     vint->awaitingconfirm = 0;

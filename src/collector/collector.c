@@ -1915,7 +1915,8 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(loc);
     }
 
-    // TODO clean up shared SIP call state
+
+    destroy_sip_call_state(&glob->sip_call_state, &glob->sip_call_state_mutex);
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));

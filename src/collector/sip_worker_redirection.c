@@ -215,7 +215,10 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
 
     sip_saved_redirection_t *rd;
     Word_t *pval;
-
+    voipintercept_t *vint, *tmp;
+    uint32_t cin;
+    char rtpkey[256];
+    rtpstreaminf_t *thisrtp;
 
     if (msg->callid == NULL) {
         return 0;
@@ -233,6 +236,9 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
         if (rd->receive_status == REDIRECTED_SIP_STATUS_REJECTED) {
             return 0;
         }
+        if (rd->receive_status != REDIRECTED_SIP_STATUS_CLAIMED) {
+            return 1;
+        }
     } else {
         rd = calloc(1, sizeof(sip_saved_redirection_t));
         rd->callid = strdup(msg->callid);
@@ -245,17 +251,33 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
         *pval = (Word_t)rd;
     }
 
-    if (lookup_sip_callid(sipworker, msg->callid) == 0) {
-        /* we've never seen this call ID before, so reject it */
+    cin = get_voice_call_cin_using_callid(sipworker->call_state,
+            sipworker->call_state_mutex, msg->callid);
+
+    if (cin == 0) {
+        /* we've never intercepted this call ID before, so reject it */
         send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
         rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
         return 0;
     }
 
-    /* claim the call ID if we haven't already */
-    if (rd->receive_status != REDIRECTED_SIP_STATUS_CLAIMED) {
-        send_sip_redirect_reply(sipworker, REDIRECTED_SIP_CLAIM, msg);
-        rd->receive_status = REDIRECTED_SIP_STATUS_CLAIMED;
+    HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin, msg->callid);
+        HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
+        if (thisrtp == NULL) {
+            continue;
+        }
+        /* we already have state for this call ID for at least one
+         * intercept, so claim the call ID if we haven't already */
+
+        /* XXX can we have two threads with a claim to the same call ID?
+         * I don't think so, but we will have problems if it can happen...
+         */
+        if (rd->receive_status != REDIRECTED_SIP_STATUS_CLAIMED) {
+            send_sip_redirect_reply(sipworker, REDIRECTED_SIP_CLAIM, msg);
+            rd->receive_status = REDIRECTED_SIP_STATUS_CLAIMED;
+        }
+        break;
     }
 
     return 1;
