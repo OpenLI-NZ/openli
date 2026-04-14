@@ -6,10 +6,16 @@ openli (1.1.18-1) unstable; urgency=medium
   * Mediator: fix crash when the number of agencies is large.
   * SIP: fix call tracking problems that occur when the INVITE message is
     fragmented.
-  * pcapdisk: ensure that all packets that comprise a fragmented SIP message
-    are written to the pcap file
+  * SIP / pcapdisk: ensure that all packets that comprise a fragmented SIP
+    message are written to the pcap file if pcapdisk is used instead of an
+    agency.
+  * SIP: add support for using the Session-ID header (RFC 7329) to identify
+    call legs that belong to the same SIP session.
+  * SIP: fix bug where call legs for the same call that are handled by
+    different SIP worker threads would not be correctly combined into a single
+    CIN.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 8 Apr 2026 10:18:10 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 14 Apr 2026 12:29:31 +1200
 
 openli (1.1.17-1) unstable; urgency=medium
 
