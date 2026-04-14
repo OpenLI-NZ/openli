@@ -255,10 +255,8 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
             sipworker->call_state_mutex, msg->callid);
 
     if (cin == 0) {
-        /* we've never intercepted this call ID before, so reject it */
-        send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
-        rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
-        return 0;
+        /* no thread has intercepted this call ID before, so reject it */
+        goto reject;
     }
 
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
@@ -277,10 +275,14 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
             send_sip_redirect_reply(sipworker, REDIRECTED_SIP_CLAIM, msg);
             rd->receive_status = REDIRECTED_SIP_STATUS_CLAIMED;
         }
-        break;
+        return 1;
     }
 
-    return 1;
+reject:
+    /* No matching existing state for this call ID in this thread */
+    send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
+    rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
+    return 0;
 }
 
 int conclude_redirected_sip_call(openli_sip_worker_t *sipworker, char *callid) {
