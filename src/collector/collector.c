@@ -865,28 +865,26 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
     uint8_t proto;
     uint32_t rem;
 
-    if (pinfo->trans_proto != 0) {
-        /* already looked this up */
+    /* We already know where the payload is... */
+    if (pinfo->payload_ptr) {
         return;
     }
 
     transport = trace_get_transport(pkt, &proto, &rem);
-
-    if (transport == NULL || rem == 0) {
-        pinfo->trans_proto = 255;
-        return;
-    }
-
     pinfo->trans_proto = proto;
+
     plen = trace_get_payload_length(pkt);
 
-    if (proto == TRACE_IPPROTO_UDP) {
+    if (pinfo->trans_proto == TRACE_IPPROTO_UDP) {
         payload = trace_get_payload_from_udp((libtrace_udp_t *)transport,
                 &rem);
         if (payload == NULL) {
             return;
         }
-    } else if (proto == TRACE_IPPROTO_TCP) {
+    } else if (pinfo->trans_proto == TRACE_IPPROTO_TCP) {
+        /* We only do call this method for UDP these days, but just in
+         * case...
+         */
         payload = trace_get_payload_from_tcp((libtrace_tcp_t *)transport,
                 &rem);
         if (payload == NULL) {
