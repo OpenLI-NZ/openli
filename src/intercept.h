@@ -165,7 +165,7 @@ typedef struct intercept_common {
     openli_timestamp_encoding_fmt_t time_fmt;
     uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
     size_t encryptkey_len;   /* set to 24 when valid */
-
+    char *operatorid;
     uuid_t *xids;
     size_t xid_count;
 

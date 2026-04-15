@@ -405,6 +405,7 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 
 #define LEA_DIGEST_BODY_LEN(lea) \
     (strlen(lea->agencyid) + sizeof(openli_timestamp_encoding_fmt_t) + \
+     (lea->operatorid ? strlen(lea->operatorid) + 4 : 0) + \
      (lea->digest.required ? (sizeof(openli_integrity_hash_method_t) + \
         sizeof(openli_integrity_hash_method_t) + \
         (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
@@ -425,6 +426,14 @@ int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(lea->agencyid),
                 strlen(lea->agencyid)) == -1) {
         return -1;
+    }
+
+    if (lea->operatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_OPERATORID,
+                    (uint8_t *)(lea->operatorid),
+                    strlen(lea->operatorid)) == -1) {
+            return -1;
+        }
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
@@ -639,6 +648,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          sizeof(common.time_fmt) + sizeof(common.liid_format) + \
+         (common.operatorid ? 4 + strlen(common.operatorid) : 0) + \
          (common.encryptkey_len > 0 ? 4 + common.encryptkey_len : 0) + \
          (36 * common.xid_count) + \
          ((11 + common.xid_count) * 4))
@@ -681,6 +691,14 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)common->targetagency,
             strlen(common->targetagency)) == -1) {
         return -1;
+    }
+
+    if (common->operatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_OPERATORID,
+                (uint8_t *)common->operatorid,
+                strlen(common->operatorid)) == -1) {
+            return -1;
+        }
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
@@ -2023,6 +2041,7 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->delivcc = NULL;
     common->destid = 0;
     common->targetagency = NULL;
+    common->operatorid = NULL;
     common->liid_format = OPENLI_LIID_FORMAT_ASCII;
     common->liid_len = 0;
     common->authcc_len = 0;
@@ -2058,6 +2077,9 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_LEAID:
             DECODE_STRING_FIELD(common->targetagency, valptr, vallen);
+            break;
+        case OPENLI_PROTO_FIELD_OPERATORID:
+            DECODE_STRING_FIELD(common->operatorid, valptr, vallen);
             break;
         case OPENLI_PROTO_FIELD_DELIVCC:
             DECODE_STRING_FIELD(common->delivcc, valptr, vallen);
@@ -2829,7 +2851,7 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
 }
 
 int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
-        liagency_digest_config_t **digest) {
+        liagency_digest_config_t **digest, char **operatorid) {
 
     uint8_t *msgend = msgbody + len;
 
@@ -2842,6 +2864,8 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
     (*digest)->sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
     (*digest)->sign_method = DEFAULT_DIGEST_HASH_METHOD;
     (*digest)->sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+
+    *operatorid = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2860,6 +2884,8 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
 
         if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agencyid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_OPERATORID) {
+            DECODE_STRING_FIELD(*operatorid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT) {
             (*digest)->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {

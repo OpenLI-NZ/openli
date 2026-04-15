@@ -48,6 +48,7 @@ struct json_agency {
     struct json_object *ho_retry;
     struct json_object *resend_win;
     struct json_object *agencycc;
+    struct json_object *operatorid;
     struct json_object *integrity;
     struct json_object *encryptmethod;
     struct json_object *encryptkey;
@@ -205,6 +206,7 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "resendwindow", &(agjson->resend_win));
     json_object_object_get_ex(parsed, "timestampformat", &(agjson->timefmt));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
+    json_object_object_get_ex(parsed, "operatorid", &(agjson->operatorid));
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
             &(agjson->encryptmethod));
@@ -540,6 +542,7 @@ static int update_intercept_common(intercept_common_t *parsed,
     payload_encryption_method_t enc;
     prov_intercept_data_t *timers = (prov_intercept_data_t *)(existing->local);
     int encryptchanged = 0;
+    int opchanged = 0;
 
     /* Check if encryption options are valid -- if not, roll back without
      * changing anything.
@@ -587,6 +590,9 @@ static int update_intercept_common(intercept_common_t *parsed,
     MODIFY_STRING_MEMBER(parsed->targetagency, existing->targetagency,
             agencychanged);
 
+    MODIFY_STRING_MEMBER(parsed->operatorid, existing->operatorid,
+            &opchanged);
+
     if (*agencychanged) {
         timers->start_hi1_sent = 0;
     }
@@ -617,6 +623,9 @@ static int update_intercept_common(intercept_common_t *parsed,
         new_intercept_liidmapping(state, existing);
     }
     if (encryptchanged) {
+        *changed = 1;
+    }
+    if (opchanged) {
         *changed = 1;
     }
 
@@ -2925,6 +2934,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->hi2_portstr, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencycc", "agency", agjson.agencycc,
             nag->agencycc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("operatorid", "agency", agjson.operatorid,
+            nag->operatorid, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             nag->keepalivefreq, &parseerr, 0, 0xFFFFFFFF, false);
@@ -3067,6 +3078,8 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.hi2_portstr, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencycc", "agency", agjson.agencycc,
             modified.agencycc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("operatorid", "agency", agjson.operatorid,
+            modified.operatorid, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             modified.keepalivefreq, &parseerr, 0, 1000000, false);
@@ -3152,10 +3165,14 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         found->ag->encrypt = modified.encrypt;
     }
 
+    update_intercept_timeformats(state, found->ag->agencyid,
+            modified.digest.time_fmt, modified.operatorid);
+
+    MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
+            &changed);
+
     if (modified.digest.time_fmt != 0xff &&
             modified.digest.time_fmt != found->ag->digest.time_fmt) {
-        update_intercept_timeformats(state, found->ag->agencyid,
-                modified.digest.time_fmt);
         found->ag->digest.time_fmt = modified.digest.time_fmt;
         changed = 1;
         medchanged = 1;
@@ -3290,6 +3307,9 @@ agencyerr:
     }
     if (modified.agencycc) {
         free(modified.agencycc);
+    }
+    if (modified.operatorid) {
+        free(modified.operatorid);
     }
     if (parsed) {
         json_object_put(parsed);

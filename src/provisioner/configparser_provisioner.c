@@ -633,6 +633,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->hi3_portstr = NULL;
         newag->agencyid = NULL;
         newag->agencycc = NULL;
+        newag->operatorid = NULL;
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = 0;
         newag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
@@ -704,6 +705,13 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                     strcasecmp((char *)key->data.scalar.value,
                             "agencycountrycode") == 0) {
                 SET_CONFIG_STRING_OPTION(newag->agencycc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "operatorid") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->operatorid, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -785,6 +793,16 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                     "OpenLI: WARNING configuration error in running intercept config -- agency is missing the 'agencyid' field");
             logger(LOG_INFO,
                     "OpenLI: this agency will be ignored");
+            free_liagency(newag);
+            continue;
+        }
+
+        if (newag->operatorid && strlen(newag->operatorid) > 16) {
+            logger(LOG_INFO,
+                    "OpenLI: configuration error in running intercept config -- 'operatorid' for an agency must be 16 characters or less");
+            logger(LOG_INFO,
+                    "OpenLI: 'operatorid' for agency '%s' will be ignored",
+                    newag->agencyid);
             free_liagency(newag);
             continue;
         }
@@ -961,6 +979,7 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->delivcc_len = 0;
     common->destid = 0;
     common->targetagency = NULL;
+    common->operatorid = NULL;
     common->tostart_time = 0;
     common->toend_time = 0;
     common->tomediate = OPENLI_INTERCEPT_OUTPUTS_ALL;
@@ -1587,6 +1606,11 @@ static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
             continue;
         }
         ipint->common.time_fmt = ag->ag->digest.time_fmt;
+        if (ag->ag->operatorid) {
+            ipint->common.operatorid = strdup(ag->ag->operatorid);
+        } else {
+            ipint->common.operatorid = NULL;
+        }
     }
 
     HASH_ITER(hh_liid, conf->voipintercepts, vint, vinttmp) {
@@ -1596,6 +1620,11 @@ static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
             continue;
         }
         vint->common.time_fmt = ag->ag->digest.time_fmt;
+        if (ag->ag->operatorid) {
+            vint->common.operatorid = strdup(ag->ag->operatorid);
+        } else {
+            vint->common.operatorid = NULL;
+        }
     }
 
     HASH_ITER(hh_liid, conf->emailintercepts, em, emtmp) {
@@ -1605,6 +1634,11 @@ static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
             continue;
         }
         em->common.time_fmt = ag->ag->digest.time_fmt;
+        if (ag->ag->operatorid) {
+            em->common.operatorid = strdup(ag->ag->operatorid);
+        } else {
+            em->common.operatorid = NULL;
+        }
     }
 
 }

@@ -38,6 +38,16 @@
     tv->tv_sec = (uint32_t)(floatts); \
     tv->tv_usec = (uint32_t)(((floatts - tv->tv_sec) * 1000000));
 
+#define UPDATE_STRING_FIELD(dst, src, dstlen) \
+    if (dst) { \
+        if (src == NULL) { \
+            free(dst); dst = NULL; \
+        } else if (strcmp(dst,src) != 0) { \
+            free(dst); dst = src; src = NULL; dstlen=strlen(dst); \
+        } \
+    } else { \
+        dst = src; src = NULL; dstlen=strlen(dst); \
+    }
 
 typedef struct string_set {
     char *term;

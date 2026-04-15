@@ -710,6 +710,11 @@ static void start_email_intercept(openli_email_worker_t *state,
         expmsg->data.cept.timefmt = em->common.time_fmt;
         expmsg->data.cept.liid_format = em->common.liid_format;
         expmsg->data.cept.targetagency = strdup(em->common.targetagency);
+        if (em->common.operatorid) {
+            expmsg->data.cept.operatorid = strdup(em->common.operatorid);
+        } else {
+            expmsg->data.cept.operatorid = NULL;
+        }
 
         if (em->common.encrypt > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
             em->common.encryptkey_len > 0) {

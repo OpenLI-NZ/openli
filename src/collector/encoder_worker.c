@@ -55,6 +55,9 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->delivcc) {
         free(known->delivcc);
     }
+    if (known->operatorid) {
+        free(known->operatorid);
+    }
     etsili_destroy_encrypted_templates(
             known->encrypt_cc.saved_encryption_templates);
     etsili_destroy_encrypted_templates(
@@ -83,6 +86,9 @@ static void destroy_encoding_job(openli_encoding_job_t *job,
     }
     if (job->encryptkey) {
         free(job->encryptkey);
+    }
+    if (job->operatorid) {
+        free(job->operatorid);
     }
     if (job->origreq && free_request) {
         free_published_message(job->origreq);
@@ -264,7 +270,9 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
     }
 
     pthread_rwlock_rdlock(enc->shared_mutex);
-    if (enc->shared->operatorid) {
+    if (found->operatorid) {
+        operatorid = strdup(found->operatorid);
+    } else if (enc->shared->operatorid) {
         operatorid = strdup(enc->shared->operatorid);
     }
     if (enc->shared->networkelemid) {
@@ -478,13 +486,21 @@ static void check_agency_digest_config(openli_encoder_t *enc,
         memcpy(&found->digest_config, agdigest->config,
                 sizeof(liagency_digest_config_t));
     }
+    if (found->operatorid) {
+        free(found->operatorid);
+    }
+    if (agdigest->operatorid) {
+        found->operatorid = strdup(agdigest->operatorid);
+    } else {
+        found->operatorid = NULL;
+    }
 
     pthread_rwlock_unlock(enc->digest_config_mutex);
     pthread_rwlock_unlock(enc->liid_agency_mutex);
 }
 
 static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
-        char *liid, char *authcc, char *delivcc) {
+        char *liid, char *authcc, char *delivcc, char *operatorid) {
 
     encoder_liid_state_t *found;
 
@@ -499,6 +515,9 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
     memset(&found->digest_config, 0, sizeof(found->digest_config));
     found->digest_cin_keys = NULL;
     found->digest_config_disabled = 1;
+    if (operatorid) {
+        found->operatorid = strdup(operatorid);
+    }
 
     found->fwd_index = hash_liid(liid) % enc->forwarders;
 
@@ -1214,9 +1233,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
 
         if (job.origreq == NULL) {
             /* This is a message to tell us that the intercept is no
-             * longer active
-             */
-            /* TODO remove integrity check state as well */
+             * longer active. Remove integrity check state as well */
             if (found) {
                 integrity_check_state_t *ics, *tmp;
                 HASH_DELETE(hh, enc->known_liids, found);
@@ -1239,7 +1256,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
 
         if (!found) {
             found = create_new_known_liid(enc, job.liid, job.authcc,
-                    job.delivcc);
+                    job.delivcc, job.operatorid);
         }
 
         check_agency_digest_config(enc, found);

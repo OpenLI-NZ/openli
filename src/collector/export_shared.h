@@ -42,6 +42,7 @@ typedef struct exporter_intercept_msg {
     char *delivcc;
     int delivcc_len;
     char *agencyid;
+    char *operatorid;
 
     payload_encryption_method_t encryptmethod;
     uint8_t *encryptkey;
