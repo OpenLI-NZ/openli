@@ -215,17 +215,6 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
     }
 }
 
-#define UPDATE_STRING_FIELD(dst, src, dstlen) \
-    if (dst) { \
-        if (src == NULL) { \
-            free(dst); dst = NULL; \
-        } else if (strcmp(dst,src) != 0) { \
-            free(dst); dst = src; src = NULL; dstlen=strlen(dst); \
-        } \
-    } else { \
-        dst = src; src = NULL; dstlen=strlen(dst); \
-    }
-
 static inline void update_intercept_common(published_intercept_msg_t *src,
         intercept_common_t *dst, uint32_t destid) {
 
@@ -234,6 +223,7 @@ static inline void update_intercept_common(published_intercept_msg_t *src,
     UPDATE_STRING_FIELD(dst->authcc, src->authcc, dst->authcc_len)
     UPDATE_STRING_FIELD(dst->delivcc, src->delivcc, dst->delivcc_len)
     UPDATE_STRING_FIELD(dst->targetagency, src->targetagency, unused)
+    UPDATE_STRING_FIELD(dst->operatorid, src->operatorid, unused)
 
 	/* binary key: copy bytes or clear */
     if (src->encryptkey && src->encryptkey_len > 0 &&
@@ -267,6 +257,7 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     dst->delivcc = src->delivcc;
     dst->destid = destid;
     dst->targetagency = src->targetagency;
+    dst->operatorid = src->operatorid;
     dst->seqtrackerid = src->seqtrackerid;
     dst->encrypt = src->encryptmethod;
     dst->xid_count = src->xid_count;
@@ -299,6 +290,7 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     src->authcc = NULL;
     src->delivcc = NULL;
     src->targetagency = NULL;
+    src->operatorid = NULL;
     src->xids = NULL;
     /* already NULLed by move; just ensure len is 0 */
     src->encryptkey = NULL;

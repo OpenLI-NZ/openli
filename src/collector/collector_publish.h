@@ -259,6 +259,7 @@ typedef struct published_intercept_msg {
     char *targetagency;
 
     // optional fields
+    char *operatorid;
     char *username;
     internet_access_method_t accesstype;
 } published_intercept_msg_t;

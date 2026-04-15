@@ -45,7 +45,7 @@ int update_liid_to_agency_map(liid_to_agency_mapping_t **map,
 void purge_liid_to_agency_map(liid_to_agency_mapping_t **map);
 
 int update_agency_digest_config_map(agency_digest_config_t **map,
-        char *agencyid, liagency_digest_config_t *digest);
+        char *agencyid, liagency_digest_config_t *digest, char *operatorid);
 void free_agency_digest_config(agency_digest_config_t *dig);
 void remove_agency_digest_config(agency_digest_config_t **map,
         char *agencyid);

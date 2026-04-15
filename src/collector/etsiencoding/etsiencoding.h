@@ -143,6 +143,7 @@ typedef struct encoder_job {
     payload_encryption_method_t encryptmethod;
     uint8_t *encryptkey;
     size_t encryptkey_len;
+    char *operatorid;
 
     openli_timestamp_encoding_fmt_t timefmt;
     openli_liid_format_t liid_format;

@@ -547,7 +547,8 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
 int announce_latest_default_email_decompress(provision_state_t *state);
 int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
 void update_intercept_timeformats(provision_state_t *state,
-        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt);
+        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt,
+        char *operatorid);
 int announce_configuration_update_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *newconfig);
 int announce_x2x3_listener_to_collector(provision_state_t *state,

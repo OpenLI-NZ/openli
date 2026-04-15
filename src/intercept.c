@@ -189,6 +189,11 @@ static inline void copy_intercept_common(intercept_common_t *src,
                OPENLI_MAX_ENCRYPTKEY_LEN - dest->encryptkey_len);
     }
 
+    if (src->operatorid) {
+        dest->operatorid = strdup(src->operatorid);
+    } else {
+        dest->operatorid = NULL;
+    }
 
     dest->xids = calloc(src->xid_count, sizeof(uuid_t));
     dest->xid_count = src->xid_count;
@@ -250,7 +255,7 @@ int update_modified_intercept_common(intercept_common_t *current,
         int *updatereq) {
 
     char *tmp;
-    int encodingchanged = 0;
+    int encodingchanged = 0, unused;
 
     *updatereq = 0;
 
@@ -307,6 +312,13 @@ int update_modified_intercept_common(intercept_common_t *current,
         encodingchanged = 1;
     }
 
+    tmp = current->operatorid;
+    UPDATE_STRING_FIELD(current->operatorid, update->operatorid, unused);
+    if (tmp != current->operatorid) {
+        encodingchanged = 1;
+        *updatereq = 1;
+    }
+    (void)unused;
 
     if (strcmp(update->targetagency, current->targetagency) != 0) {
         tmp = update->targetagency;
@@ -539,6 +551,10 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 
     if (cept->targetagency) {
         free(cept->targetagency);
+    }
+
+    if (cept->operatorid) {
+        free(cept->operatorid);
     }
 
     // zero the encryption key

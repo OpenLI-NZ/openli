@@ -210,6 +210,18 @@ static inline int common_intercept_equal(intercept_common_t *a,
         return 0;
     }
 
+    if (a->operatorid == NULL && b->operatorid != NULL) {
+        return 0;
+    }
+    if (b->operatorid == NULL && a->operatorid != NULL) {
+        return 0;
+    }
+    if (a->operatorid && b->operatorid) {
+        if (strcmp(a->operatorid, b->operatorid) != 0) {
+            return 0;
+        }
+    }
+
     if (compare_xid_list(a, b) != 0) {
         return 0;
     }

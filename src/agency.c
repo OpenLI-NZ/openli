@@ -65,6 +65,9 @@ liagency_t *copy_liagency(liagency_t *lea) {
     if (lea->agencycc) {
         copy->agencycc = strdup(lea->agencycc);
     }
+    if (lea->operatorid) {
+        copy->operatorid = strdup(lea->operatorid);
+    }
     if (lea->hi2_portstr) {
         copy->hi2_portstr = strdup(lea->hi2_portstr);
     }
@@ -102,6 +105,9 @@ void free_liagency(liagency_t *lea) {
 	}
     if (lea->agencycc) {
         free(lea->agencycc);
+    }
+    if (lea->operatorid) {
+        free(lea->operatorid);
     }
 	free(lea);
 }

@@ -917,47 +917,76 @@ void clear_liid_announce_flags(prov_intercept_conf_t *conf) {
 }
 
 void update_intercept_timeformats(provision_state_t *state,
-        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt) {
+        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt,
+        char *operatorid) {
 
     emailintercept_t *em, *emtmp;
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint, *vtmp;
+    uint8_t changed = 0;
+    int unused;
+    char *prev;
 
     HASH_ITER(hh_liid, state->interceptconf.emailintercepts, em, emtmp) {
+        changed = 0;
         if (strcasecmp(em->common.targetagency, agencyid) != 0) {
             continue;
         }
-        if (em->common.time_fmt == newfmt) {
-            continue;
+        if (newfmt != 0xff && em->common.time_fmt != newfmt) {
+            em->common.time_fmt = newfmt;
+            changed = 1;
         }
-        em->common.time_fmt = newfmt;
-        modify_existing_intercept_options(state, (void *)em,
-                OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+        prev = em->common.operatorid;
+        UPDATE_STRING_FIELD(em->common.operatorid, operatorid, unused);
+        if (em->common.operatorid != prev) {
+            changed = 1;
+        }
+        if (changed) {
+            modify_existing_intercept_options(state, (void *)em,
+                    OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+        }
     }
 
     HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, iptmp) {
+        changed = 0;
         if (strcasecmp(ipint->common.targetagency, agencyid) != 0) {
             continue;
         }
-        if (ipint->common.time_fmt == newfmt) {
-            continue;
+        if (newfmt != 0xff && ipint->common.time_fmt != newfmt) {
+            ipint->common.time_fmt = newfmt;
+            changed = 1;
         }
-        ipint->common.time_fmt = newfmt;
-        modify_existing_intercept_options(state, (void *)ipint,
-                OPENLI_PROTO_MODIFY_IPINTERCEPT);
+        prev = ipint->common.operatorid;
+        UPDATE_STRING_FIELD(ipint->common.operatorid, operatorid, unused);
+        if (ipint->common.operatorid != prev) {
+            changed = 1;
+        }
+        if (changed) {
+            modify_existing_intercept_options(state, (void *)ipint,
+                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
+        }
     }
 
     HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint, vtmp) {
+        changed = 0;
         if (strcasecmp(vint->common.targetagency, agencyid) != 0) {
             continue;
         }
-        if (vint->common.time_fmt == newfmt) {
-            continue;
+        if (newfmt != 0xff && vint->common.time_fmt != newfmt) {
+            vint->common.time_fmt = newfmt;
+            changed = 1;
         }
-        vint->common.time_fmt = newfmt;
-        modify_existing_intercept_options(state, (void *)vint,
-                OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+        prev = vint->common.operatorid;
+        UPDATE_STRING_FIELD(vint->common.operatorid, operatorid, unused);
+        if (vint->common.operatorid != prev) {
+            changed = 1;
+        }
+        if (changed) {
+            modify_existing_intercept_options(state, (void *)vint,
+                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+        }
     }
+    (void)unused;
 
 }
 

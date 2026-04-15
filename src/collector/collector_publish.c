@@ -99,6 +99,11 @@ openli_export_recv_t *create_intercept_details_msg(intercept_common_t *common,
     }
 
     expmsg->data.cept.seqtrackerid = common->seqtrackerid;
+    if (common->operatorid) {
+        expmsg->data.cept.operatorid = strdup(common->operatorid);
+    } else {
+        expmsg->data.cept.operatorid = NULL;
+    }
 
     // set the optional fields to suitable "null" values
     expmsg->data.cept.username = NULL;
@@ -135,6 +140,9 @@ void free_published_message(openli_export_recv_t *msg) {
         }
         if (msg->data.cept.xids) {
             free(msg->data.cept.xids);
+        }
+        if (msg->data.cept.operatorid) {
+            free(msg->data.cept.operatorid);
         }
 
     } else if (msg->type == OPENLI_EXPORT_IPCC ||
