@@ -234,7 +234,9 @@ value for that option.
 The basic option keys are:
 * provisioneraddr   -- connect to a provisioner at this IP address
 * provisionerport   -- connect to a provisioner listening on this port
-* operatorid        -- set the operator ID
+* operatorid        -- set the default operator ID that is used by intercepts
+                       whose destination agency does not explicitly define
+                       one. Must not exceed 16 characters in length.
 * networkelementid  -- set the network element ID
 * interceptpointid  -- set the interception point ID
 * seqtrackerthreads -- set the number of threads to use for sequence number
