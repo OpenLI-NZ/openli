@@ -871,7 +871,9 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
     }
 
     transport = trace_get_transport(pkt, &proto, &rem);
-    pinfo->trans_proto = proto;
+    if (pinfo->trans_proto == 0) {
+        pinfo->trans_proto = proto;
+    }
 
     plen = trace_get_payload_length(pkt);
 
