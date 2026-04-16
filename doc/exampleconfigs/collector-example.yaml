@@ -4,7 +4,10 @@
 provisioneraddr: 10.0.0.1
 provisionerport: 9001
 
-# Unique ID string for my network (16 chars max)
+# Unique ID string for my network (16 chars max). Note that this will be
+# overridden by any 'operatorid' that has been defined for the destination
+# agency (i.e. this is a fallback for agencies that have not defined an
+# operator identifier).
 operatorid: WAND
 
 # Unique ID string for the location of my collector (16 chars max)
