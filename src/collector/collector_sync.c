@@ -2132,7 +2132,7 @@ static int update_modified_intercept(collector_sync_t *sync,
     }
 
     if (encodingchanged) {
-        expmsg = create_intercept_details_msg(&(modified->common),
+        expmsg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],

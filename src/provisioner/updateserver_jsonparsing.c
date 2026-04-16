@@ -590,9 +590,6 @@ static int update_intercept_common(intercept_common_t *parsed,
     MODIFY_STRING_MEMBER(parsed->targetagency, existing->targetagency,
             agencychanged);
 
-    MODIFY_STRING_MEMBER(parsed->operatorid, existing->operatorid,
-            &opchanged);
-
     if (*agencychanged) {
         timers->start_hi1_sent = 0;
     }
@@ -3039,6 +3036,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int changed = 0;
     int medchanged = 0, colchanged = 0;
     char *encstr = NULL;
+    char *prev = NULL;
 
     memset(&modified, 0, sizeof(modified));
     INIT_JSON_AGENCY_PARSING
@@ -3097,6 +3095,13 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             agjson.encryptkey, encstr, &parseerr, false);
 
     if (parseerr) {
+        goto agencyerr;
+    }
+
+    if (modified.operatorid && strlen(modified.operatorid) > 16) {
+        logger(LOG_INFO,
+                "OpenLI: did not modify existing agency '%s' via update socket, as the provided operatorid was too long.",
+                found->ag->agencyid);
         goto agencyerr;
     }
 
@@ -3168,8 +3173,21 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     update_intercept_timeformats(state, found->ag->agencyid,
             modified.digest.time_fmt, modified.operatorid);
 
-    MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
-            &changed);
+    if (modified.operatorid && strlen(modified.operatorid) == 0) {
+        if (found->ag->operatorid) {
+            free(found->ag->operatorid);
+            found->ag->operatorid = NULL;
+            changed = 1;
+            colchanged = 1;
+        }
+    } else {
+        prev = found->ag->operatorid;
+        MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
+                &changed);
+        if (prev != found->ag->operatorid) {
+            colchanged = 1;
+        }
+    }
 
     if (modified.digest.time_fmt != 0xff &&
             modified.digest.time_fmt != found->ag->digest.time_fmt) {

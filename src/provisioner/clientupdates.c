@@ -924,8 +924,14 @@ void update_intercept_timeformats(provision_state_t *state,
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint, *vtmp;
     uint8_t changed = 0;
-    int unused;
-    char *prev;
+
+    /* Handle case when the operator ID has been set to the empty
+     * string, which is how we allow users to remove the operator ID from
+     * an agency via the REST API.
+     */
+    if (operatorid && strlen(operatorid) == 0) {
+        operatorid = NULL;
+    }
 
     HASH_ITER(hh_liid, state->interceptconf.emailintercepts, em, emtmp) {
         changed = 0;
@@ -936,11 +942,26 @@ void update_intercept_timeformats(provision_state_t *state,
             em->common.time_fmt = newfmt;
             changed = 1;
         }
-        prev = em->common.operatorid;
-        UPDATE_STRING_FIELD(em->common.operatorid, operatorid, unused);
-        if (em->common.operatorid != prev) {
-            changed = 1;
+
+        if (em->common.operatorid == NULL) {
+            if (operatorid) {
+                em->common.operatorid = strdup(operatorid);
+                changed = 1;
+            }
+        } else {
+            if (operatorid) {
+                if (strcmp(operatorid, em->common.operatorid) != 0) {
+                    free(em->common.operatorid);
+                    em->common.operatorid = strdup(operatorid);
+                    changed = 1;
+                }
+            } else {
+                free(em->common.operatorid);
+                em->common.operatorid = NULL;
+                changed = 1;
+            }
         }
+
         if (changed) {
             modify_existing_intercept_options(state, (void *)em,
                     OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
@@ -956,11 +977,25 @@ void update_intercept_timeformats(provision_state_t *state,
             ipint->common.time_fmt = newfmt;
             changed = 1;
         }
-        prev = ipint->common.operatorid;
-        UPDATE_STRING_FIELD(ipint->common.operatorid, operatorid, unused);
-        if (ipint->common.operatorid != prev) {
-            changed = 1;
+        if (ipint->common.operatorid == NULL) {
+            if (operatorid) {
+                ipint->common.operatorid = strdup(operatorid);
+                changed = 1;
+            }
+        } else {
+            if (operatorid) {
+                if (strcmp(operatorid, ipint->common.operatorid) != 0) {
+                    free(ipint->common.operatorid);
+                    ipint->common.operatorid = strdup(operatorid);
+                    changed = 1;
+                }
+            } else {
+                free(ipint->common.operatorid);
+                ipint->common.operatorid = NULL;
+                changed = 1;
+            }
         }
+
         if (changed) {
             modify_existing_intercept_options(state, (void *)ipint,
                     OPENLI_PROTO_MODIFY_IPINTERCEPT);
@@ -976,17 +1011,29 @@ void update_intercept_timeformats(provision_state_t *state,
             vint->common.time_fmt = newfmt;
             changed = 1;
         }
-        prev = vint->common.operatorid;
-        UPDATE_STRING_FIELD(vint->common.operatorid, operatorid, unused);
-        if (vint->common.operatorid != prev) {
-            changed = 1;
+        if (vint->common.operatorid == NULL) {
+            if (operatorid) {
+                vint->common.operatorid = strdup(operatorid);
+                changed = 1;
+            }
+        } else {
+            if (operatorid) {
+                if (strcmp(operatorid, vint->common.operatorid) != 0) {
+                    free(vint->common.operatorid);
+                    vint->common.operatorid = strdup(operatorid);
+                    changed = 1;
+                }
+            } else {
+                free(vint->common.operatorid);
+                vint->common.operatorid = NULL;
+                changed = 1;
+            }
         }
         if (changed) {
             modify_existing_intercept_options(state, (void *)vint,
                     OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
         }
     }
-    (void)unused;
 
 }
 
