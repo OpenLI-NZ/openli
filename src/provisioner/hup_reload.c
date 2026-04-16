@@ -210,18 +210,6 @@ static inline int common_intercept_equal(intercept_common_t *a,
         return 0;
     }
 
-    if (a->operatorid == NULL && b->operatorid != NULL) {
-        return 0;
-    }
-    if (b->operatorid == NULL && a->operatorid != NULL) {
-        return 0;
-    }
-    if (a->operatorid && b->operatorid) {
-        if (strcmp(a->operatorid, b->operatorid) != 0) {
-            return 0;
-        }
-    }
-
     if (compare_xid_list(a, b) != 0) {
         return 0;
     }
@@ -665,6 +653,8 @@ static int reload_emailintercepts(provision_state_t *currstate,
             char *old_target_info = list_email_targets(mailint, 256);
             char *new_target_info = list_email_targets(newequiv, 256);
 
+            HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
+                    strlen(newequiv->common.targetagency), lea);
             if (!lea && strcmp(newequiv->common.targetagency, "pcapdisk")
                     != 0) {
                 // this intercept got changed to a non-existent LEA, or the

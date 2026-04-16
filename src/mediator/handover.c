@@ -428,6 +428,9 @@ void destroy_agency(mediator_agency_t *ag) {
     if (ag->agencycc) {
         free(ag->agencycc);
     }
+    if (ag->operatorid) {
+        free(ag->operatorid);
+    }
 }
 
 /** Registers a single RMQ queue for an LIID with the RMQ consumer for a
