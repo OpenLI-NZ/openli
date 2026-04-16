@@ -405,6 +405,7 @@ static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
 static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
+    int unused;
     exporter_intercept_state_t *intstate;
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
 
@@ -428,6 +429,8 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
             intstate->details.encryptkey_len);
 
+    UPDATE_STRING_FIELD(intstate->details.operatorid, msg->operatorid, unused);
+
     if (intstate->details.delivcc) {
         free(intstate->details.delivcc);
     }
@@ -443,6 +446,7 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     preencode_etsi_fields(seqdata, intstate);
     intstate->version ++;
 
+    (void)unused;
     return 0;
 }
 
