@@ -76,6 +76,11 @@ static void init_mediator_agency(mediator_agency_t *agency,
     agency->disabled_msg = 0;
     agency->handover_retry = fromprov->handover_retry;
     agency->timefmt = fromprov->digest.time_fmt;
+    if (fromprov->operatorid) {
+        agency->operatorid = strdup(fromprov->operatorid);
+    } else {
+        agency->operatorid = NULL;
+    }
 
     agency->hi2 = create_new_handover(epollfd, fromprov->hi2_ipstr,
             fromprov->hi2_portstr, HANDOVER_HI2, fromprov->keepalivefreq,
@@ -224,6 +229,15 @@ static void update_agency_handovers(mediator_agency_t *currag,
 
             /* will attempt to reconnect with the new config shortly */
         }
+    }
+
+    if (currag->operatorid) {
+        free(currag->operatorid);
+    }
+    if (newag->operatorid) {
+        currag->operatorid = strdup(newag->operatorid);
+    } else {
+        currag->operatorid = NULL;
     }
 
     if (currag->agencycc) {
@@ -835,6 +849,7 @@ static void publish_hi1_notification(lea_thread_state_t *state,
     uint8_t *enckey = NULL;
     size_t enckeylen = 0;
     payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+    char *operatorid = NULL;
 
     if (!ndata) {
         return;
@@ -857,9 +872,15 @@ static void publish_hi1_notification(lea_thread_state_t *state,
         reset_wandder_encoder(state->agency.hi2->ho_state->encoder);
     }
 
+    if (state->agency.operatorid) {
+        operatorid = state->agency.operatorid;
+    } else {
+        operatorid = state->operator_id;
+    }
+
     /* encode into ETSI format using libwandder */
     encoded_hi1 = encode_etsi_hi1_notification(
-            state->agency.hi2->ho_state->encoder, ndata, state->operator_id,
+            state->agency.hi2->ho_state->encoder, ndata, operatorid,
             state->short_operator_id, state->agency.timefmt,
             &(state->encryptstate), encmethod, enckey, enckeylen);
     if (encoded_hi1 == NULL) {

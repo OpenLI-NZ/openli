@@ -3179,6 +3179,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             found->ag->operatorid = NULL;
             changed = 1;
             colchanged = 1;
+            medchanged = 1;
         }
     } else {
         prev = found->ag->operatorid;
@@ -3186,6 +3187,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 &changed);
         if (prev != found->ag->operatorid) {
             colchanged = 1;
+            medchanged = 1;
         }
     }
 
