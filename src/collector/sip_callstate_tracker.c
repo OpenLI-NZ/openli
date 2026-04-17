@@ -317,6 +317,9 @@ int create_new_intercepted_voice_call(
     vc->created = tv->tv_sec;
     vc->cin = hashlittle(callid, strlen(callid), 0xceefface);
     vc->cin = (vc->cin % (uint32_t)(pow(2, 31)));
+    if (vc->cin == 0) {
+        vc->cin = 1;
+    }
     cin_copy = vc->cin;
 
     if (sessionid) {
