@@ -341,7 +341,6 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
         dir = 1;
     }
 
-
     /* A bit of an explanation of invitecseq, inviterport, inviter
      *
      * This is mainly dedicated to resolving issues that arise
@@ -591,6 +590,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
         voipintercept_t *vint, uint32_t *cin,
         uint8_t trust_sip_from, struct timeval *tv,
         openli_sip_identity_set_t *all_identities,
+        etsili_iri_type_t iritype,
         char *callid, char *sessionid, sip_sdp_identifier_t *sdpkey) {
 
     openli_sip_identity_t *matched = NULL;
@@ -598,19 +598,21 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     char rtpkey[256];
     int r = 0;
 
-    // This is a new call leg, but only track it if an intercept target
-    // is a participant
     matched = match_sip_target_against_identities(vint->targets,
             all_identities, trust_sip_from);
-    if (matched == NULL) {
-        return NULL;
-    }
+    // This is a new call leg, but only track it if an intercept target
+    // is a participant
+    if (iritype == ETSILI_IRI_BEGIN) {
+        if (matched == NULL) {
+            return NULL;
+        }
 
-    r = create_new_intercepted_voice_call(sipworker->call_state,
-                sipworker->call_state_mutex, callid, sdpkey, sessionid,
-                matched, vint, sipworker->workerid, tv);
-    if (r < 0) {
-        return NULL;
+        r = create_new_intercepted_voice_call(sipworker->call_state,
+                    sipworker->call_state_mutex, callid, sdpkey, sessionid,
+                    matched, vint, sipworker->workerid, tv);
+        if (r < 0) {
+            return NULL;
+        }
     }
 
     /*
@@ -622,11 +624,14 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
 
     *cin = get_voice_call_cin_using_callid(sipworker->call_state,
             sipworker->call_state_mutex, callid);
+    if (cin == 0) {
+        return NULL;
+    }
 
     snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, *cin, callid);
     HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
 
-    if (thisrtp == NULL) {
+    if (thisrtp == NULL && (iritype == ETSILI_IRI_BEGIN || matched != NULL)) {
         thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint,
                 callid);
     }
@@ -705,7 +710,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
             break;
         }
         thisrtp = match_call_to_intercept(sipworker, vint,
-                &cin, trust_sip_from, &tv, &all_identities,
+                &cin, trust_sip_from, &tv, &all_identities, iritype,
                 callid, session_id, sdpo);
         if (thisrtp == NULL) {
             continue;
