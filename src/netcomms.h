@@ -254,6 +254,8 @@ typedef enum {
     OPENLI_PROTO_FIELD_ACL_PORT,
     OPENLI_PROTO_FIELD_UUID,
     OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
+    OPENLI_PROTO_FIELD_OPERATORID,
+    OPENLI_PROTO_FIELD_SHORTOPERATORID,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for
@@ -385,7 +387,7 @@ int decode_emailintercept_modify(uint8_t *msgbody, uint16_t len,
 int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
-        liagency_digest_config_t **digest);
+        liagency_digest_config_t **digest, char **operatorid);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         char **liid, uint8_t *encryptkey, size_t *encryptlen,
         payload_encryption_method_t *method,

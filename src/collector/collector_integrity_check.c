@@ -110,7 +110,7 @@ void clear_digest_key_map(digest_map_key_t **map) {
 }
 
 int update_agency_digest_config_map(agency_digest_config_t **map,
-        char *agencyid, liagency_digest_config_t *digest) {
+        char *agencyid, liagency_digest_config_t *digest, char *operatorid) {
 
     agency_digest_config_t *found = NULL;
 
@@ -120,6 +120,14 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
         free(found->config);
         found->config = digest;
         found->disabled = 0;
+        if (found->operatorid) {
+            free(found->operatorid);
+        }
+        if (operatorid) {
+            found->operatorid = strdup(operatorid);
+        } else {
+            found->operatorid = NULL;
+        }
 
         /* For now, I'll just let any current timers expire rather
          * than trying to adjust them to suit the new config. After that,
@@ -132,6 +140,9 @@ int update_agency_digest_config_map(agency_digest_config_t **map,
     found = calloc(1, sizeof(agency_digest_config_t));
     found->agencyid = strdup(agencyid);
     found->config = digest;
+    if (operatorid) {
+        found->operatorid = strdup(operatorid);
+    }
     found->disabled = 0;
 
     HASH_ADD_KEYPTR(hh, *map, found->agencyid, strlen(found->agencyid),
@@ -147,6 +158,9 @@ void free_agency_digest_config(agency_digest_config_t *dig) {
     }
     if (dig->config) {
         free(dig->config);
+    }
+    if (dig->operatorid) {
+        free(dig->operatorid);
     }
 
     free(dig);

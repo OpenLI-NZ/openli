@@ -653,6 +653,8 @@ static int reload_emailintercepts(provision_state_t *currstate,
             char *old_target_info = list_email_targets(mailint, 256);
             char *new_target_info = list_email_targets(newequiv, 256);
 
+            HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
+                    strlen(newequiv->common.targetagency), lea);
             if (!lea && strcmp(newequiv->common.targetagency, "pcapdisk")
                     != 0) {
                 // this intercept got changed to a non-existent LEA, or the

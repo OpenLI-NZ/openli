@@ -51,6 +51,9 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->agencyid) {
         free(msg->agencyid);
     }
+    if (msg->operatorid) {
+        free(msg->operatorid);
+    }
     openli_free_encryptkey_ptr(&(msg->encryptkey), msg->encryptkey_len);
 }
 
@@ -303,7 +306,11 @@ static inline void preencode_etsi_fields(seqtracker_thread_data_t *seqdata,
     intdetails.delivcc = intstate->details.delivcc;
 
     pthread_rwlock_rdlock(seqdata->colident_mutex);
-    intdetails.operatorid = seqdata->colident->operatorid;
+    if (intstate->details.operatorid) {
+        intdetails.operatorid = intstate->details.operatorid;
+    } else {
+        intdetails.operatorid = seqdata->colident->operatorid;
+    }
     intdetails.networkelemid = seqdata->colident->networkelemid;
     intdetails.intpointid = seqdata->colident->intpointid;
 
@@ -328,6 +335,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         free(intstate->details.authcc);
         free(intstate->details.delivcc);
         free(intstate->details.agencyid);
+        free(intstate->details.operatorid);
         openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
                 intstate->details.encryptkey_len);
 
@@ -354,6 +362,11 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
     intstate->details.agencyid = strdup(cept->targetagency);
     intstate->details.authcc = strdup(cept->authcc);
     intstate->details.delivcc = strdup(cept->delivcc);
+    if (cept->operatorid) {
+        intstate->details.operatorid = strdup(cept->operatorid);
+    } else {
+        intstate->details.operatorid = NULL;
+    }
     intstate->details.authcc_len = strlen(cept->authcc);
     intstate->details.delivcc_len = strlen(cept->delivcc);
     intstate->details.encryptmethod = cept->encryptmethod;
@@ -392,6 +405,7 @@ static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
 static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
+    int unused;
     exporter_intercept_state_t *intstate;
     HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
 
@@ -415,6 +429,8 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     openli_free_encryptkey_ptr(&(intstate->details.encryptkey),
             intstate->details.encryptkey_len);
 
+    UPDATE_STRING_FIELD(intstate->details.operatorid, msg->operatorid, unused);
+
     if (intstate->details.delivcc) {
         free(intstate->details.delivcc);
     }
@@ -430,6 +446,7 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
     preencode_etsi_fields(seqdata, intstate);
     intstate->version ++;
 
+    (void)unused;
     return 0;
 }
 
@@ -498,6 +515,12 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;
+
+    if (intstate->details.operatorid) {
+        job.operatorid = strdup(intstate->details.operatorid);
+    } else {
+        job.operatorid = NULL;
+    }
 
     if (delivcc) {
         job.delivcc = strdup(delivcc);

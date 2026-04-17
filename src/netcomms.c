@@ -405,6 +405,7 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 
 #define LEA_DIGEST_BODY_LEN(lea) \
     (strlen(lea->agencyid) + sizeof(openli_timestamp_encoding_fmt_t) + \
+     (lea->operatorid ? strlen(lea->operatorid) + 4 : 0) + \
      (lea->digest.required ? (sizeof(openli_integrity_hash_method_t) + \
         sizeof(openli_integrity_hash_method_t) + \
         (4 * sizeof(uint32_t)) + sizeof(uint8_t) + \
@@ -425,6 +426,14 @@ int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)(lea->agencyid),
                 strlen(lea->agencyid)) == -1) {
         return -1;
+    }
+
+    if (lea->operatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_OPERATORID,
+                    (uint8_t *)(lea->operatorid),
+                    strlen(lea->operatorid)) == -1) {
+            return -1;
+        }
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
@@ -484,6 +493,8 @@ int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
      (lea->agencycc ? strlen(lea->agencycc) + 4 : 0)  + \
      strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
+     (lea->operatorid ? strlen(lea->operatorid) + 4 : 0) + \
+     (lea->shortoperatorid ? strlen(lea->shortoperatorid) + 4 : 0) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + \
      sizeof(uint32_t) + sizeof(openli_timestamp_encoding_fmt_t) + \
      (lea->digest.required ? (sizeof(openli_integrity_hash_method_t) + \
@@ -514,6 +525,21 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (lea->agencycc) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_LEACC, (uint8_t *)(lea->agencycc),
                     strlen(lea->agencycc)) == -1) {
+            return -1;
+        }
+    }
+
+    if (lea->operatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_OPERATORID,
+                (uint8_t *)(lea->operatorid), strlen(lea->operatorid)) == -1) {
+            return -1;
+        }
+    }
+
+    if (lea->shortoperatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_SHORTOPERATORID,
+                (uint8_t *)(lea->shortoperatorid),
+                strlen(lea->shortoperatorid)) == -1) {
             return -1;
         }
     }
@@ -639,6 +665,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
          strlen(common.targetagency) + sizeof(common.destid) + \
          sizeof(common.encrypt) + common.delivcc_len + \
          sizeof(common.time_fmt) + sizeof(common.liid_format) + \
+         (common.operatorid ? 4 + strlen(common.operatorid) : 0) + \
          (common.encryptkey_len > 0 ? 4 + common.encryptkey_len : 0) + \
          (36 * common.xid_count) + \
          ((11 + common.xid_count) * 4))
@@ -681,6 +708,14 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LEAID, (uint8_t *)common->targetagency,
             strlen(common->targetagency)) == -1) {
         return -1;
+    }
+
+    if (common->operatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_OPERATORID,
+                (uint8_t *)common->operatorid,
+                strlen(common->operatorid)) == -1) {
+            return -1;
+        }
     }
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT,
@@ -2023,6 +2058,7 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->delivcc = NULL;
     common->destid = 0;
     common->targetagency = NULL;
+    common->operatorid = NULL;
     common->liid_format = OPENLI_LIID_FORMAT_ASCII;
     common->liid_len = 0;
     common->authcc_len = 0;
@@ -2058,6 +2094,9 @@ static int assign_intercept_common_fields(intercept_common_t *common,
             break;
         case OPENLI_PROTO_FIELD_LEAID:
             DECODE_STRING_FIELD(common->targetagency, valptr, vallen);
+            break;
+        case OPENLI_PROTO_FIELD_OPERATORID:
+            DECODE_STRING_FIELD(common->operatorid, valptr, vallen);
             break;
         case OPENLI_PROTO_FIELD_DELIVCC:
             DECODE_STRING_FIELD(common->delivcc, valptr, vallen);
@@ -2829,7 +2868,7 @@ int decode_hi1_notification(uint8_t *msgbody, uint16_t len,
 }
 
 int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
-        liagency_digest_config_t **digest) {
+        liagency_digest_config_t **digest, char **operatorid) {
 
     uint8_t *msgend = msgbody + len;
 
@@ -2842,6 +2881,8 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
     (*digest)->sign_timeout = DEFAULT_DIGEST_SIGN_TIMEOUT;
     (*digest)->sign_method = DEFAULT_DIGEST_HASH_METHOD;
     (*digest)->sign_hashlimit = DEFAULT_DIGEST_SIGN_HASHLIMIT;
+
+    *operatorid = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -2860,6 +2901,8 @@ int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
 
         if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agencyid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_OPERATORID) {
+            DECODE_STRING_FIELD(*operatorid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_TIMESTAMP_FORMAT) {
             (*digest)->time_fmt = *((openli_timestamp_encoding_fmt_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTEGRITY_HASH_METHOD) {
@@ -2907,6 +2950,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->hi3_portstr = NULL;
     lea->agencyid = NULL;
     lea->agencycc = NULL;
+    lea->operatorid = NULL;
+    lea->shortoperatorid = NULL;
     lea->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     lea->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
     lea->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
@@ -2932,7 +2977,11 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
         if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(lea->agencyid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEACC) {
-                DECODE_STRING_FIELD(lea->agencycc, valptr, vallen);
+            DECODE_STRING_FIELD(lea->agencycc, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_OPERATORID) {
+            DECODE_STRING_FIELD(lea->operatorid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_SHORTOPERATORID) {
+            DECODE_STRING_FIELD(lea->shortoperatorid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI2IP) {
             DECODE_STRING_FIELD(lea->hi2_ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI2PORT) {

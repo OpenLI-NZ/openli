@@ -345,6 +345,7 @@ typedef struct digest_map_key {
 struct agency_digest_config {
     char *agencyid;
     liagency_digest_config_t *config;
+    char *operatorid;
     uint8_t disabled;
     UT_hash_handle hh;
 };
@@ -373,6 +374,7 @@ typedef struct encoder_liid_state {
     liagency_digest_config_t digest_config;
     uint8_t digest_config_disabled;
     digest_map_key_t *digest_cin_keys;
+    char *operatorid;
 
     encrypt_encode_state_t encrypt_cc;
     encrypt_encode_state_t encrypt_iri;

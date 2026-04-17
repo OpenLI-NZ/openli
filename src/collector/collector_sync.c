@@ -546,9 +546,11 @@ static int update_digest_config(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
     char *agencyid = NULL;
+    char *operatorid = NULL;
     liagency_digest_config_t *agdigest = NULL;
 
-    if (decode_lea_digest_config(provmsg, msglen, &agencyid, &agdigest) < 0) {
+    if (decode_lea_digest_config(provmsg, msglen, &agencyid, &agdigest,
+            &operatorid) < 0) {
         logger(LOG_INFO,
                 "OpenLI: failed to decode agency digest configuration sent by the provisioner");
         return -1;
@@ -557,11 +559,12 @@ static int update_digest_config(collector_sync_t *sync, uint8_t *provmsg,
     pthread_rwlock_wrlock(sync->digest_config_mutex);
 
     update_agency_digest_config_map(&(sync->digest_config->map), agencyid,
-            agdigest);
+            agdigest, operatorid);
 
     pthread_rwlock_unlock(sync->digest_config_mutex);
     // do NOT free agdigest, as this is now owned by the map
     if (agencyid) free(agencyid);
+    if (operatorid) free(operatorid);
     return 0;
 }
 
@@ -2129,7 +2132,7 @@ static int update_modified_intercept(collector_sync_t *sync,
     }
 
     if (encodingchanged) {
-        expmsg = create_intercept_details_msg(&(modified->common),
+        expmsg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);
         expmsg->type = OPENLI_EXPORT_INTERCEPT_CHANGED;
         publish_openli_msg(sync->zmq_pubsocks[ipint->common.seqtrackerid],

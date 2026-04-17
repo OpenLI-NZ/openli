@@ -50,6 +50,8 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *resend_win;
     json_object *agencyid;
     json_object *agencycc = NULL;
+    json_object *operatorid = NULL;
+    json_object *shortoperatorid = NULL;
     json_object *digest_hash_method;
     json_object *digest_sign_method;
     json_object *digest_required;
@@ -93,9 +95,23 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     timefmt = json_object_new_string(timefmt_str);
     encryptmethod = json_object_new_string(encrypt_str);
 
+    if (lea->ag->operatorid) {
+        operatorid = json_object_new_string(lea->ag->operatorid);
+    }
+
+    if (lea->ag->shortoperatorid) {
+        shortoperatorid = json_object_new_string(lea->ag->shortoperatorid);
+    }
+
     json_object_object_add(jobj, "agencyid", agencyid);
     if (agencycc) {
         json_object_object_add(jobj, "agencycc", agencycc);
+    }
+    if (operatorid) {
+        json_object_object_add(jobj, "operatorid", operatorid);
+    }
+    if (shortoperatorid) {
+        json_object_object_add(jobj, "altoperatorid", shortoperatorid);
     }
     json_object_object_add(jobj, "hi3address", hi3addr);
     json_object_object_add(jobj, "hi2address", hi2addr);
@@ -240,7 +256,6 @@ static void convert_commonintercept_to_json(json_object *jobj,
 			json_object_new_boolean(common->encryptkey_len == OPENLI_AES192_KEY_LEN));
 	json_object_object_add(jobj, "encryptionkey_len",
 	    json_object_new_int((int)common->encryptkey_len));
-
 
     if (common->tostart_time != 0) {
         starttime = json_object_new_int(common->tostart_time);

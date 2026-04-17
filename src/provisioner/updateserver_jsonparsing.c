@@ -48,6 +48,8 @@ struct json_agency {
     struct json_object *ho_retry;
     struct json_object *resend_win;
     struct json_object *agencycc;
+    struct json_object *operatorid;
+    struct json_object *shortoperatorid;
     struct json_object *integrity;
     struct json_object *encryptmethod;
     struct json_object *encryptkey;
@@ -205,6 +207,9 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "resendwindow", &(agjson->resend_win));
     json_object_object_get_ex(parsed, "timestampformat", &(agjson->timefmt));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
+    json_object_object_get_ex(parsed, "operatorid", &(agjson->operatorid));
+    json_object_object_get_ex(parsed, "altoperatorid",
+            &(agjson->shortoperatorid));
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
             &(agjson->encryptmethod));
@@ -540,6 +545,7 @@ static int update_intercept_common(intercept_common_t *parsed,
     payload_encryption_method_t enc;
     prov_intercept_data_t *timers = (prov_intercept_data_t *)(existing->local);
     int encryptchanged = 0;
+    int opchanged = 0;
 
     /* Check if encryption options are valid -- if not, roll back without
      * changing anything.
@@ -617,6 +623,9 @@ static int update_intercept_common(intercept_common_t *parsed,
         new_intercept_liidmapping(state, existing);
     }
     if (encryptchanged) {
+        *changed = 1;
+    }
+    if (opchanged) {
         *changed = 1;
     }
 
@@ -2925,6 +2934,10 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->hi2_portstr, &parseerr, true);
     EXTRACT_JSON_STRING_PARAM("agencycc", "agency", agjson.agencycc,
             nag->agencycc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("operatorid", "agency", agjson.operatorid,
+            nag->operatorid, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("altoperatorid", "agency", agjson.shortoperatorid,
+            nag->shortoperatorid, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             nag->keepalivefreq, &parseerr, 0, 0xFFFFFFFF, false);
@@ -2948,6 +2961,20 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (encryptmethodstring) {
         nag->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    if (strlen(nag->operatorid) > 16) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'operatorid' must be 16 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        goto agencyerr;
+    }
+
+    if (strlen(nag->shortoperatorid) > 5) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'altoperatorid' must be 5 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        goto agencyerr;
     }
 
     /* If client supplied an encryption key string, normalize it to 24 bytes */
@@ -3028,6 +3055,7 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     int changed = 0;
     int medchanged = 0, colchanged = 0;
     char *encstr = NULL;
+    char *prev = NULL;
 
     memset(&modified, 0, sizeof(modified));
     INIT_JSON_AGENCY_PARSING
@@ -3067,6 +3095,10 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.hi2_portstr, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("agencycc", "agency", agjson.agencycc,
             modified.agencycc, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("operatorid", "agency", agjson.operatorid,
+            modified.operatorid, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("altoperatorid", "agency",
+            agjson.shortoperatorid, modified.shortoperatorid, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             modified.keepalivefreq, &parseerr, 0, 1000000, false);
@@ -3084,6 +3116,26 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             agjson.encryptkey, encstr, &parseerr, false);
 
     if (parseerr) {
+        goto agencyerr;
+    }
+
+    if (modified.operatorid && strlen(modified.operatorid) > 16) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'operatorid' must be 16 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        logger(LOG_INFO,
+                "OpenLI: did not modify existing agency '%s' via update socket, as the provided operatorid was too long.",
+                found->ag->agencyid);
+        goto agencyerr;
+    }
+
+    if (modified.shortoperatorid && strlen(modified.shortoperatorid) > 5) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'altoperatorid' must be 5 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        logger(LOG_INFO,
+                "OpenLI: did not modify existing agency '%s' via update socket, as the provided altoperatorid was too long.",
+                found->ag->agencyid);
         goto agencyerr;
     }
 
@@ -3152,10 +3204,46 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         found->ag->encrypt = modified.encrypt;
     }
 
+    update_intercept_timeformats(state, found->ag->agencyid,
+            modified.digest.time_fmt, modified.operatorid);
+
+    if (modified.operatorid && strlen(modified.operatorid) == 0) {
+        if (found->ag->operatorid) {
+            free(found->ag->operatorid);
+            found->ag->operatorid = NULL;
+            changed = 1;
+            colchanged = 1;
+            medchanged = 1;
+        }
+    } else {
+        prev = found->ag->operatorid;
+        MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
+                &changed);
+        if (prev != found->ag->operatorid) {
+            colchanged = 1;
+            medchanged = 1;
+        }
+    }
+
+    if (modified.shortoperatorid && strlen(modified.shortoperatorid) == 0) {
+        if (found->ag->shortoperatorid) {
+            free(found->ag->shortoperatorid);
+            found->ag->shortoperatorid = NULL;
+            changed = 1;
+            medchanged = 1;
+        }
+    } else {
+        prev = found->ag->shortoperatorid;
+        fprintf(stderr, "%s %s\n", modified.shortoperatorid, found->ag->shortoperatorid);
+        MODIFY_STRING_MEMBER(modified.shortoperatorid,
+                found->ag->shortoperatorid, &changed);
+        if (prev != found->ag->shortoperatorid) {
+            medchanged = 1;
+        }
+    }
+
     if (modified.digest.time_fmt != 0xff &&
             modified.digest.time_fmt != found->ag->digest.time_fmt) {
-        update_intercept_timeformats(state, found->ag->agencyid,
-                modified.digest.time_fmt);
         found->ag->digest.time_fmt = modified.digest.time_fmt;
         changed = 1;
         medchanged = 1;
@@ -3290,6 +3378,12 @@ agencyerr:
     }
     if (modified.agencycc) {
         free(modified.agencycc);
+    }
+    if (modified.operatorid) {
+        free(modified.operatorid);
+    }
+    if (modified.shortoperatorid) {
+        free(modified.shortoperatorid);
     }
     if (parsed) {
         json_object_put(parsed);

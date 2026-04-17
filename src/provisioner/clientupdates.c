@@ -917,46 +917,122 @@ void clear_liid_announce_flags(prov_intercept_conf_t *conf) {
 }
 
 void update_intercept_timeformats(provision_state_t *state,
-        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt) {
+        const char *agencyid, openli_timestamp_encoding_fmt_t newfmt,
+        char *operatorid) {
 
     emailintercept_t *em, *emtmp;
     ipintercept_t *ipint, *iptmp;
     voipintercept_t *vint, *vtmp;
+    uint8_t changed = 0;
+
+    /* Handle case when the operator ID has been set to the empty
+     * string, which is how we allow users to remove the operator ID from
+     * an agency via the REST API.
+     */
+    if (operatorid && strlen(operatorid) == 0) {
+        operatorid = NULL;
+    }
 
     HASH_ITER(hh_liid, state->interceptconf.emailintercepts, em, emtmp) {
+        changed = 0;
         if (strcasecmp(em->common.targetagency, agencyid) != 0) {
             continue;
         }
-        if (em->common.time_fmt == newfmt) {
-            continue;
+        if (newfmt != 0xff && em->common.time_fmt != newfmt) {
+            em->common.time_fmt = newfmt;
+            changed = 1;
         }
-        em->common.time_fmt = newfmt;
-        modify_existing_intercept_options(state, (void *)em,
-                OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+
+        if (em->common.operatorid == NULL) {
+            if (operatorid) {
+                em->common.operatorid = strdup(operatorid);
+                changed = 1;
+            }
+        } else {
+            if (operatorid) {
+                if (strcmp(operatorid, em->common.operatorid) != 0) {
+                    free(em->common.operatorid);
+                    em->common.operatorid = strdup(operatorid);
+                    changed = 1;
+                }
+            } else {
+                free(em->common.operatorid);
+                em->common.operatorid = NULL;
+                changed = 1;
+            }
+        }
+
+        if (changed) {
+            modify_existing_intercept_options(state, (void *)em,
+                    OPENLI_PROTO_MODIFY_EMAILINTERCEPT);
+        }
     }
 
     HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, iptmp) {
+        changed = 0;
         if (strcasecmp(ipint->common.targetagency, agencyid) != 0) {
             continue;
         }
-        if (ipint->common.time_fmt == newfmt) {
-            continue;
+        if (newfmt != 0xff && ipint->common.time_fmt != newfmt) {
+            ipint->common.time_fmt = newfmt;
+            changed = 1;
         }
-        ipint->common.time_fmt = newfmt;
-        modify_existing_intercept_options(state, (void *)ipint,
-                OPENLI_PROTO_MODIFY_IPINTERCEPT);
+        if (ipint->common.operatorid == NULL) {
+            if (operatorid) {
+                ipint->common.operatorid = strdup(operatorid);
+                changed = 1;
+            }
+        } else {
+            if (operatorid) {
+                if (strcmp(operatorid, ipint->common.operatorid) != 0) {
+                    free(ipint->common.operatorid);
+                    ipint->common.operatorid = strdup(operatorid);
+                    changed = 1;
+                }
+            } else {
+                free(ipint->common.operatorid);
+                ipint->common.operatorid = NULL;
+                changed = 1;
+            }
+        }
+
+        if (changed) {
+            modify_existing_intercept_options(state, (void *)ipint,
+                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
+        }
     }
 
     HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint, vtmp) {
+        changed = 0;
         if (strcasecmp(vint->common.targetagency, agencyid) != 0) {
             continue;
         }
-        if (vint->common.time_fmt == newfmt) {
-            continue;
+        if (newfmt != 0xff && vint->common.time_fmt != newfmt) {
+            vint->common.time_fmt = newfmt;
+            changed = 1;
         }
-        vint->common.time_fmt = newfmt;
-        modify_existing_intercept_options(state, (void *)vint,
-                OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+        if (vint->common.operatorid == NULL) {
+            if (operatorid) {
+                vint->common.operatorid = strdup(operatorid);
+                changed = 1;
+            }
+        } else {
+            if (operatorid) {
+                if (strcmp(operatorid, vint->common.operatorid) != 0) {
+                    free(vint->common.operatorid);
+                    vint->common.operatorid = strdup(operatorid);
+                    changed = 1;
+                }
+            } else {
+                free(vint->common.operatorid);
+                vint->common.operatorid = NULL;
+                changed = 1;
+            }
+        }
+        if (changed) {
+            modify_existing_intercept_options(state, (void *)vint,
+                    OPENLI_PROTO_MODIFY_VOIPINTERCEPT);
+        }
     }
 
 }

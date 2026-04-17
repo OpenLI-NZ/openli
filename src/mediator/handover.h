@@ -102,6 +102,8 @@ typedef struct mediator_agency {
     int disabled_msg;
     uint16_t handover_retry;
     openli_timestamp_encoding_fmt_t timefmt;
+    char *operatorid;
+    char *shortoperatorid;
 
     handover_t *hi2;
     handover_t *hi3;

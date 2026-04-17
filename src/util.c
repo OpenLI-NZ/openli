@@ -881,5 +881,6 @@ char *rtrim(char *s) {
     *(end + 1) = '\0';
     return s;
 }
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :
 

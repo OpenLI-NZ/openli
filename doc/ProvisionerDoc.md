@@ -541,6 +541,17 @@ key-value elements:
                        "MicroSecondTimeStamp" field, and "generalized" to use
                        the "GeneralizedTime" field. The default is
                        "microseconds".
+* `operatorid` -- the operator identifier to be used in all PDUs that are
+                  sent to this agency. Recommended but optional; if not set,
+                  then the operator identifier specified in the collector
+                  configuration will be used instead. Must not exceed 16
+                  characters in length.
+* `altoperatorid` -- the operator identifier to be used in the body of HI1
+                     Operations messages that are
+                  sent to this agency. Recommended but optional; if not set,
+                  then the operator identifier specified in the collector
+                  configuration will be used instead. Must not exceed 5
+                  characters in length.
 * `integrity` -- a YAML mapping object that defines whether integrity check
                  messages should be sent to this agency, and how these messages
                  should be generated.
