@@ -494,6 +494,7 @@ int push_lea_digest_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
      strlen(lea->hi2_ipstr) + strlen(lea->hi2_portstr) + \
 	 strlen(lea->hi3_ipstr) + strlen(lea->hi3_portstr) + \
      (lea->operatorid ? strlen(lea->operatorid) + 4 : 0) + \
+     (lea->shortoperatorid ? strlen(lea->shortoperatorid) + 4 : 0) + \
 	 sizeof(uint32_t) + sizeof(uint32_t) + sizeof(uint16_t) + \
      sizeof(uint32_t) + sizeof(openli_timestamp_encoding_fmt_t) + \
      (lea->digest.required ? (sizeof(openli_integrity_hash_method_t) + \
@@ -531,6 +532,14 @@ int push_lea_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
     if (lea->operatorid) {
         if (push_tlv(nb, OPENLI_PROTO_FIELD_OPERATORID,
                 (uint8_t *)(lea->operatorid), strlen(lea->operatorid)) == -1) {
+            return -1;
+        }
+    }
+
+    if (lea->shortoperatorid) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_SHORTOPERATORID,
+                (uint8_t *)(lea->shortoperatorid),
+                strlen(lea->shortoperatorid)) == -1) {
             return -1;
         }
     }
@@ -2942,6 +2951,7 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
     lea->agencyid = NULL;
     lea->agencycc = NULL;
     lea->operatorid = NULL;
+    lea->shortoperatorid = NULL;
     lea->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
     lea->keepalivewait = DEFAULT_AGENCY_KEEPALIVE_WAIT;
     lea->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
@@ -2970,6 +2980,8 @@ int decode_lea_announcement(uint8_t *msgbody, uint16_t len, liagency_t *lea) {
             DECODE_STRING_FIELD(lea->agencycc, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_OPERATORID) {
             DECODE_STRING_FIELD(lea->operatorid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_SHORTOPERATORID) {
+            DECODE_STRING_FIELD(lea->shortoperatorid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI2IP) {
             DECODE_STRING_FIELD(lea->hi2_ipstr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_HI2PORT) {

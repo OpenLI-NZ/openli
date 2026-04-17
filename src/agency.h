@@ -75,6 +75,7 @@ typedef struct liagency {
     uint32_t resend_window_kbs;
 
     char *operatorid;
+    char *shortoperatorid;
     liagency_digest_config_t digest;
     payload_encryption_method_t encrypt;
     uint8_t encryptkey[OPENLI_MAX_ENCRYPTKEY_LEN];
@@ -107,6 +108,9 @@ typedef struct liagency {
      ((a->operatorid == NULL && b->operatorid == NULL) || \
         (a->operatorid != NULL && b->operatorid != NULL && \
          strcmp(a->operatorid, b->operatorid) == 0)) && \
+     ((a->shortoperatorid == NULL && b->shortoperatorid == NULL) || \
+        (a->shortoperatorid != NULL && b->shortoperatorid != NULL && \
+         strcmp(a->shortoperatorid, b->shortoperatorid) == 0)) && \
      ((a->encryptkey_len > 0 && b->encryptkey_len > 0) && \
          memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len) == 0) \
      )

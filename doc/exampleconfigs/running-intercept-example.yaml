@@ -77,6 +77,8 @@ agencies:
                                 # handover recovers from a disconnection
    operatorid: "nz4432"         # unique identifier for this network within the
                                 # agency's jurisdiction (16 characters max)
+   altoperatorid: "1026Z"       # short identifier for this network to be used
+                                # in HI1 operations messages (5 characters max)
    timestampformat: "generalized"   # include the GeneralizedTime timeStamp
                                     # field in the PS header of all records
                                     # sent to this agency
@@ -96,6 +98,8 @@ agencies:
                                 # to either handover
    operatorid: "nz4432"         # unique identifier for this network within the
                                 # agency's jurisdiction (16 characters max)
+   altoperatorid: "1026Z"       # short identifier for this network to be used
+                                # in HI1 operations messages (5 characters max)
    timestampformat: "microseconds"   # include the microSecondTimeStamp
                                      # field in the PS header of all records
                                      # sent to this agency

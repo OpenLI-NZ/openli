@@ -51,6 +51,7 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
     json_object *agencyid;
     json_object *agencycc = NULL;
     json_object *operatorid = NULL;
+    json_object *shortoperatorid = NULL;
     json_object *digest_hash_method;
     json_object *digest_sign_method;
     json_object *digest_required;
@@ -98,12 +99,19 @@ static json_object *convert_lea_to_json(prov_agency_t *lea) {
         operatorid = json_object_new_string(lea->ag->operatorid);
     }
 
+    if (lea->ag->shortoperatorid) {
+        shortoperatorid = json_object_new_string(lea->ag->shortoperatorid);
+    }
+
     json_object_object_add(jobj, "agencyid", agencyid);
     if (agencycc) {
         json_object_object_add(jobj, "agencycc", agencycc);
     }
     if (operatorid) {
         json_object_object_add(jobj, "operatorid", operatorid);
+    }
+    if (shortoperatorid) {
+        json_object_object_add(jobj, "altoperatorid", shortoperatorid);
     }
     json_object_object_add(jobj, "hi3address", hi3addr);
     json_object_object_add(jobj, "hi2address", hi2addr);

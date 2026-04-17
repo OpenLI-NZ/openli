@@ -49,6 +49,7 @@ struct json_agency {
     struct json_object *resend_win;
     struct json_object *agencycc;
     struct json_object *operatorid;
+    struct json_object *shortoperatorid;
     struct json_object *integrity;
     struct json_object *encryptmethod;
     struct json_object *encryptkey;
@@ -207,6 +208,8 @@ static inline void extract_agency_json_objects(struct json_agency *agjson,
     json_object_object_get_ex(parsed, "timestampformat", &(agjson->timefmt));
     json_object_object_get_ex(parsed, "agencycc", &(agjson->agencycc));
     json_object_object_get_ex(parsed, "operatorid", &(agjson->operatorid));
+    json_object_object_get_ex(parsed, "altoperatorid",
+            &(agjson->shortoperatorid));
     json_object_object_get_ex(parsed, "integrity", &(agjson->integrity));
     json_object_object_get_ex(parsed, "payloadencryption",
             &(agjson->encryptmethod));
@@ -2933,6 +2936,8 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
             nag->agencycc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("operatorid", "agency", agjson.operatorid,
             nag->operatorid, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("altoperatorid", "agency", agjson.shortoperatorid,
+            nag->shortoperatorid, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             nag->keepalivefreq, &parseerr, 0, 0xFFFFFFFF, false);
@@ -2956,6 +2961,20 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (encryptmethodstring) {
         nag->encrypt = map_encrypt_method_string(encryptmethodstring);
         free(encryptmethodstring);
+    }
+
+    if (strlen(nag->operatorid) > 16) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'operatorid' must be 16 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        goto agencyerr;
+    }
+
+    if (strlen(nag->shortoperatorid) > 5) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'altoperatorid' must be 5 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        goto agencyerr;
     }
 
     /* If client supplied an encryption key string, normalize it to 24 bytes */
@@ -3078,6 +3097,8 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
             modified.agencycc, &parseerr, false);
     EXTRACT_JSON_STRING_PARAM("operatorid", "agency", agjson.operatorid,
             modified.operatorid, &parseerr, false);
+    EXTRACT_JSON_STRING_PARAM("altoperatorid", "agency",
+            agjson.shortoperatorid, modified.shortoperatorid, &parseerr, false);
 
     EXTRACT_JSON_INT_PARAM("keepalivefreq", "agency", agjson.ka_freq,
             modified.keepalivefreq, &parseerr, 0, 1000000, false);
@@ -3099,8 +3120,21 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     if (modified.operatorid && strlen(modified.operatorid) > 16) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'operatorid' must be 16 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as the provided operatorid was too long.",
+                found->ag->agencyid);
+        goto agencyerr;
+    }
+
+    if (modified.shortoperatorid && strlen(modified.shortoperatorid) > 5) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'altoperatorid' must be 5 characters or less</p> %s",
+                update_failure_page_start, update_failure_page_end);
+        logger(LOG_INFO,
+                "OpenLI: did not modify existing agency '%s' via update socket, as the provided altoperatorid was too long.",
                 found->ag->agencyid);
         goto agencyerr;
     }
@@ -3187,6 +3221,23 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
                 &changed);
         if (prev != found->ag->operatorid) {
             colchanged = 1;
+            medchanged = 1;
+        }
+    }
+
+    if (modified.shortoperatorid && strlen(modified.shortoperatorid) == 0) {
+        if (found->ag->shortoperatorid) {
+            free(found->ag->shortoperatorid);
+            found->ag->shortoperatorid = NULL;
+            changed = 1;
+            medchanged = 1;
+        }
+    } else {
+        prev = found->ag->shortoperatorid;
+        fprintf(stderr, "%s %s\n", modified.shortoperatorid, found->ag->shortoperatorid);
+        MODIFY_STRING_MEMBER(modified.shortoperatorid,
+                found->ag->shortoperatorid, &changed);
+        if (prev != found->ag->shortoperatorid) {
             medchanged = 1;
         }
     }
@@ -3330,6 +3381,9 @@ agencyerr:
     }
     if (modified.operatorid) {
         free(modified.operatorid);
+    }
+    if (modified.shortoperatorid) {
+        free(modified.shortoperatorid);
     }
     if (parsed) {
         json_object_put(parsed);

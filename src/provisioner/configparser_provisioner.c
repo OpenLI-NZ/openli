@@ -634,6 +634,7 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         newag->agencyid = NULL;
         newag->agencycc = NULL;
         newag->operatorid = NULL;
+        newag->shortoperatorid = NULL;
         newag->keepalivefreq = DEFAULT_AGENCY_KEEPALIVE_FREQ;
         newag->keepalivewait = 0;
         newag->handover_retry = DEFAULT_AGENCY_HANDOVER_RETRY;
@@ -712,6 +713,13 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                     strcasecmp((char *)key->data.scalar.value,
                             "operatorid") == 0) {
                 SET_CONFIG_STRING_OPTION(newag->operatorid, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "altoperatorid") == 0) {
+                SET_CONFIG_STRING_OPTION(newag->shortoperatorid, value);
             }
 
             if (key->type == YAML_SCALAR_NODE &&
@@ -802,6 +810,16 @@ static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
                     "OpenLI: configuration error in running intercept config -- 'operatorid' for an agency must be 16 characters or less");
             logger(LOG_INFO,
                     "OpenLI: 'operatorid' for agency '%s' will be ignored",
+                    newag->agencyid);
+            free_liagency(newag);
+            continue;
+        }
+
+        if (newag->shortoperatorid && strlen(newag->shortoperatorid) > 5) {
+            logger(LOG_INFO,
+                    "OpenLI: configuration error in running intercept config -- 'altoperatorid' for an agency must be 5 characters or less");
+            logger(LOG_INFO,
+                    "OpenLI: 'altoperatorid' for agency '%s' will be ignored",
                     newag->agencyid);
             free_liagency(newag);
             continue;

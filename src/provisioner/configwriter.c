@@ -349,6 +349,22 @@ static int emit_agencies(prov_agency_t *agencies, yaml_emitter_t *emitter) {
             if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
 
+        if (ag->ag->shortoperatorid) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"altoperatorid",
+                    strlen("altoperatorid"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)ag->ag->shortoperatorid,
+                    strlen(ag->ag->shortoperatorid),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+
         yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                 (yaml_char_t *)"keepalivefreq", strlen("keepalivefreq"), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);

@@ -9,11 +9,10 @@ An example configuration file (with in-line documentation) can found in
 
 ### Operator ID
 This option should contain a string that uniquely identifies your network.
-This is a mandatory field for ETSI compliance and will be used to set the
-operatorIdentifier field in the ETSI header. The operator ID should be no
-more than 16 characters in length. The operator ID specified here is
-used to populate ETSI keep-alive messages that maintain the connection
-between your mediator and the law enforcement agencies.
+The value you provide here will be used to populate the "operator
+identifier" field in any ETSI messages generated directly by the mediator,
+such as keep-alives and HI1 Operations messages. The operator ID must be
+no more than 16 characters in length.
 
 Ideally, the operator ID configured for your mediator(s) should match
 the operator ID that you are using for your collectors.
@@ -23,7 +22,9 @@ messages that is limited to 5 characters in length -- this is an annoying
 inconsistency in the ETSI standards that we cannot work around easily. This
 may be set using the `altoperatorid` configuration option. If this
 option is not configured, OpenLI will instead use the first 5 characters from
-your regular operator ID.
+your regular operator ID. Once again, this value configured on the mediator
+itself will only be used if the agency does not have an altoperatorid already
+configured.
 
 ### Mediator ID
 Each mediator that you are running needs to be assigned a unique mediator
@@ -153,9 +154,9 @@ All of the mediator config options are standard YAML key-value pairs, where
 the key is the option name and the value is your chosen value for that option.
 
 The supported option keys are:
-* operatorid       -- set the operator ID
-* altoperatorid    -- sets the operator ID for HI1 Operations messages, which
-                      must be no more than 5 characters long.
+* operatorid       -- set the default operator ID
+* altoperatorid    -- sets the default operator ID for HI1 Operations messages,
+                      which must be no more than 5 characters long.
 * mediatorid       -- sets the mediator ID number
 * provisioneraddr  -- connect to a provisioner at this IP address
 * provisionerport  -- connect to a provisioner listening on this port

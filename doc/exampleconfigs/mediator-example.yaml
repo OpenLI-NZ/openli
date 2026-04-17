@@ -1,10 +1,12 @@
 # Example configuration file for an OpenLI mediator
 
-# Unique ID string for my network (16 chars max)
+# Unique ID string for my network (16 chars max), only used if the
+# receiving agency has not been configured with an operator ID.
 operatorid: OpenLIExample
 
 # Alternative ID string for my network that is used in special HI1 Operations
-# messages (which is 5 chars max).
+# messages (which is 5 chars max). Only used if the receiving agency
+# has not been configured with an alternative operator ID.
 altoperatorid: 19811
 
 # Set a unique ID for this mediator (between 1 and 1,000,000)
