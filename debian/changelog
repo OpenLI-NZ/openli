@@ -2,7 +2,7 @@ openli (1.1.18-1) unstable; urgency=medium
 
   * Collector: fix bad encoding of ASN.1 elements that were sequences of
     primitive types, such as emailRecipients in email IRIs and
-    includeSequenceNumbers in integrity check PDUs.
+    includedSequenceNumbers in integrity check PDUs.
   * Mediator: fix crash when the number of agencies is large.
   * SIP: fix call tracking problems that occur when the INVITE message is
     fragmented.
@@ -11,11 +11,14 @@ openli (1.1.18-1) unstable; urgency=medium
     agency.
   * SIP: add support for using the Session-ID header (RFC 7329) to identify
     call legs that belong to the same SIP session.
-  * SIP: fix bug where call legs for the same call that are handled by
-    different SIP worker threads would not be correctly combined into a single
-    CIN.
+  * SIP: fix bug where call legs for the same call would not be correctly
+    assigned the same CIN if the legs were observed by different SIP worker
+    threads.
+  * Operator ID may now be configured on a per-agency basis.
+  * Fix crash that can occur if an agency configuration contains legacy
+    encryption settings.
 
- -- Shane Alcock <salcock@searchlight.nz>  Tue, 14 Apr 2026 12:29:31 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 20 Apr 2026 11:26:18 +1200
 
 openli (1.1.17-1) unstable; urgency=medium
 
