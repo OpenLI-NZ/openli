@@ -351,6 +351,7 @@ typedef struct sip_message_state {
     char *callid;
     time_t created;
     uint32_t cin;
+    uint8_t dir;
 
     UT_hash_handle hh;
 } sip_message_state_t;
@@ -517,6 +518,7 @@ struct rtpstreaminf {
     struct sipmediastream *mediastreams;
 
     uint32_t seqno;
+    uint8_t dir;
     uint8_t active;
     uint8_t changed;
     uint8_t byematched;

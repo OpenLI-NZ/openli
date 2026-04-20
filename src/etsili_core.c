@@ -1155,6 +1155,24 @@ void etsili_preencode_static_fields(
     p->encodeas = WANDDER_TAG_ENUM;
     wandder_encode_preencoded_value(p, &dirunk, sizeof(dirunk));
 
+    p = &(pendarray[OPENLI_PREENCODE_SESSDIRFROM]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &dirin, sizeof(dirin));
+
+    p = &(pendarray[OPENLI_PREENCODE_SESSDIRTO]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &dirout, sizeof(dirout));
+
+    p = &(pendarray[OPENLI_PREENCODE_SESSDIRUNKNOWN]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &dirunk, sizeof(dirunk));
+
     p = &(pendarray[OPENLI_PREENCODE_NO_ENCRYPTION]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;

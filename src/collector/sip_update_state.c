@@ -177,44 +177,66 @@ int extract_sip_identities(openli_sip_parser_t *parser,
 
 openli_sip_identity_t *match_sip_target_against_identities(
         libtrace_list_t *targets, openli_sip_identity_set_t *idset,
-        uint8_t trust_from) {
+        uint8_t trust_from, sip_match_source_t *pmatch_src) {
 
     int i;
     openli_sip_identity_t *matched = NULL;
 
     /* Try the To: uri first */
     if ((matched = sipid_matches_target(targets, &(idset->touriid)))) {
+        *pmatch_src = SIP_MATCH_TO;
         return matched;
     }
     if ((matched = sipid_matches_target(targets, &(idset->passertid)))) {
+        *pmatch_src = SIP_MATCH_PASSERT;
         return matched;
     }
     if ((matched = sipid_matches_target(targets, &(idset->remotepartyid)))) {
+        *pmatch_src = SIP_MATCH_RPID;
         return matched;
     }
     for (i = 0; i < idset->proxyauthcount; i++) {
         if ((matched = sipid_matches_target(targets, &(idset->proxyauths[i]))))
         {
+            *pmatch_src = SIP_MATCH_PROXYAUTH;
             return matched;
         }
     }
     for (i = 0; i < idset->regauthcount; i++) {
         if ((matched = sipid_matches_target(targets, &(idset->regauths[i]))))
         {
+            *pmatch_src = SIP_MATCH_REGAUTH;
             return matched;
         }
     }
 
     if (trust_from && (matched = sipid_matches_target(targets, &(idset->ppreferredid)))) {
+        *pmatch_src = SIP_MATCH_PPREFERRED;
         return matched;
     }
 
     if (trust_from && (matched = sipid_matches_target(targets,
             &(idset->fromuriid)))) {
+        *pmatch_src = SIP_MATCH_FROM;
         return matched;
     }
 
     return NULL;
+}
+
+static uint8_t matchsrc_to_dir(sip_match_source_t matchsrc)
+{
+    switch (matchsrc) {
+        case SIP_MATCH_TO:
+        case SIP_MATCH_RPID:
+            return ETSI_DIR_TO_TARGET;
+        case SIP_MATCH_FROM:
+        case SIP_MATCH_REGAUTH:
+        case SIP_MATCH_PROXYAUTH:
+            return ETSI_DIR_FROM_TARGET;
+        default:
+            return ETSI_DIR_INDETERMINATE;
+    }
 }
 
 void release_openli_sip_identity_set(openli_sip_identity_set_t *idset) {
@@ -545,6 +567,7 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
     int exportcount = 0;
     uint8_t trust_sip_from;
     struct timeval tv;
+    sip_match_source_t matchsrc;
     openli_sip_identity_set_t all_identities;
 
     locptr = NULL;
@@ -566,7 +589,7 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
         sipreg = NULL;
 
         matched = match_sip_target_against_identities(vint->targets,
-                &all_identities, trust_sip_from);
+                &all_identities, trust_sip_from, &matchsrc);
         if (matched == NULL) {
             continue;
         }
@@ -576,7 +599,7 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
             continue;
         }
         create_sip_ipmmiri(sipworker, vint, irimsg, ETSILI_IRI_REPORT,
-                sipreg->cin, locptr, loc_cnt, pkts, pkt_cnt);
+                sipreg->cin, locptr, loc_cnt, pkts, pkt_cnt, ETSI_DIR_FROM_TARGET);
         exportcount += 1;
     }
 
@@ -596,10 +619,11 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     openli_sip_identity_t *matched = NULL;
     rtpstreaminf_t *thisrtp;
     char rtpkey[256];
+    sip_match_source_t matchsrc;
     int r = 0;
 
     matched = match_sip_target_against_identities(vint->targets,
-            all_identities, trust_sip_from);
+            all_identities, trust_sip_from, &matchsrc);
     // This is a new call leg, but only track it if an intercept target
     // is a participant
     if (iritype == ETSILI_IRI_BEGIN) {
@@ -613,6 +637,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
         if (r < 0) {
             return NULL;
         }
+
     }
 
     /*
@@ -634,6 +659,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     if (thisrtp == NULL && (iritype == ETSILI_IRI_BEGIN || matched != NULL)) {
         thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint,
                 callid);
+        if (thisrtp) thisrtp->dir = matchsrc_to_dir(matchsrc);
     }
     return thisrtp;
 }
@@ -732,7 +758,7 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         }
 
         create_sip_ipmmiri(sipworker, vint, irimsg, iritype, (int64_t)cin,
-                locptr, loc_cnt, pkts, pkt_cnt);
+                locptr, loc_cnt, pkts, pkt_cnt, thisrtp->dir);
         exportcount ++;
     }
 
@@ -755,9 +781,10 @@ static sip_message_state_t *match_message_to_intercept(voipintercept_t *vint,
 
     openli_sip_identity_t *matched = NULL;
     sip_message_state_t *msg = NULL;
+    sip_match_source_t matchsrc;
 
     matched = match_sip_target_against_identities(vint->targets,
-            all_identities, trust_sip_from);
+            all_identities, trust_sip_from, &matchsrc);
     if (matched == NULL) {
         return NULL;
     }
@@ -769,6 +796,7 @@ static sip_message_state_t *match_message_to_intercept(voipintercept_t *vint,
         msg->cin = hashlittle(callid, strlen(callid), 0xbeeffecc);
         msg->cin = (msg->cin % (uint32_t)(pow(2, 31)));
         msg->created = tv->tv_sec;
+        msg->dir = matchsrc_to_dir(matchsrc);
 
         HASH_ADD_KEYPTR(hh, vint->active_messages, msg->callid,
                 strlen(msg->callid), msg);
@@ -821,7 +849,7 @@ static int process_sip_message(openli_sip_worker_t *sipworker, char *callid,
         }
 
         create_sip_ipmmiri(sipworker, vint, irimsg, iritype,
-                (int64_t)msg->cin, locptr, loc_cnt, pkts, pkt_cnt);
+                (int64_t)msg->cin, locptr, loc_cnt, pkts, pkt_cnt, msg->dir);
         exportcount ++;
     }
 
@@ -926,7 +954,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         if (findreg) {
             create_sip_ipmmiri(sipworker, vint, irimsg,
                     ETSILI_IRI_REPORT, findreg->cin, NULL, 0, pkts,
-                    pkt_cnt);
+                    pkt_cnt, ETSI_DIR_FROM_TARGET);
             exportcount ++;
             continue;
         }
@@ -934,7 +962,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         if (msg) {
             create_sip_ipmmiri(sipworker, vint, irimsg,
                     ETSILI_IRI_END, msg->cin, locptr, loc_cnt, pkts,
-                    pkt_cnt);
+                    pkt_cnt, msg->dir);
             exportcount ++;
             continue;
         }
@@ -978,7 +1006,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         }
 
         create_sip_ipmmiri(sipworker, vint, irimsg, iritype, cin,
-               locptr, loc_cnt, pkts, pkt_cnt);
+               locptr, loc_cnt, pkts, pkt_cnt, thisrtp->dir);
         exportcount += 1;
 
     }
