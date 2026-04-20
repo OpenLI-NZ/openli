@@ -385,12 +385,12 @@ static char *extract_smtp_participant(emailsession_t *sess,
     char *addr, *addrstart, *addrend;
     const char *search = (const char *)(smtpstate->contbuffer + contoffset);
 
-    addrstart = strchr(search, '<');
+    addrstart = (char *)strchr(search, '<');
     if (addrstart == NULL) {
         return NULL;
     }
 
-    addrend = strchr(search, '>');
+    addrend = (char *)strchr(search, '>');
     if (addrend == NULL) {
         return NULL;
     }

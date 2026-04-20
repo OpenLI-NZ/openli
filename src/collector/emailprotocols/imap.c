@@ -524,7 +524,7 @@ static int update_saved_auth_command(imap_session_t *sess, char *replace,
         return -1;
     }
 
-    ptr = strstr((const char *)comm->commbuffer, origtoken);
+    ptr = (char *)strstr((const char *)comm->commbuffer, origtoken);
     if (!ptr) {
         logger(LOG_INFO, "OpenLI: cannot find original auth token for IMAP auth command %s, session %s\n", sess->auth_tag, sesskey);
         return -1;
