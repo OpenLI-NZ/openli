@@ -16,7 +16,7 @@
 #define _PATRICIA_H
 
 /* typedef unsigned int u_int; */
-typedef void (*void_fn_t)();
+
 /* { from defs.h */
 #define prefix_touchar(prefix) ((u_char *)&(prefix)->add.sin)
 #define MAXLINE 1024
@@ -77,6 +77,9 @@ typedef struct _patricia_tree_t {
    int num_active_node;		/* for debug purpose */
 } patricia_tree_t;
 
+typedef void (*patricia_cleanup_fn_t)(void *data);
+typedef void (*patricia_process_fn_t)(prefix_t *prefix, void *data);
+
 
 patricia_node_t *patricia_search_exact (patricia_tree_t *patricia, prefix_t *prefix);
 patricia_node_t *patricia_search_best (patricia_tree_t *patricia, prefix_t *prefix);
@@ -85,9 +88,9 @@ patricia_node_t * patricia_search_best2 (patricia_tree_t *patricia, prefix_t *pr
 patricia_node_t *patricia_lookup (patricia_tree_t *patricia, prefix_t *prefix);
 void patricia_remove (patricia_tree_t *patricia, patricia_node_t *node);
 patricia_tree_t *New_Patricia (int maxbits);
-void Clear_Patricia (patricia_tree_t *patricia, void_fn_t func);
-void Destroy_Patricia (patricia_tree_t *patricia, void_fn_t func);
-void patricia_process (patricia_tree_t *patricia, void_fn_t func);
+void Clear_Patricia (patricia_tree_t *patricia, patricia_cleanup_fn_t func);
+void Destroy_Patricia (patricia_tree_t *patricia, patricia_cleanup_fn_t func);
+void patricia_process (patricia_tree_t *patricia, patricia_process_fn_t func);
 
 /* { from demo.c */
 
