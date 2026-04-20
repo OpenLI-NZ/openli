@@ -39,7 +39,7 @@ jobs:
           - "ubuntu:latest"
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install prereq packages
         run: |
           ./debpkg-setup.sh
@@ -69,7 +69,7 @@ jobs:
           - "almalinux:8"
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
       - name: Install prereq packages
         run: |
           ./rpmpkg-setup.sh ${{ matrix.target }}
