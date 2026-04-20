@@ -20,6 +20,7 @@ jobs:
            - "debian:trixie"
            - "ubuntu:jammy"
            - "ubuntu:noble"
+           - "ubuntu:resolute"
 
      steps:
       - name: Checkout repo
@@ -56,6 +57,7 @@ jobs:
            - "ubuntu:jammy"
            - "debian:bookworm"
            - "ubuntu:noble"
+           - "ubuntu:resolute"
      needs: build
      steps:
        - name: Set environment variables for download
@@ -100,6 +102,7 @@ jobs:
            - "debian:bookworm"
            - "ubuntu:jammy"
            - "ubuntu:noble"
+           - "ubuntu:resolute"
      needs: test
      steps:
        - name: Set environment variables for download
