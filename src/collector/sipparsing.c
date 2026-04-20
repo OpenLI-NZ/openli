@@ -551,24 +551,24 @@ static inline char *strip_sip_uri(char *uristr) {
 
     /* firstcol should point to the colon at the end of 'sip:<name>' portion
      * of the URI */
-    firstcol = strchr((const char *)uristr, ':');
+    firstcol = (char *)strchr((const char *)uristr, ':');
     if (firstcol == NULL) {
         return NULL;
     }
 
     /* A port (if present) will always come before '?' or ';' (i think!) */
-    chop = strchr((const char *)(firstcol+1), ':');
+    chop = (char *)strchr((const char *)(firstcol+1), ':');
     if (chop != NULL) {
         *chop = '\0';
         return uristr;
     }
 
-    chop = strchr((const char *)(firstcol+1), ';');
+    chop = (char *)strchr((const char *)(firstcol+1), ';');
     if (chop != NULL) {
         *chop = '\0';
     }
 
-    chop = strchr((const char *)(firstcol+1), '?');
+    chop = (char *)strchr((const char *)(firstcol+1), '?');
     if (chop != NULL) {
         *chop = '\0';
     }
@@ -665,7 +665,7 @@ char *get_sip_from_uri_username(openli_sip_parser_t *parser) {
         return NULL;
     }
 
-    semicolon = strchr(uriuser, ';');
+    semicolon = (char *)strchr(uriuser, ';');
     if (semicolon) {
         *semicolon = '\0';
     }
@@ -1094,7 +1094,7 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
     uint8_t saw_wrapping = 0;
 
     /* Make sure we strip the '<' and '>' that wrap the identity value */
-    idstring = strchr((const char *)start, '<');
+    idstring = (char *)strchr((const char *)start, '<');
     if (idstring != NULL) {
         idstring = strdup(idstring + 1);
         saw_wrapping = 1;
@@ -1108,7 +1108,7 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
         return -1;
     }
 
-    ptr = strchr((const char *)ptr, ':');
+    ptr = (char *)strchr((const char *)ptr, ':');
     if (ptr == NULL) {
         free(idstring);
         return -1;
@@ -1116,7 +1116,7 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
 
     ptr += 1;
     if (saw_wrapping) {
-        end = strchr((const char *)ptr, '>');
+        end = (char *)strchr((const char *)ptr, '>');
         if (end != NULL) {
             *end = '\0';
         }
@@ -1126,7 +1126,7 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
         }
     }
 
-    at = strchr((const char *)ptr, '@');
+    at = (char *)strchr((const char *)ptr, '@');
     if (at == NULL) {
         sipid->realm = NULL;
         sipid->realm_len = 0;

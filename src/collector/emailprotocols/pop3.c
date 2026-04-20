@@ -167,7 +167,7 @@ static int update_auth_command(pop3_session_t *pop3sess, char *replace,
     char *ptr;
     int replacelen;
 
-    ptr = strstr((const char *)(pop3sess->contbuffer +
+    ptr = (char *)strstr((const char *)(pop3sess->contbuffer +
             pop3sess->auth_read_from), origtoken);
     if (!ptr) {
         logger(LOG_INFO, "OpenLI: cannot find original auth token for POP3 AUTH command, session %s", sesskey);
