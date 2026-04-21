@@ -1636,6 +1636,42 @@ staticerr:
 
 }
 
+int set_agency_properties(provision_state_t *state, intercept_common_t *common,
+        update_con_info_t *cinfo) {
+
+    prov_agency_t *lea = NULL;
+    if (common->targetagency == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Intercept %s does not have a valid destination agency %s",
+                update_failure_page_start, common->liid,
+                update_failure_page_end);
+        return -1;
+    }
+
+    if (strcmp(common->targetagency, "pcapdisk") == 0) {
+        return 0;
+    }
+
+    HASH_FIND(hh, state->interceptconf.leas, common->targetagency,
+            strlen(common->targetagency), lea);
+    if (!lea || !lea->ag) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>The agency for intercept %s (%s) is not recognised by the provisioner %s",
+                update_failure_page_start, common->liid, common->targetagency,
+                update_failure_page_end);
+        return -1;
+    }
+
+    if (lea->ag->operatorid) {
+        common->operatorid = strdup(lea->ag->operatorid);
+    } else {
+        common->operatorid = NULL;
+    }
+
+    common->time_fmt = lea->ag->digest.time_fmt;
+    return 1;
+}
+
 int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     struct json_intercept emailjson;
     struct json_tokener *tknr;
@@ -1647,7 +1683,6 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
     prov_intercept_data_t *timers = NULL;
-    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&emailjson, parsed);
@@ -1662,13 +1697,7 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
-    HASH_FIND(hh, state->interceptconf.leas, mailint->common.targetagency,
-            strlen(mailint->common.targetagency), lea);
-    if (!lea && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Intercept %s does not have a valid destination agency %s",
-                update_failure_page_start, mailint->common.liid,
-                update_failure_page_end);
+    if (set_agency_properties(state, &(mailint->common), cinfo) < 0) {
         goto cepterr;
     }
 
@@ -1794,7 +1823,6 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     int r;
     char *target_info;
     prov_intercept_data_t *timers = NULL;
-    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -1816,13 +1844,7 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
-    HASH_FIND(hh, state->interceptconf.leas, vint->common.targetagency,
-            strlen(vint->common.targetagency), lea);
-    if (!lea && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Intercept %s does not have a valid destination agency %s",
-                update_failure_page_start, vint->common.liid,
-                update_failure_page_end);
+    if (set_agency_properties(state, &(vint->common), cinfo) < 0) {
         goto cepterr;
     }
 
@@ -1938,7 +1960,6 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *radiusidentstring = NULL;
     ipintercept_t *ipint = NULL;
     prov_intercept_data_t *timers = NULL;
-    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -1955,13 +1976,7 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             "IP intercept", cinfo, true, state->epoll_fd) < 0) {
         goto cepterr;
     }
-    HASH_FIND(hh, state->interceptconf.leas, ipint->common.targetagency,
-            strlen(ipint->common.targetagency), lea);
-    if (!lea && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Intercept %s does not have a valid destination agency %s",
-                update_failure_page_start, ipint->common.liid,
-                update_failure_page_end);
+    if (set_agency_properties(state, &(ipint->common), cinfo) < 0) {
         goto cepterr;
     }
 
@@ -2254,7 +2269,6 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     email_target_t *tmp;
     char *target_info;
     char *delivcompressstring = NULL;
-    prov_agency_t *lea;
 
     char *liidstr = NULL, *parsedliid = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
@@ -2298,13 +2312,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
-    HASH_FIND(hh, state->interceptconf.leas, mailint->common.targetagency,
-            strlen(mailint->common.targetagency), lea);
-    if (!lea && strcmp(mailint->common.targetagency, "pcapdisk") != 0) {
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Intercept %s does not have a valid destination agency %s",
-                update_failure_page_start, mailint->common.liid,
-                update_failure_page_end);
+    if (set_agency_properties(state, &(mailint->common), cinfo) < 0) {
         goto cepterr;
     }
 
@@ -2431,7 +2439,6 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *liidstr = NULL, *target_info, *parsedliid = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
-    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&voipjson, parsed);
@@ -2473,15 +2480,10 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
-    HASH_FIND(hh, state->interceptconf.leas, vint->common.targetagency,
-            strlen(vint->common.targetagency), lea);
-    if (!lea && strcmp(vint->common.targetagency, "pcapdisk") != 0) {
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Intercept %s does not have a valid destination agency %s",
-                update_failure_page_start, vint->common.liid,
-                update_failure_page_end);
+    if (set_agency_properties(state, &(vint->common), cinfo) < 0) {
         goto cepterr;
     }
+
     if (vint->common.xid_count > 0 &&
             check_for_duplicate_xids(&(state->interceptconf),
             vint->common.xid_count, vint->common.xids,
@@ -2588,7 +2590,6 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *mobileidentstring = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0;
     int timeschanged = 0;
-    prov_agency_t *lea;
 
     INIT_JSON_INTERCEPT_PARSING
     extract_intercept_json_objects(&ipjson, parsed);
@@ -2631,13 +2632,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
-    HASH_FIND(hh, state->interceptconf.leas, ipint->common.targetagency,
-            strlen(ipint->common.targetagency), lea);
-    if (!lea && strcmp(ipint->common.targetagency, "pcapdisk") != 0) {
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Intercept %s does not have a valid destination agency %s",
-                update_failure_page_start, ipint->common.liid,
-                update_failure_page_end);
+    if (set_agency_properties(state, &(ipint->common), cinfo) < 0) {
         goto cepterr;
     }
 
@@ -3234,7 +3229,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         }
     } else {
         prev = found->ag->shortoperatorid;
-        fprintf(stderr, "%s %s\n", modified.shortoperatorid, found->ag->shortoperatorid);
         MODIFY_STRING_MEMBER(modified.shortoperatorid,
                 found->ag->shortoperatorid, &changed);
         if (prev != found->ag->shortoperatorid) {
