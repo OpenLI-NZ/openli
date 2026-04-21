@@ -1,3 +1,10 @@
+openli (1.1.19-1) unstable; urgency=medium
+
+  * REST API: fix bug where intercepts added via the REST API were not
+    being assigned the correct operator ID.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 22 Apr 2026 11:42:45 +1200
+
 openli (1.1.18-1) unstable; urgency=medium
 
   * Collector: fix bad encoding of ASN.1 elements that were sequences of
