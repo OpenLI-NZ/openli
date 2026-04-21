@@ -128,6 +128,11 @@ logstatfrequency: 5
 # by most VoIP software vendors.
 sipignoresessionid: no
 
+# If set to 'yes', the collector tries to determine the SIP sessionDirection
+# and set the attribute accordingly in the ETSI packet.
+# Some jurisdictions make the use of this field mandatory.
+# sipusesessiondir: no
+
 # List of Juniper mirrors that we are acting as a mediator for.
 # NOTE: This should be the IP and port of the *recipient* of the mirrored
 #       traffic, not the host that is doing the mirroring.

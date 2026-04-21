@@ -661,6 +661,14 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "sipusesessiondir") == 0) {
+        glob->sipconfig.use_sessiondir =
+                config_check_onoff((char *)value->data.scalar.value);
+        return 0;
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "encoding") == 0) {
 
         /* We're back to only having one encoding method now, but
@@ -868,6 +876,8 @@ char *collector_config_to_json(collector_global_t *glob) {
             json_object_new_boolean(glob->sipconfig.ignore_sdpo_matches));
     json_object_object_add(jobj, "sipignoresessionid",
             json_object_new_boolean(glob->sipconfig.ignore_sessionid_matches));
+    json_object_object_add(jobj, "sipusesessiondir",
+            json_object_new_boolean(glob->sipconfig.use_sessiondir));
 
     if (glob->sipconfig.sipdebugfile) {
         json_object_object_add(jobj, "sipdebugfile",

@@ -1413,6 +1413,10 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     copy->data.ipmmiri.delivcc = strdup(vint->common.delivcc);
     copy->data.ipmmiri.dir = dir;
 
+    pthread_rwlock_rdlock(sipworker->shared_mutex);
+    copy->data.ipmmiri.use_sessiondir = sipworker->shared->use_sessiondir;
+    pthread_rwlock_unlock(sipworker->shared_mutex);
+
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
             irimsg->data.ipmmiri.contentlen);
