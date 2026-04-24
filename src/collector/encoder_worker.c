@@ -379,7 +379,7 @@ static int send_integrity_check_hash_pdu(openli_encoder_t *enc,
 
 static inline int finalize_encoded_result(openli_encoded_result_t *res,
         openli_encoding_job_t *job, openli_encoder_t *enc,
-        encoder_liid_state_t *known, uint8_t type) {
+        encoder_liid_state_t *known, uint8_t type, uint32_t destid) {
 
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
@@ -387,7 +387,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     res->cinstr = strdup(job->cinstr);
     res->liid = strdup(job->liid);
     res->seqno = job->seqno;
-    res->destid = job->origreq->destid;
+    res->destid = destid;
     res->encodedby = enc->workerid;
     res->restype = type;
 
@@ -555,7 +555,8 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->header.intercepttype = htons(rawtype);
     res->header.internalid = 0;
 
-    finalize_encoded_result(res, job, enc, NULL, job->origreq->type);
+    finalize_encoded_result(res, job, enc, NULL, job->origreq->type,
+            job->origreq->destid);
 
     return 0;
 }
@@ -694,7 +695,8 @@ static inline void create_mobile_operator_identifier(openli_encoder_t *enc,
 static int encode_templated_segflag(openli_encoder_t *enc,
         openli_encoding_job_t *job, encoder_liid_state_t *known,
         encoded_header_template_t *hdr_tplate,
-        openli_encoded_result_t *res, uint8_t is_first) {
+        openli_encoded_result_t *res, uint8_t is_first,
+        uint8_t restype) {
 
     wandder_encoded_result_t *body = NULL;
 
@@ -720,7 +722,7 @@ static int encode_templated_segflag(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, restype, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -1144,12 +1146,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 
             if (emailccjob->segflag == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
                 ret = encode_templated_segflag(enc, job, known, hdr_tplate,
-                        res, 1);
+                        res, 1, job->origreq->type);
                 if (ret < 0) {
                     return ret;
                 }
                 finalize_encoded_result(res, job, enc, known,
-                        OPENLI_EXPORT_FIRST_SEGMENT_FLAG);
+                        OPENLI_EXPORT_FIRST_SEGMENT_FLAG, job->origreq->destid);
                 (*next)++;
                 res = &(resarray[*next]);
                 enccount = 2;
@@ -1159,14 +1161,20 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                 return ret;
             }
             if (emailccjob->segflag == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
+                // Need to save certain values from the origreq because
+                // the CC result is going to "steal" it but we need to
+                // known them to encode the "last segment" TRI record
+                uint8_t savedtype = job->origreq->type;
+                uint32_t saveddestid = job->origreq->destid;
+
                 finalize_encoded_result(res, job, enc, known,
-                        job->origreq->type);
+                        job->origreq->type, saveddestid);
                 (*next)++;
                 res = &(resarray[*next]);
                 ret = encode_templated_segflag(enc, job, known, hdr_tplate,
-                        res, 0);
+                        res, 0, savedtype);
                 finalize_encoded_result(res, job, enc, known,
-                        OPENLI_EXPORT_LAST_SEGMENT_FLAG);
+                        OPENLI_EXPORT_LAST_SEGMENT_FLAG, saveddestid);
                 // can fall through in every other case EXCEPT the one where
                 // we need to ensure the last segment TRI has the right
                 // 'restype' set.
@@ -1181,7 +1189,8 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             ret = 0;
     }
 
-    finalize_encoded_result(res, job, enc, known, job->origreq->type);
+    finalize_encoded_result(res, job, enc, known, job->origreq->type,
+            job->origreq->destid);
 
     if (ret < 0) {
         return ret;
