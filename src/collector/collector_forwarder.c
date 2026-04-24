@@ -722,7 +722,7 @@ static void connect_export_targets(forwarding_thread_data_t *fwd) {
 static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
     int x, i, msgcnt;
-    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
+    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH * 2];
 
     while (fwd->encoders_over < fwd->encoders) {
         x = zmq_recv(fwd->zmq_pullressock, res, sizeof(res),
@@ -757,7 +757,7 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
 static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
     int x, processed, i, msgcnt;
-    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH];
+    openli_encoded_result_t res[MAX_ENCODED_RESULT_BATCH * 2];
 
     processed = 0;
     do {
