@@ -174,7 +174,27 @@ static wandder_encoded_result_t *encode_sipiri_body(wandder_encoder_t *encoder,
         encode_ipmmiri_location(encoder, precomputed, job);
     }
 
-    END_ENCODED_SEQUENCE(encoder, 5);
+    END_ENCODED_SEQUENCE(encoder, 2);
+
+    if (job->use_sessiondir) {
+        if (job->dir == ETSI_DIR_FROM_TARGET) {
+            jobarray[0] = &(precomputed[OPENLI_PREENCODE_SESSDIRFROM]);
+            wandder_encode_next_preencoded(encoder, jobarray, 1);
+        } else if (job->dir == ETSI_DIR_TO_TARGET) {
+            jobarray[0] = &(precomputed[OPENLI_PREENCODE_SESSDIRTO]);
+            wandder_encode_next_preencoded(encoder, jobarray, 1);
+        } else if (job->dir == ETSI_DIR_INDETERMINATE) {
+            jobarray[0] = &(precomputed[OPENLI_PREENCODE_SESSDIRUNKNOWN]);
+            wandder_encode_next_preencoded(encoder, jobarray, 1);
+        } else {
+            uint32_t dir32 = job->dir;
+            wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                    WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &dir32,
+                    sizeof(uint32_t));
+        }
+    }
+
+    END_ENCODED_SEQUENCE(encoder, 3);
 
     return wandder_encode_finish(encoder);
 }

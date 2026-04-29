@@ -32,7 +32,7 @@
 int handle_sip_config_changes(collector_sip_config_t *sipconfig,
         openli_yaml_config_pending_updates_t *pending, char *json) {
     struct json_tokener *tknr;
-    struct json_object *ignore_sdpo, *trust_from, *disable_redirect;
+    struct json_object *ignore_sdpo, *trust_from, *disable_redirect, *use_sessiondir;
     struct json_object *sipdebugfile, *ignore_sessionid;
     struct json_object *parsed = NULL;
     int ret = -1;
@@ -71,6 +71,14 @@ int handle_sip_config_changes(collector_sip_config_t *sipconfig,
                 json_object_get_boolean(ignore_sdpo);
         UPDATE_SCALAR_CONFIG(pending, "sipignoresdpo",
                 GENERATE_CONFIG_BOOLEAN(sipconfig->ignore_sdpo_matches),
+                false, true);
+    }
+    if (json_object_object_get_ex(parsed, "sipusesessiondir", &use_sessiondir)
+            && json_object_is_type(use_sessiondir, json_type_boolean)) {
+        sipconfig->use_sessiondir =
+                json_object_get_boolean(use_sessiondir);
+        UPDATE_SCALAR_CONFIG(pending, "sipusesessiondir",
+                GENERATE_CONFIG_BOOLEAN(sipconfig->use_sessiondir),
                 false, true);
     }
 
