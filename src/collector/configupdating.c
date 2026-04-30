@@ -32,7 +32,7 @@
 int handle_sip_config_changes(collector_sip_config_t *sipconfig,
         openli_yaml_config_pending_updates_t *pending, char *json) {
     struct json_tokener *tknr;
-    struct json_object *ignore_sdpo, *trust_from, *disable_redirect,
+    struct json_object *ignore_sdpo, *trust_from, *disable_redirect;
     struct json_object *use_sessiondir;
     struct json_object *sipdebugfile, *ignore_sessionid;
     struct json_object *parsed = NULL;
