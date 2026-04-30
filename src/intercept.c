@@ -456,6 +456,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin,
     newcin->otheraddr = NULL;
     newcin->ai_family = 0;
     newcin->seqno = 0;
+    newcin->dir = ETSI_DIR_INDETERMINATE;
     newcin->invitecseq = NULL;
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
@@ -525,6 +526,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
     copy->skip_comfort = orig->skip_comfort;
     copy->seqno = 0;
+    copy->dir = orig->dir;
     copy->active = 1;
     copy->invitecseq = NULL;
     copy->byecseq = NULL;

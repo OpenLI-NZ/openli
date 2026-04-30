@@ -2177,6 +2177,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->etsitls = 1;
     glob->sipconfig.ignore_sdpo_matches = 0;
     glob->sipconfig.ignore_sessionid_matches = 0;
+    glob->sipconfig.use_sessiondir = 0;
     glob->sipconfig.sipdebugfile = NULL;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
@@ -2501,6 +2502,8 @@ static int reload_collector_config(collector_global_t *glob,
             newstate.sipconfig.ignore_sdpo_matches;
     glob->sipconfig.ignore_sessionid_matches =
             newstate.sipconfig.ignore_sessionid_matches;
+    glob->sipconfig.use_sessiondir =
+            newstate.sipconfig.use_sessiondir;
     if (glob->sipconfig.sipdebugfile) {
         free(glob->sipconfig.sipdebugfile);
     }

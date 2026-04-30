@@ -245,6 +245,8 @@ typedef struct collector_sip_configuration {
      * call.
      */
     uint8_t ignore_sessionid_matches;
+    // Flag that indicates whether to use sessionDirection or not
+    uint8_t use_sessiondir;
     char *sipdebugfile;
 
 } collector_sip_config_t;

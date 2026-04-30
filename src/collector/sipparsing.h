@@ -109,6 +109,17 @@ typedef struct openli_sip_parser {
     uint8_t badsip;
 } openli_sip_parser_t;
 
+typedef enum {
+    SIP_MATCH_NONE = 0,
+    SIP_MATCH_TO,
+    SIP_MATCH_PASSERT,
+    SIP_MATCH_RPID,
+    SIP_MATCH_PROXYAUTH,
+    SIP_MATCH_REGAUTH,
+    SIP_MATCH_PPREFERRED,
+    SIP_MATCH_FROM
+} sip_match_source_t;
+
 int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
         uint32_t contentlen);
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
@@ -171,7 +182,7 @@ int extract_sip_identities(openli_sip_parser_t *parser,
         openli_sip_identity_set_t *idset, uint8_t log_error);
 openli_sip_identity_t *match_sip_target_against_identities(
         libtrace_list_t *targets, openli_sip_identity_set_t *idset,
-        uint8_t trust_from);
+        uint8_t trust_from, sip_match_source_t *pmatch_src);
 void release_openli_sip_identity_set(openli_sip_identity_set_t *idset);
 #endif
 

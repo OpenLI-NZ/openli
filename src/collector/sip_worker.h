@@ -144,7 +144,7 @@ void *start_sip_worker_thread(void *arg);
 void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
         voipintercept_t *vint, openli_export_recv_t *irimsg,
         etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
-        int loc_count, libtrace_packet_t **pkts, int pkt_cnt);
+        int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir);
 int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         libtrace_packet_t **pkts,
         int pkt_cnt, openli_export_recv_t *irimsg);
