@@ -821,7 +821,15 @@ static int gtp_worker_process_packet(openli_gtp_worker_t *worker) {
         process_gtp_packet(worker, recvd.data.pkt);
 
         if (recvd.data.pkt) {
-            trace_destroy_packet(recvd.data.pkt);
+            if (worker->zmq_packet_return) {
+                int ret = zmq_send(worker->zmq_packet_return, &recvd.data.pkt,
+                        sizeof(recvd.data.pkt), ZMQ_DONTWAIT);
+                if (ret < 0) {
+                    trace_destroy_packet(recvd.data.pkt);
+                }
+            } else {
+                trace_destroy_packet(recvd.data.pkt);
+            }
         }
     } while (rc > 0);
 
@@ -910,13 +918,30 @@ static void gtp_worker_main(openli_gtp_worker_t *worker) {
 void *gtp_thread_begin(void *arg) {
     openli_gtp_worker_t *worker = (openli_gtp_worker_t *)arg;
     char sockname[256];
-    int zero = 0, x;
+    int zero = 0, x, hwm=2000;
     openli_state_update_t recvd;
     teid_to_session_t *iter, *tmp;
 
     worker->zmq_pubsocks = calloc(worker->tracker_threads, sizeof(void *));
     init_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads,
             "inproc://openlipub", worker->zmq_ctxt, -1);
+
+    worker->zmq_packet_return = zmq_socket(worker->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_connect(worker->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
+        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to connect to packet return ZMQ: %s", worker->workerid, strerror(errno));
+        zmq_close(worker->zmq_packet_return);
+        worker->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(worker->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to set linger on packet return ZMQ: %s", worker->workerid, strerror(errno));
+        zmq_close(worker->zmq_packet_return);
+        worker->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(worker->zmq_packet_return, ZMQ_SNDHWM, &hwm,
+            sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to set HWM on packet return ZMQ: %s", worker->workerid, strerror(errno));
+        zmq_close(worker->zmq_packet_return);
+        worker->zmq_packet_return = NULL;
+    }
 
     worker->zmq_ii_sock = zmq_socket(worker->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openligtpcontrol_sync-%d",
@@ -970,6 +995,9 @@ haltgtpworker:
         free(iter);
     }
 
+    if (worker->zmq_packet_return) {
+        zmq_close(worker->zmq_packet_return);
+    }
     zmq_close(worker->zmq_ii_sock);
     zmq_close(worker->zmq_colthread_recvsock);
     free_all_users(worker->allusers);
@@ -983,10 +1011,10 @@ haltgtpworker:
     }
 
     if (worker->haltinfo) {
-	pthread_mutex_lock(&(worker->haltinfo->mutex));
-	worker->haltinfo->halted ++;
-	pthread_cond_signal(&(worker->haltinfo->cond));
-	pthread_mutex_unlock(&(worker->haltinfo->mutex));
+        pthread_mutex_lock(&(worker->haltinfo->mutex));
+        worker->haltinfo->halted ++;
+        pthread_cond_signal(&(worker->haltinfo->cond));
+        pthread_mutex_unlock(&(worker->haltinfo->mutex));
     }
 
     pthread_exit(NULL);
@@ -1002,6 +1030,7 @@ int start_gtp_worker_thread(openli_gtp_worker_t *worker, int id,
     pthread_mutex_init(&(worker->col_queue_mutex), NULL);
 
     worker->zmq_ctxt = glob->zmq_ctxt;
+    worker->zmq_packet_return = NULL;
     worker->workerid = id;
     worker->stats_mutex = &(glob->stats_mutex);
     worker->stats = &(glob->stats);

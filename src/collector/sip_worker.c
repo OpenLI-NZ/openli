@@ -52,6 +52,10 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
         release_sip_parser(sipworker->sipparser);
     }
 
+    if (sipworker->zmq_packet_return) {
+        zmq_close(sipworker->zmq_packet_return);
+    }
+
     HASH_ITER(hh, sipworker->timeouts, syncev, tmp) {
         HASH_DELETE(hh, sipworker->timeouts, syncev);
     }
@@ -107,7 +111,7 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
 }
 
 static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
-    int zero = 0;
+    int zero = 0, hwm = 2000;
     char sockname[256];
 
     sipworker->zmq_pubsocks = calloc(sipworker->tracker_threads,
@@ -187,6 +191,28 @@ static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
                 sipworker->workerid, strerror(errno));
         return -1;
     }
+
+    sipworker->zmq_packet_return = zmq_socket(sipworker->zmq_ctxt,
+            ZMQ_PUSH);
+    if (zmq_connect(sipworker->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
+        logger(LOG_INFO, "OpenLI: SIP processing thread %d failed to connect to packet return ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        zmq_close(sipworker->zmq_packet_return);
+        sipworker->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(sipworker->zmq_packet_return, ZMQ_SNDHWM,
+            &hwm, sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: SIP processing thread %d failed to set HWM on packet return ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        zmq_close(sipworker->zmq_packet_return);
+        sipworker->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(sipworker->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: SIP processing thread %d failed to set linger on packet return ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        zmq_close(sipworker->zmq_packet_return);
+        sipworker->zmq_packet_return = NULL;
+    }
+
     return 0;
 }
 
@@ -496,7 +522,15 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
         if (packets != NULL) {
             for (i = 0; i < pkt_cnt; i++) {
                 if (packets[i]) {
-                    trace_destroy_packet(packets[i]);
+                    if (sipworker->zmq_packet_return) {
+                        ret = zmq_send(sipworker->zmq_packet_return,
+                                &packets[i], sizeof(packets[i]), ZMQ_DONTWAIT);
+                        if (ret < 0) {
+                            trace_destroy_packet(packets[i]);
+                        }
+                    } else {
+                        trace_destroy_packet(packets[i]);
+                    }
                 }
             }
             free(packets);
@@ -534,7 +568,15 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
     if (packets) {
         for (i = 0; i < pkt_cnt; i++) {
             if (packets[i]) {
-                trace_destroy_packet(packets[i]);
+                if (sipworker->zmq_packet_return) {
+                    ret = zmq_send(sipworker->zmq_packet_return, &packets[i],
+                            sizeof(packets[i]), ZMQ_DONTWAIT);
+                    if (ret < 0) {
+                        trace_destroy_packet(packets[i]);
+                    }
+                } else {
+                    trace_destroy_packet(packets[i]);
+                }
             }
         }
         free(packets);
@@ -566,7 +608,17 @@ static void process_received_sip_packet(openli_sip_worker_t *sipworker,
     }
 
     if (packet) {
-        trace_destroy_packet(packet);
+        // recycle the packet structure if possible -- if there are too
+        // many recycled packets, destroy it
+        if (sipworker->zmq_packet_return) {
+            ret = zmq_send(sipworker->zmq_packet_return, &packet,
+                    sizeof(packet), ZMQ_DONTWAIT);
+            if (ret < 0) {
+                trace_destroy_packet(packet);
+            }
+        } else {
+            trace_destroy_packet(packet);
+        }
     }
 }
 
@@ -1454,6 +1506,7 @@ void *start_sip_worker_thread(void *arg) {
         x = zmq_recv(sipworker->zmq_colthread_recvsock, &recvd,
                 sizeof(recvd), ZMQ_DONTWAIT);
         if (x > 0) {
+            // don't recycle here as we are shutting down
             trace_destroy_packet(recvd.data.pkt);
         }
     } while (x > 0);

@@ -37,6 +37,9 @@ typedef struct openli_gtp_worker {
     /* The global zeromq context for the entire program */
     void *zmq_ctxt;
 
+    /* Queue for recycling libtrace packet structures */
+    void *zmq_packet_return;
+
     /* A sequential identifier for this worker thread */
     int workerid;
 

@@ -53,6 +53,7 @@
 
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
+    int zero = 0, hwm = 2000;
 	collector_sync_t *sync = (collector_sync_t *)
 			malloc(sizeof(collector_sync_t));
 
@@ -109,6 +110,23 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     sync->ctx = glob->sslconf.ctx;
     sync->ssl = NULL;
+
+    sync->zmq_packet_return = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_bind(sync->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
+        logger(LOG_INFO, "OpenLI: colsync thread was unable to connect to packet return ZMQ: %s", strerror(errno));
+        zmq_close(sync->zmq_packet_return);
+        sync->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(sync->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: colsync thread was unable to set linger for packet return ZMQ: %s", strerror(errno));
+        zmq_close(sync->zmq_packet_return);
+        sync->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(sync->zmq_packet_return, ZMQ_SNDHWM, &hwm,
+            sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: colsync thread was unable to set HWM for packet return ZMQ: %s", strerror(errno));
+        zmq_close(sync->zmq_packet_return);
+        sync->zmq_packet_return = NULL;
+    }
 
     sync->zmq_colsock = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
     if (zmq_bind(sync->zmq_colsock, "inproc://openli-ipsync") != 0) {
@@ -262,6 +280,10 @@ void clean_sync_data(collector_sync_t *sync) {
     sync->incoming = NULL;
     sync->radiusplugin = NULL;
     sync->activeips = NULL;
+
+    if (sync->zmq_packet_return) {
+        zmq_close(sync->zmq_packet_return);
+    }
 
     pthread_mutex_init(&(haltinfo.mutex), NULL);
     pthread_cond_init(&(haltinfo.cond), NULL);
@@ -3691,7 +3713,16 @@ int sync_thread_main(collector_sync_t *sync) {
                     logger(LOG_INFO,
                             "OpenLI: sync thread received an invalid packet");
                 }
-                trace_destroy_packet(recvd.data.pkt);
+
+                if (sync->zmq_packet_return) {
+                    ret = zmq_send(sync->zmq_packet_return, &recvd.data.pkt,
+                            sizeof(recvd.data.pkt), ZMQ_DONTWAIT);
+                    if (ret < 0) {
+                        trace_destroy_packet(recvd.data.pkt);
+                    }
+                } else {
+                    trace_destroy_packet(recvd.data.pkt);
+                }
             }
 
         } while (rc > 0);

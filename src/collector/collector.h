@@ -58,6 +58,8 @@
 #include "sipparsing.h"
 #include "x2x3_ingest.h"
 
+#define PACKET_RETURN_ZMQ "inproc://coll-packet-return"
+
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
     OPENLI_PUSH_HALT_IPINTERCEPT = 2,
@@ -292,6 +294,8 @@ typedef struct colthread_local {
     time_t startedat;
     uint16_t pkts_since_msg_read;
     uint16_t tick_counter;
+
+    void *zmq_packet_return;
 
     UT_hash_handle hh;
 

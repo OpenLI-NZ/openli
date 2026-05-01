@@ -95,6 +95,7 @@ void openli_copy_ipcontent(libtrace_packet_t *pkt, uint8_t **ipc,
 char *extract_liid_from_exported_msg(uint8_t *etsimsg,
         uint64_t msglen, unsigned char *space, int maxspace,
         uint16_t *liidlen);
+int openli_deepcopy_packet(libtrace_packet_t *src, libtrace_packet_t *dest);
 libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt);
 size_t openli_convert_hexstring_to_binary(const char *src, uint8_t *space,
         size_t maxspace);

@@ -602,7 +602,7 @@ static void *start_processing_thread(libtrace_t *trace,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
-    int i;
+    int i, zero=0;
     sync_sendq_t *syncq, *sendq_hash;
     struct timeval tv;
     char locname[1024];
@@ -620,6 +620,19 @@ static void *start_processing_thread(libtrace_t *trace,
                 strlen(loc->localname), loc);
     } else {
         init_collocal(loc, glob);
+    }
+
+    loc->zmq_packet_return = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
+    if (zmq_bind(loc->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
+        logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns: %s", loc->localname, strerror(errno));
+        zmq_close(loc->zmq_packet_return);
+        loc->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(loc->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to configure ZMQ for packet object returns: %s", loc->localname,
+                strerror(errno));
+        zmq_close(loc->zmq_packet_return);
+        loc->zmq_packet_return = NULL;
     }
 
     populate_coreserver_fast_filters_from_global(loc, glob);
@@ -693,6 +706,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     openli_pushed_t syncpush;
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
+    libtrace_packet_t *pkt = NULL;
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
@@ -700,6 +714,14 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     }
 
     deregister_sync_queues(&(glob->syncip), t);
+
+    if (loc->zmq_packet_return) {
+        while (zmq_recv(loc->zmq_packet_return, &pkt, sizeof(pkt),
+                ZMQ_DONTWAIT) > 0) {
+            trace_destroy_packet(pkt);
+        }
+        zmq_close(loc->zmq_packet_return);
+    }
 
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
 
@@ -821,31 +843,41 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
 
 }
 
-static inline void send_packet_to_sync(libtrace_packet_t *pkt,
-        void *q, uint8_t updatetype) {
+static inline void send_packet_to_sync(void *returnq,
+        libtrace_packet_t *pkt, void *q, uint8_t updatetype) {
+
     openli_state_update_t syncup;
-    libtrace_packet_t *copy;
+    libtrace_packet_t *copy = NULL;
+    int rc;
 
     if (collector_halt) {
         return;
     }
 
-    /* We do this ourselves instead of calling trace_copy_packet() because
-     * we don't want to be allocating 64K per copied packet -- we could be
-     * doing this a lot and don't want to be wasteful */
-    copy = openli_copy_packet(pkt);
-    if (copy == NULL) {
-        return;
+    if (returnq == NULL) {
+        copy = trace_copy_packet(pkt);
+    } else {
+        rc = zmq_recv(returnq, &copy, sizeof(copy), ZMQ_DONTWAIT);
+        if (rc < 0 && errno == EAGAIN) {
+            // no spare packets available
+            copy = trace_copy_packet(pkt);
+            if (copy == NULL) {
+                return;
+            }
+        } else {
+            if (openli_deepcopy_packet(pkt, copy) < 0) {
+                return;
+            }
+        }
     }
 
     syncup.type = updatetype;
     syncup.data.pkt = copy;
 
-    //trace_increment_packet_refcount(pkt);
     zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
 }
 
-static void send_packet_to_emailworker(libtrace_packet_t *pkt,
+static void send_packet_to_emailworker(void *returnq, libtrace_packet_t *pkt,
         void **queues, int qcount, uint32_t hashval, uint8_t pkttype) {
 
     int destind;
@@ -855,7 +887,7 @@ static void send_packet_to_emailworker(libtrace_packet_t *pkt,
     }
     assert(hashval != 0);
     destind = (hashval - 1) % qcount;
-    send_packet_to_sync(pkt, queues[destind], pkttype);
+    send_packet_to_sync(returnq, pkt, queues[destind], pkttype);
 }
 
 static void add_payload_info_from_packet(libtrace_packet_t *pkt,
@@ -1071,7 +1103,8 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         }
     }
 
-    send_packet_to_sync(pkt, loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP);
+    send_packet_to_sync(loc->zmq_packet_return, pkt,
+            loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP);
 
     pthread_mutex_lock(&(glob->stats_mutex));
     glob->stats.packets_gtp ++;
@@ -1276,7 +1309,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(&pinfo,
                     loc->radiusservers, 0)) {
-            send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
+            send_packet_to_sync(loc->zmq_packet_return, pkt, loc->tosyncq_ip,
+                    OPENLI_UPDATE_RADIUS);
             ipsynced = 1;
             goto processdone;
         }
@@ -1297,7 +1331,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     sipthread = 0;
                 }
 
-                send_packet_to_sync(pkt, loc->sip_worker_queues[sipthread],
+                send_packet_to_sync(loc->zmq_packet_return, pkt,
+                        loc->sip_worker_queues[sipthread],
                         OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
@@ -1314,15 +1349,16 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             } else {
                 sipthread = 0;
             }
-            send_packet_to_sync(pkt, loc->sip_worker_queues[sipthread],
-                    OPENLI_UPDATE_SIP);
+            send_packet_to_sync(loc->zmq_packet_return, pkt,
+                    loc->sip_worker_queues[sipthread], OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
 
         else if (loc->smtpservers &&
                 (servhash = is_core_server_packet(&pinfo,
                     loc->smtpservers, 1))) {
-            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+            send_packet_to_emailworker(loc->zmq_packet_return, pkt,
+                    loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
             emailsynced = 1;
 
@@ -1331,7 +1367,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         else if (loc->imapservers &&
                 (servhash = is_core_server_packet(&pinfo,
                     loc->imapservers, 1))) {
-            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+            send_packet_to_emailworker(loc->zmq_packet_return, pkt,
+                    loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
             emailsynced = 1;
         }
@@ -1339,7 +1376,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         else if (loc->pop3servers &&
                 (servhash = is_core_server_packet(&pinfo,
                     loc->pop3servers, 1))) {
-            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+            send_packet_to_emailworker(loc->zmq_packet_return, pkt,
+                    loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_POP3);
             emailsynced = 1;
         }
@@ -2910,6 +2948,7 @@ int main(int argc, char *argv[]) {
             snprintf(name, 1024, "emailworker-%d", i);
 
             glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
+            glob->emailworkers[i].zmq_packet_return = NULL;
             glob->emailworkers[i].topoll = NULL;
             glob->emailworkers[i].topoll_size = 0;
             glob->emailworkers[i].fragreass = NULL;

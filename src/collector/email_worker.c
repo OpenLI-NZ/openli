@@ -1307,8 +1307,16 @@ static int process_received_packet(openli_email_worker_t *state) {
             /* packet was a fragment and we need more fragments to complete
              * the application payload.
              */
-             trace_destroy_packet(recvd.data.pkt);
-             continue;
+            if (state->zmq_packet_return) {
+                int ret = zmq_send(state->zmq_packet_return, &(recvd.data.pkt),
+                        sizeof(recvd.data.pkt), ZMQ_DONTWAIT);
+                if (ret < 0) {
+                    trace_destroy_packet(recvd.data.pkt);
+                }
+            } else {
+                trace_destroy_packet(recvd.data.pkt);
+            }
+            continue;
         }
 
         if (cap->content != NULL) {
@@ -1317,7 +1325,15 @@ static int process_received_packet(openli_email_worker_t *state) {
             free_captured_email(cap);
         }
 
-        trace_destroy_packet(recvd.data.pkt);
+        if (state->zmq_packet_return) {
+            int ret = zmq_send(state->zmq_packet_return, &(recvd.data.pkt),
+                    sizeof(recvd.data.pkt), ZMQ_DONTWAIT);
+            if (ret < 0) {
+                trace_destroy_packet(recvd.data.pkt);
+            }
+        } else {
+            trace_destroy_packet(recvd.data.pkt);
+        }
     } while (rc > 0);
 
     return 0;
@@ -1468,7 +1484,7 @@ static void free_all_email_sessions(openli_email_worker_t *state) {
 void *start_email_worker_thread(void *arg) {
 
     openli_email_worker_t *state = (openli_email_worker_t *)arg;
-    int x, zero = 0;
+    int x, zero = 0, hwm=2000;
     char sockname[256];
     sync_epoll_t *syncev, *tmp;
     openli_state_update_t recvd;
@@ -1483,6 +1499,23 @@ void *start_email_worker_thread(void *arg) {
 
     init_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads,
             "inproc://openliforwardercontrol_sync", state->zmq_ctxt, -1);
+
+    state->zmq_packet_return = zmq_socket(state->zmq_ctxt, ZMQ_PUSH);
+    if (zmq_connect(state->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to connect to packet return ZMQ: %s", state->emailid, strerror(errno));
+        zmq_close(state->zmq_packet_return);
+        state->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(state->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to set linger on packet return ZMQ: %s", state->emailid, strerror(errno));
+        zmq_close(state->zmq_packet_return);
+        state->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(state->zmq_packet_return, ZMQ_SNDHWM, &hwm,
+            sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to set HWM on packet return ZMQ: %s", state->emailid, strerror(errno));
+        zmq_close(state->zmq_packet_return);
+        state->zmq_packet_return = NULL;
+    }
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openliemailcontrol_sync-%d",
@@ -1561,6 +1594,10 @@ haltemailworker:
     clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
     clear_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads);
 
+    if (state->zmq_packet_return) {
+        zmq_close(state->zmq_packet_return);
+    }
+
     /* All timeouts should be freed when we release the active sessions,
      * but just in case there are any left floating around...
      */
@@ -1572,10 +1609,10 @@ haltemailworker:
         destroy_ipfrag_reassembler(state->fragreass);
     }
     if (state->haltinfo) {
-	pthread_mutex_lock(&(state->haltinfo->mutex));
-	state->haltinfo->halted ++;
-	pthread_cond_signal(&(state->haltinfo->cond));
-	pthread_mutex_unlock(&(state->haltinfo->mutex));
+        pthread_mutex_lock(&(state->haltinfo->mutex));
+        state->haltinfo->halted ++;
+        pthread_cond_signal(&(state->haltinfo->cond));
+        pthread_mutex_unlock(&(state->haltinfo->mutex));
     }
     pthread_exit(NULL);
 }
