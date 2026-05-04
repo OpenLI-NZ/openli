@@ -161,6 +161,8 @@ void destroy_sip_call_state(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock);
 uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid);
+int get_voice_call_owner_using_callid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *callid);
 void add_target_call_reference(voipintercept_t *vint,
         openli_sip_identity_t *matched, uint32_t cin,
         char *callid, sip_message_state_t *msg);

@@ -658,6 +658,15 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
 
     if (thisrtp == NULL && (iritype == ETSILI_IRI_BEGIN || matched != NULL)) {
+        /* don't create an RTP stream for a call that is already being
+         * managed by another worker */
+        if (iritype != ETSILI_IRI_BEGIN) {
+            if (get_voice_call_owner_using_callid(sipworker->call_state,
+                    sipworker->call_state_mutex, callid) !=
+                    sipworker->workerid) {
+                return NULL;
+            }
+        }
         thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint,
                 callid);
         if (thisrtp) thisrtp->dir = matchsrc_to_dir(matchsrc);

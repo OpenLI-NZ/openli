@@ -419,7 +419,7 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
                 msg.packets[j] = NULL;
                 continue;
             }
-            msg.packets[j] = openli_copy_packet(pkts[j]);
+            msg.packets[j] = trace_copy_packet(pkts[j]);
         }
         msg.pinfo = *pinfo;
         /* We don't use the payload_ptr in SIP workers, otherwise we would

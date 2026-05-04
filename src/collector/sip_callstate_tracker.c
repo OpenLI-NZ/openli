@@ -435,6 +435,21 @@ int get_voice_call_owner(pthread_rwlock_t *lock, intercepted_voice_call_t *vc) {
     return owner;
 }
 
+int get_voice_call_owner_using_callid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *callid) {
+
+    int owner = -1;
+    intercepted_callid_t *kc;
+
+    pthread_rwlock_rdlock(lock);
+    HASH_FIND(hh, state->known_callids, callid, strlen(callid), kc);
+    if (kc) {
+        owner = kc->call->owner;
+    }
+    pthread_rwlock_unlock(lock);
+    return owner;
+}
+
 uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid) {
 
