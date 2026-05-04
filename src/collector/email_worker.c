@@ -306,6 +306,10 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
                 goto errstate;
             }
         }
+        rem_port = dest_port;
+        host_port = src_port;
+        pktsender = OPENLI_EMAIL_PACKET_SENDER_SERVER;
+    } else {
 
         if (pinfo.family == AF_INET) {
             in4 = (struct sockaddr_in *)(&pinfo.srcip);
@@ -327,10 +331,6 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
                 goto errstate;
             }
         }
-        rem_port = dest_port;
-        host_port = src_port;
-        pktsender = OPENLI_EMAIL_PACKET_SENDER_SERVER;
-    } else {
         host_port = dest_port;
         rem_port = src_port;
         pktsender = OPENLI_EMAIL_PACKET_SENDER_CLIENT;
