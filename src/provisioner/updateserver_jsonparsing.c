@@ -2958,14 +2958,14 @@ int add_new_agency(update_con_info_t *cinfo, provision_state_t *state) {
         free(encryptmethodstring);
     }
 
-    if (strlen(nag->operatorid) > 16) {
+    if (nag->operatorid && strlen(nag->operatorid) > 16) {
         snprintf(cinfo->answerstring, 4096,
                 "%s <p>'operatorid' must be 16 characters or less</p> %s",
                 update_failure_page_start, update_failure_page_end);
         goto agencyerr;
     }
 
-    if (strlen(nag->shortoperatorid) > 5) {
+    if (nag->shortoperatorid && strlen(nag->shortoperatorid) > 5) {
         snprintf(cinfo->answerstring, 4096,
                 "%s <p>'altoperatorid' must be 5 characters or less</p> %s",
                 update_failure_page_start, update_failure_page_end);
