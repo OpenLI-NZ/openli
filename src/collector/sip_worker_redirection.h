@@ -30,6 +30,7 @@
 #include <Judy.h>
 #include <libtrace.h>
 
+#include "coreserver.h"
 enum {
     REDIRECTED_SIP_PACKET = 1,
     REDIRECTED_SIP_CLAIM = 2,
@@ -55,6 +56,7 @@ typedef struct redirected_sip_message {
     char *callid;
     uint32_t pkt_cnt;
     libtrace_packet_t **packets;
+    packet_info_t pinfo;
 } redirected_sip_message_t;
 
 typedef struct saved_redirection {

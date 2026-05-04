@@ -307,7 +307,7 @@ void clean_sync_data(collector_sync_t *sync) {
 
                 if (recvd.type == OPENLI_UPDATE_RADIUS ||
                         recvd.type == OPENLI_UPDATE_GTP) {
-                    trace_destroy_packet(recvd.data.pkt);
+                    trace_destroy_packet(RECVD_PKT);
                 }
             } while (x >= 0);
             zmq_setsockopt(sync->zmq_colsock, ZMQ_LINGER, &zero, sizeof(zero));
@@ -3705,7 +3705,7 @@ int sync_thread_main(collector_sync_t *sync) {
                     accesstype = ACCESS_GTP;
                 }
 
-                if ((ret = update_user_sessions(sync, recvd.data.pkt,
+                if ((ret = update_user_sessions(sync, RECVD_PKT,
                             accesstype)) < 0) {
                     /* If a user has screwed up their RADIUS config and we
                      * see non-RADIUS packets here, we probably want to limit the
@@ -3715,13 +3715,13 @@ int sync_thread_main(collector_sync_t *sync) {
                 }
 
                 if (sync->zmq_packet_return) {
-                    ret = zmq_send(sync->zmq_packet_return, &recvd.data.pkt,
-                            sizeof(recvd.data.pkt), ZMQ_DONTWAIT);
+                    ret = zmq_send(sync->zmq_packet_return, &RECVD_PKT,
+                            sizeof(RECVD_PKT), ZMQ_DONTWAIT);
                     if (ret < 0) {
-                        trace_destroy_packet(recvd.data.pkt);
+                        trace_destroy_packet(RECVD_PKT);
                     }
                 } else {
-                    trace_destroy_packet(recvd.data.pkt);
+                    trace_destroy_packet(RECVD_PKT);
                 }
             }
 

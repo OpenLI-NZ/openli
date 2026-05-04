@@ -561,7 +561,7 @@ static void generate_encoding_jobs(openli_gtp_worker_t *worker,
 
 static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         libtrace_packet_t *packet, uint8_t *payload,
-        uint32_t plen, uint32_t teid, uint16_t gtpseqno) {
+        uint32_t plen, uint32_t teid, uint16_t gtpseqno, packet_info_t *pinfo) {
 
     void *l3;
     uint16_t ethertype;
@@ -573,22 +573,39 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
     int i;
     ipintercept_t *ipint, *tmp;
 
-    l3 = trace_get_layer3(packet, &ethertype, &rem);
-    if (l3 == NULL || rem < sizeof(libtrace_ip_t)) {
-        return;
-    }
-    if (ethertype == TRACE_ETHERTYPE_IP) {
-        libtrace_ip_t *ip = (libtrace_ip_t *)l3;
-
-        snprintf(keystr, 1024, "%u-%u", ip->ip_dst.s_addr, teid);
-    } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
-        libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
-        if (rem < sizeof(libtrace_ip6_t)) {
+    if (pinfo->family == 0) {
+        l3 = trace_get_layer3(packet, &ethertype, &rem);
+        if (l3 == NULL || rem < sizeof(libtrace_ip_t)) {
             return;
         }
+        if (ethertype == TRACE_ETHERTYPE_IP) {
+            libtrace_ip_t *ip = (libtrace_ip_t *)l3;
+
+            snprintf(keystr, 1024, "%u-%u", ip->ip_dst.s_addr, teid);
+        } else if (ethertype == TRACE_ETHERTYPE_IPV6) {
+            libtrace_ip6_t *ip6 = (libtrace_ip6_t *)l3;
+            if (rem < sizeof(libtrace_ip6_t)) {
+                return;
+            }
+            snprintf(keystr, 1024, "%lu-%lu-%u",
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
+                    *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
+                    teid);
+        } else {
+            return;
+        }
+    } else if (pinfo->family == AF_INET) {
+        struct sockaddr_in *in4;
+        in4 = (struct sockaddr_in *)(&pinfo->destip);
+        snprintf(keystr, 1024, "%u-%u", in4->sin_addr.s_addr, teid);
+
+    } else if (pinfo->family == AF_INET6) {
+        struct sockaddr_in6 *in6;
+        in6 = (struct sockaddr_in6 *)(&pinfo->destip);
+
         snprintf(keystr, 1024, "%lu-%lu-%u",
-                *(uint64_t *)(&(ip6->ip_dst.s6_addr)),
-                *(uint64_t *)(&(ip6->ip_dst.s6_addr[8])),
+                *(uint64_t *)(&(in6->sin6_addr.s6_addr)),
+                *(uint64_t *)(&(in6->sin6_addr.s6_addr[8])),
                 teid);
     } else {
         return;
@@ -724,7 +741,7 @@ end_gtpc_processing:
 }
 
 static void process_gtp_packet(openli_gtp_worker_t *worker,
-        libtrace_packet_t *packet) {
+        libtrace_packet_t *packet, packet_info_t pinfo) {
     uint8_t *payload;
     uint32_t plen;
     uint8_t proto;
@@ -738,20 +755,28 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
         return;
     }
 
-    transport = trace_get_transport(packet, &proto, &rem);
-    if (transport == NULL || rem == 0) {
-        return;
-    }
+    if (pinfo.family == 0) {
+        transport = trace_get_transport(packet, &proto, &rem);
+        if (transport == NULL || rem == 0) {
+            return;
+        }
 
-    plen = trace_get_payload_length(packet);
-    if (proto != TRACE_IPPROTO_UDP) {
-        /* should be UDP only */
-        return;
-    }
-    payload = (uint8_t *)trace_get_payload_from_udp((libtrace_udp_t *)transport,
-            &rem);
-    if (rem < plen) {
-        plen = rem;
+        plen = trace_get_payload_length(packet);
+        if (proto != TRACE_IPPROTO_UDP) {
+            /* should be UDP only */
+            return;
+        }
+        payload = (uint8_t *)trace_get_payload_from_udp((libtrace_udp_t *)transport,
+                &rem);
+        if (rem < plen) {
+            plen = rem;
+        }
+    } else {
+        if (pinfo.trans_proto != TRACE_IPPROTO_UDP) {
+            return;
+        }
+        payload = pinfo.payload_ptr;
+        plen = pinfo.payload_len;
     }
 
     if (((*payload) & 0xe8) == 0x48) {
@@ -787,7 +812,8 @@ static void process_gtp_packet(openli_gtp_worker_t *worker,
 
     if (msgtype == 0xff) {
         /* This is GTP-U */
-        process_gtp_u_packet(worker, packet, payload, plen, teid, seqno);
+        process_gtp_u_packet(worker, packet, payload, plen, teid, seqno,
+                &pinfo);
     } else {
         /* This is GTP-C */
         process_gtp_c_packet(worker, packet);
@@ -818,17 +844,17 @@ static int gtp_worker_process_packet(openli_gtp_worker_t *worker) {
             break;
         }
 
-        process_gtp_packet(worker, recvd.data.pkt);
+        process_gtp_packet(worker, RECVD_PKT, RECVD_PINFO);
 
-        if (recvd.data.pkt) {
+        if (RECVD_PKT) {
             if (worker->zmq_packet_return) {
-                int ret = zmq_send(worker->zmq_packet_return, &recvd.data.pkt,
-                        sizeof(recvd.data.pkt), ZMQ_DONTWAIT);
+                int ret = zmq_send(worker->zmq_packet_return, &RECVD_PKT,
+                        sizeof(RECVD_PKT), ZMQ_DONTWAIT);
                 if (ret < 0) {
-                    trace_destroy_packet(recvd.data.pkt);
+                    trace_destroy_packet(RECVD_PKT);
                 }
             } else {
-                trace_destroy_packet(recvd.data.pkt);
+                trace_destroy_packet(RECVD_PKT);
             }
         }
     } while (rc > 0);
@@ -918,6 +944,7 @@ static void gtp_worker_main(openli_gtp_worker_t *worker) {
 void *gtp_thread_begin(void *arg) {
     openli_gtp_worker_t *worker = (openli_gtp_worker_t *)arg;
     char sockname[256];
+    char returnq[256];
     int zero = 0, x, hwm=2000;
     openli_state_update_t recvd;
     teid_to_session_t *iter, *tmp;
@@ -927,8 +954,9 @@ void *gtp_thread_begin(void *arg) {
             "inproc://openlipub", worker->zmq_ctxt, -1);
 
     worker->zmq_packet_return = zmq_socket(worker->zmq_ctxt, ZMQ_PUSH);
-    if (zmq_connect(worker->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to connect to packet return ZMQ: %s", worker->workerid, strerror(errno));
+    snprintf(returnq, 256, "inproc://gtp-packet-return-%d", worker->workerid);
+    if (zmq_bind(worker->zmq_packet_return, returnq) < 0) {
+        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to bind to packet return ZMQ: %s", worker->workerid, strerror(errno));
         zmq_close(worker->zmq_packet_return);
         worker->zmq_packet_return = NULL;
     } else if (zmq_setsockopt(worker->zmq_packet_return, ZMQ_LINGER, &zero,
@@ -979,7 +1007,7 @@ void *gtp_thread_begin(void *arg) {
         x = zmq_recv(worker->zmq_colthread_recvsock, &recvd, sizeof(recvd),
                 ZMQ_DONTWAIT);
         if (x > 0) {
-            trace_destroy_packet(recvd.data.pkt);
+            trace_destroy_packet(RECVD_PKT);
         }
     } while (x > 0);
 

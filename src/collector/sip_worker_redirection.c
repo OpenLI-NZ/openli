@@ -359,7 +359,8 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
 }
 
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
-        char *callid, libtrace_packet_t **pkts, int pkt_cnt) {
+        char *callid, libtrace_packet_t **pkts, int pkt_cnt,
+        packet_info_t *pinfo) {
 
     Word_t *pval;
     sip_saved_redirection_t *rd;
@@ -420,6 +421,7 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
             }
             msg.packets[j] = openli_copy_packet(pkts[j]);
         }
+        msg.pinfo = *pinfo;
 
         if (zmq_send(sipworker->zmq_redirect_outsocks[i], &msg,
                     sizeof(msg), 0) < 0) {

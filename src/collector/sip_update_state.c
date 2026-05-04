@@ -1028,7 +1028,8 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
 }
 
 void redirect_sip_other_workers(openli_sip_worker_t *sipworker,
-        libtrace_packet_t **pkts, int pkt_cnt, char *callid) {
+        libtrace_packet_t **pkts, int pkt_cnt, packet_info_t *pinfo,
+        char *callid) {
 
     /* Don't redirect if the collector has just started up
      * as we'll most likely start capturing in the middle of a bunch
@@ -1082,13 +1083,13 @@ void redirect_sip_other_workers(openli_sip_worker_t *sipworker,
         free(cseq);
         return;
     }
-    redirect_sip_worker_packets(sipworker, callid, pkts, pkt_cnt);
+    redirect_sip_worker_packets(sipworker, callid, pkts, pkt_cnt, pinfo);
     free(cseq);
 }
 
 int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
-        libtrace_packet_t **pkts,
-        int pkt_cnt, openli_export_recv_t *irimsg) {
+        libtrace_packet_t **pkts, int pkt_cnt, packet_info_t *pinfo,
+        openli_export_recv_t *irimsg) {
 
 
     char *callid;
@@ -1159,7 +1160,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
         }
 
         if (ret == 0 && sipworker->sipworker_threads > 1 && pkt_cnt > 0) {
-            redirect_sip_other_workers(sipworker, pkts, pkt_cnt, callid);
+            redirect_sip_other_workers(sipworker, pkts, pkt_cnt, pinfo, callid);
         }
 
     }

@@ -100,12 +100,18 @@ typedef struct openli_sip_content {
     struct timeval timestamp;
 } PACKED openli_sip_content_t;
 
+#define RECVD_PKT recvd.data.packet.lt_pkt
+#define RECVD_PINFO recvd.data.packet.pinfo
+
 typedef struct openli_state_msg {
 
     uint8_t type;
     union {
         libtrace_message_queue_t *replyq;
-        libtrace_packet_t *pkt;
+        struct {
+            libtrace_packet_t *lt_pkt;
+            packet_info_t pinfo;
+        } packet;
         openli_sip_content_t sip;
     } data;
 
