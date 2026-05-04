@@ -422,6 +422,13 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
             msg.packets[j] = openli_copy_packet(pkts[j]);
         }
         msg.pinfo = *pinfo;
+        /* We don't use the payload_ptr in SIP workers, otherwise we would
+         * need to set it properly by calculating the offset between
+         * pkts[j]->buffer and pinfo->payload_ptr. But since we don't
+         * use it, we can just set this to NULL and save ourselves the
+         * trouble.
+         */
+        msg.pinfo.payload_ptr = NULL;
 
         if (zmq_send(sipworker->zmq_redirect_outsocks[i], &msg,
                     sizeof(msg), 0) < 0) {
