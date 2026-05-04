@@ -135,6 +135,7 @@ typedef struct openli_email_captured {
 typedef struct openli_email_worker {
 
     void *zmq_ctxt;
+    void *zmq_packet_return;
     zmq_pollitem_t *topoll;
     int topoll_size;
     ipfrag_reassembler_t *fragreass;

@@ -777,6 +777,43 @@ int hash_packet_info_fivetuple(packet_info_t *pinfo, int modulo) {
     return hashlittle(buf, used, 12582917) % modulo;
 }
 
+int openli_deepcopy_packet(libtrace_packet_t *src, libtrace_packet_t *dest) {
+
+    // assumes dest is a created packet with a full sized buffer already
+    // allocated
+
+    int caplen = trace_get_capture_length(src);
+    int framelen = trace_get_framing_length(src);
+
+    if (caplen == -1 || framelen == -1) {
+        return -1;
+    }
+
+    dest->trace = src->trace;
+    dest->buf_control = TRACE_CTRL_PACKET;
+    dest->type = src->type;
+    dest->header = dest->buffer;
+    dest->payload = ((char *)dest->buffer) + framelen;
+    dest->order = src->order;
+    dest->hash = src->hash;
+    dest->error = src->error;
+    dest->srcbucket = NULL;
+    dest->fmtdata = NULL;
+    dest->refcount = 0;
+    dest->internalid = 0;
+    dest->which_trace_start = src->which_trace_start;
+    memset(&(dest->cached), 0, sizeof(libtrace_packet_cache_t));
+    dest->cached.capture_length = caplen;
+    dest->cached.framing_length = framelen;
+    dest->cached.wire_length = -1;
+    dest->cached.payload_length = -1;
+
+    pthread_mutex_init(&dest->ref_lock, NULL);
+    memcpy(dest->header, src->header, framelen);
+    memcpy(dest->payload, src->payload, caplen);
+    return 0;
+}
+
 libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
     libtrace_packet_t *copy;
     int caplen = trace_get_capture_length(pkt);

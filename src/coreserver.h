@@ -58,6 +58,8 @@ typedef struct packetinfo {
     uint32_t payload_len;
     uint8_t *payload_ptr;
     uint8_t trans_proto;
+    uint16_t fragoff;
+    uint8_t moreflag;
 } packet_info_t;
 
 

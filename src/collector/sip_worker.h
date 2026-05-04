@@ -138,6 +138,7 @@ typedef struct openli_sip_worker {
     shared_voice_call_state_t *call_state;
     pthread_rwlock_t *call_state_mutex;
 
+    void *zmq_packet_return;
 } openli_sip_worker_t;
 
 void *start_sip_worker_thread(void *arg);
@@ -146,8 +147,8 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
         etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
         int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir);
 int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
-        libtrace_packet_t **pkts,
-        int pkt_cnt, openli_export_recv_t *irimsg);
+        libtrace_packet_t **pkts, int pkt_cnt, packet_info_t *pinfo,
+        openli_export_recv_t *irimsg);
 int mask_sms_message_content(uint8_t *sipstart, uint16_t siplen);
 int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *rtp);
@@ -176,7 +177,8 @@ int find_existing_voice_call(
         char *callid, sip_sdp_identifier_t *sdpkey, char *sessionid);
 
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
-        char *callid, libtrace_packet_t **pkts, int pkt_cnt);
+        char *callid, libtrace_packet_t **pkts, int pkt_cnt,
+        packet_info_t *pinfo);
 void clear_redirection_map(Pvoid_t *map);
 void destroy_redirected_message(redirected_sip_message_t *msg);
 int handle_sip_redirection_reject(openli_sip_worker_t *sipworker,

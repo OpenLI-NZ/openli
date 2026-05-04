@@ -115,6 +115,8 @@ typedef struct colsync_data {
     uint8_t provconnfailed;
     uint8_t hellosreceived;
 
+    void *zmq_packet_return;
+
 } collector_sync_t;
 
 collector_sync_t *init_sync_data(collector_global_t *glob);

@@ -210,7 +210,7 @@ static int handle_fragments(openli_email_worker_t *state,
 }
 
 static int convert_packet_to_email_captured(openli_email_worker_t * state,
-        libtrace_packet_t *pkt,
+        libtrace_packet_t *pkt, packet_info_t pinfo,
         uint8_t emailtype, openli_email_captured_t **cap) {
 
     char space[256];
@@ -225,6 +225,8 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     uint8_t pktsender = 0;
     uint8_t moreflag;
     uint16_t fragoff = 0;
+    struct sockaddr_in6 *in6;
+    struct sockaddr_in *in4;
 
     struct fraginfo fraginfo;
 
@@ -233,7 +235,13 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
     /* account for possible fragmentation */
     memset(&fraginfo, 0, sizeof(struct fraginfo));
 
-    fragoff = trace_get_fragment_offset(pkt, &moreflag);
+    if (pinfo.family == 0) {
+        fragoff = trace_get_fragment_offset(pkt, &moreflag);
+    } else {
+        fragoff = pinfo.fragoff;
+        moreflag = pinfo.moreflag;
+    }
+
     if (moreflag || fragoff > 0) {
         int r;
         if ((r = handle_fragments(state, pkt, &fraginfo)) <= 0) {
@@ -247,7 +255,7 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
         src_port = fraginfo.src_port;
         dest_port = fraginfo.dest_port;
 
-    } else {
+    } else if (pinfo.family == 0) {
         src_port = trace_get_source_port(pkt);
         dest_port = trace_get_destination_port(pkt);
         tcp = (libtrace_tcp_t *)(trace_get_transport(pkt, &proto, &rem));
@@ -260,6 +268,11 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
         if (rem < plen) {
             plen = rem;
         }
+    } else {
+        src_port = pinfo.srcport;
+        dest_port = pinfo.destport;
+        posttcp = (char *)pinfo.payload_ptr;
+        plen = pinfo.payload_len;
     }
 
     if (src_port == 0 || dest_port == 0) {
@@ -273,26 +286,50 @@ static int convert_packet_to_email_captured(openli_email_worker_t * state,
      */
 
     if (src_port < dest_port) {
-        if (trace_get_source_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
-                == NULL) {
-            goto errstate;
+        if (pinfo.family == AF_INET) {
+            in4 = (struct sockaddr_in *)(&pinfo.srcip);
+            inet_ntop(AF_INET, &(in4->sin_addr), ip_a, INET6_ADDRSTRLEN);
+            in4 = (struct sockaddr_in *)(&pinfo.destip);
+            inet_ntop(AF_INET, &(in4->sin_addr), ip_b, INET6_ADDRSTRLEN);
+        } else if (pinfo.family == AF_INET6) {
+            in6 = (struct sockaddr_in6 *)(&pinfo.srcip);
+            inet_ntop(AF_INET6, &(in6->sin6_addr), ip_a, INET6_ADDRSTRLEN);
+            in6 = (struct sockaddr_in6 *)(&pinfo.destip);
+            inet_ntop(AF_INET6, &(in6->sin6_addr), ip_b, INET6_ADDRSTRLEN);
+        } else {
+            if (trace_get_source_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
+                    == NULL) {
+                goto errstate;
+            }
+            if (trace_get_destination_address_string(pkt, ip_b,
+                    INET6_ADDRSTRLEN) == NULL) {
+                goto errstate;
+            }
         }
-        if (trace_get_destination_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
-                == NULL) {
-            goto errstate;
-        }
-
         rem_port = dest_port;
         host_port = src_port;
         pktsender = OPENLI_EMAIL_PACKET_SENDER_SERVER;
     } else {
-        if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
-                == NULL) {
-            goto errstate;
-        }
-        if (trace_get_destination_address_string(pkt, ip_a, INET6_ADDRSTRLEN)
-                == NULL) {
-            goto errstate;
+
+        if (pinfo.family == AF_INET) {
+            in4 = (struct sockaddr_in *)(&pinfo.srcip);
+            inet_ntop(AF_INET, &(in4->sin_addr), ip_b, INET6_ADDRSTRLEN);
+            in4 = (struct sockaddr_in *)(&pinfo.destip);
+            inet_ntop(AF_INET, &(in4->sin_addr), ip_a, INET6_ADDRSTRLEN);
+        } else if (pinfo.family == AF_INET6) {
+            in6 = (struct sockaddr_in6 *)(&pinfo.srcip);
+            inet_ntop(AF_INET6, &(in6->sin6_addr), ip_b, INET6_ADDRSTRLEN);
+            in6 = (struct sockaddr_in6 *)(&pinfo.destip);
+            inet_ntop(AF_INET6, &(in6->sin6_addr), ip_a, INET6_ADDRSTRLEN);
+        } else {
+            if (trace_get_source_address_string(pkt, ip_b, INET6_ADDRSTRLEN)
+                    == NULL) {
+                goto errstate;
+            }
+            if (trace_get_destination_address_string(pkt, ip_a,
+                    INET6_ADDRSTRLEN) == NULL) {
+                goto errstate;
+            }
         }
         host_port = dest_port;
         rem_port = src_port;
@@ -1298,7 +1335,7 @@ static int process_received_packet(openli_email_worker_t *state) {
             return -1;
         }
 
-        if ((x = convert_packet_to_email_captured(state, recvd.data.pkt,
+        if ((x = convert_packet_to_email_captured(state, RECVD_PKT, RECVD_PINFO,
                 recvd.type, &cap)) < 0) {
             logger(LOG_INFO, "OpenLI: unable to derive email session ID from received packet in email thread %d", state->emailid);
             free_captured_email(cap);
@@ -1307,8 +1344,16 @@ static int process_received_packet(openli_email_worker_t *state) {
             /* packet was a fragment and we need more fragments to complete
              * the application payload.
              */
-             trace_destroy_packet(recvd.data.pkt);
-             continue;
+            if (state->zmq_packet_return) {
+                int ret = zmq_send(state->zmq_packet_return, &(RECVD_PKT),
+                        sizeof(RECVD_PKT), ZMQ_DONTWAIT);
+                if (ret < 0) {
+                    trace_destroy_packet(RECVD_PKT);
+                }
+            } else {
+                trace_destroy_packet(RECVD_PKT);
+            }
+            continue;
         }
 
         if (cap->content != NULL) {
@@ -1317,7 +1362,15 @@ static int process_received_packet(openli_email_worker_t *state) {
             free_captured_email(cap);
         }
 
-        trace_destroy_packet(recvd.data.pkt);
+        if (state->zmq_packet_return) {
+            int ret = zmq_send(state->zmq_packet_return, &(RECVD_PKT),
+                    sizeof(RECVD_PKT), ZMQ_DONTWAIT);
+            if (ret < 0) {
+                trace_destroy_packet(RECVD_PKT);
+            }
+        } else {
+            trace_destroy_packet(RECVD_PKT);
+        }
     } while (rc > 0);
 
     return 0;
@@ -1468,8 +1521,9 @@ static void free_all_email_sessions(openli_email_worker_t *state) {
 void *start_email_worker_thread(void *arg) {
 
     openli_email_worker_t *state = (openli_email_worker_t *)arg;
-    int x, zero = 0;
+    int x, zero = 0, hwm=2000;
     char sockname[256];
+    char returnq[256];
     sync_epoll_t *syncev, *tmp;
     openli_state_update_t recvd;
 
@@ -1483,6 +1537,24 @@ void *start_email_worker_thread(void *arg) {
 
     init_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads,
             "inproc://openliforwardercontrol_sync", state->zmq_ctxt, -1);
+
+    state->zmq_packet_return = zmq_socket(state->zmq_ctxt, ZMQ_PUSH);
+    snprintf(returnq, 256, "inproc://email-packet-return-%d", state->emailid);
+    if (zmq_bind(state->zmq_packet_return, returnq) < 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to bind to packet return ZMQ: %s", state->emailid, strerror(errno));
+        zmq_close(state->zmq_packet_return);
+        state->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(state->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to set linger on packet return ZMQ: %s", state->emailid, strerror(errno));
+        zmq_close(state->zmq_packet_return);
+        state->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(state->zmq_packet_return, ZMQ_SNDHWM, &hwm,
+            sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: email processing thread %d failed to set HWM on packet return ZMQ: %s", state->emailid, strerror(errno));
+        zmq_close(state->zmq_packet_return);
+        state->zmq_packet_return = NULL;
+    }
 
     state->zmq_ii_sock = zmq_socket(state->zmq_ctxt, ZMQ_PULL);
     snprintf(sockname, 256, "inproc://openliemailcontrol_sync-%d",
@@ -1536,7 +1608,7 @@ void *start_email_worker_thread(void *arg) {
         x = zmq_recv(state->zmq_colthread_recvsock, &recvd, sizeof(recvd),
                 ZMQ_DONTWAIT);
         if (x > 0) {
-            trace_destroy_packet(recvd.data.pkt);
+            trace_destroy_packet(RECVD_PKT);
         }
     } while (x > 0);
 
@@ -1561,6 +1633,10 @@ haltemailworker:
     clear_zmq_socket_array(state->zmq_pubsocks, state->tracker_threads);
     clear_zmq_socket_array(state->zmq_fwdsocks, state->fwd_threads);
 
+    if (state->zmq_packet_return) {
+        zmq_close(state->zmq_packet_return);
+    }
+
     /* All timeouts should be freed when we release the active sessions,
      * but just in case there are any left floating around...
      */
@@ -1572,10 +1648,10 @@ haltemailworker:
         destroy_ipfrag_reassembler(state->fragreass);
     }
     if (state->haltinfo) {
-	pthread_mutex_lock(&(state->haltinfo->mutex));
-	state->haltinfo->halted ++;
-	pthread_cond_signal(&(state->haltinfo->cond));
-	pthread_mutex_unlock(&(state->haltinfo->mutex));
+        pthread_mutex_lock(&(state->haltinfo->mutex));
+        state->haltinfo->halted ++;
+        pthread_cond_signal(&(state->haltinfo->cond));
+        pthread_mutex_unlock(&(state->haltinfo->mutex));
     }
     pthread_exit(NULL);
 }
