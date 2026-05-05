@@ -1107,6 +1107,7 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
     int ret = 0;
     openli_location_t *locptr = NULL;
     int loc_cnt = 0;
+    uint32_t cin = 0;
 
     if (sipworker->sipparser->badsip) {
         /* this should never happen, but just in case... */
@@ -1168,11 +1169,17 @@ int sipworker_update_sip_state(openli_sip_worker_t *sipworker,
             goto sipgiveup;
         }
 
-        if (ret == 0 && sipworker->sipworker_threads > 1 && pkt_cnt > 0) {
+    }
+    if (ret == 0 && sipworker->sipworker_threads > 1 && pkt_cnt > 0) {
+        cin = get_voice_call_cin_using_callid(sipworker->call_state,
+                sipworker->call_state_mutex, callid);
+        if (cin > 0) {
+            // another worker thread must care about this call ID, as it
+            // exists and has been assigned a CIN
             redirect_sip_other_workers(sipworker, pkts, pkt_cnt, pinfo, callid);
         }
-
     }
+
 
 sipgiveup:
     if (locptr) {
