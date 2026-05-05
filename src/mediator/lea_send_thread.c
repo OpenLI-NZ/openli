@@ -360,8 +360,10 @@ static inline int send_available_rmq_records(handover_t *ho,
         }
         ho->ho_state->valid_rmq_ack = 0;
     }
+
     if (get_buffered_amount(&(ho->ho_state->buf)) > 0 ||
-            ho->ho_state->pending_ka) {
+            ho->ho_state->pending_ka ||
+            amqp_data_in_buffer(ho->rmq_consumer)) {
         modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP | EPOLLOUT);
     } else {
         modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
@@ -411,7 +413,7 @@ static int consume_available_rmq_records(handover_t *ho,
     /* Otherwise, read some new messages from RMQ and try to send those */
     if (ho->handover_type == HANDOVER_HI3) {
         r = consume_mediator_cc_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 10, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 100, &(ho->ho_state->next_rmq_ack));
         if (r < 0) {
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming CC messages from internal queue by agency %s", state->agencyid);
@@ -421,7 +423,7 @@ static int consume_available_rmq_records(handover_t *ho,
         }
     } else if (ho->handover_type == HANDOVER_HI2) {
         r = consume_mediator_iri_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 10, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), 100, &(ho->ho_state->next_rmq_ack));
         if (r < 0) {
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming IRI messages from internal queue by agency %s", state->agencyid);
@@ -601,7 +603,7 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             ret = 1;       // force main thread loop to restart
             break;
         case OPENLI_EPOLL_HANDOVER_RMQ:
-            /* There is data available for reading in RMQ for a handover */
+            /* There is new data available for reading in RMQ for a handover */
             ho = (handover_t *)(mev->state);
 
             /* If we're due to send a keep alive, do that first */
@@ -1187,12 +1189,14 @@ static void *run_agency_thread(void *params) {
                 register_handover_RMQ_all(state->agency.hi2,
                         &(state->active_liids), state->agencyid,
                         state->internalrmqpass);
+                consume_available_rmq_records(state->agency.hi2, state);
             }
             if (!state->agency.hi3->rmq_registered &&
                     state->agency.hi3->outev) {
                 register_handover_RMQ_all(state->agency.hi3,
                         &(state->active_liids), state->agencyid,
                         state->internalrmqpass);
+                consume_available_rmq_records(state->agency.hi3, state);
             }
         }
 
@@ -1208,7 +1212,17 @@ static void *run_agency_thread(void *params) {
         /* epoll main loop for a LEA send thread */
         timerexpired = 0;
         while (!timerexpired && !is_halted) {
-            nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
+            nfds = epoll_wait(state->epoll_fd, evs, 64, 100);
+
+            if (nfds == 0) {
+                if (state->agency.hi2->outev) {
+                    consume_available_rmq_records(state->agency.hi2, state);
+                }
+                if (state->agency.hi3->outev) {
+                    consume_available_rmq_records(state->agency.hi3, state);
+                }
+                continue;
+            }
 
             if (nfds < 0) {
                 if (errno == EINTR) {
