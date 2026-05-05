@@ -328,6 +328,7 @@ static inline int send_available_rmq_records(handover_t *ho,
 
     if (get_buffered_amount(&(ho->ho_state->buf)) == 0) {
         /* No records available to send */
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
         return 0;
     }
 
@@ -354,6 +355,9 @@ static inline int send_available_rmq_records(handover_t *ho,
             }
         }
         ho->ho_state->valid_rmq_ack = 0;
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
+    } else if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP | EPOLLOUT);
     }
     return 1;
 }
@@ -376,6 +380,10 @@ static int consume_available_rmq_records(handover_t *ho,
     int r;
 
     if (ho->rmq_registered == 0) {
+        return 0;
+    }
+
+    if (ho->outev == NULL) {
         return 0;
     }
 
@@ -559,7 +567,6 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             logger(LOG_INFO, "OpenLI Mediator: shutdown timer expired for agency thread %s", state->agencyid);
             ret = -1;
             break;
-
         case OPENLI_EPOLL_CEASE_LIID_TIMER:
             /* remove any unconfirmed LIIDs in our LIID set */
             ret = agency_thread_action_cease_liid_timer(state);
@@ -585,6 +592,26 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
              */
             usleep(500000);
             ret = 1;       // force main thread loop to restart
+            break;
+        case OPENLI_EPOLL_HANDOVER_RMQ:
+            /* There is data available for reading in RMQ for a handover */
+            ho = (handover_t *)(mev->state);
+
+            /* If we're due to send a keep alive, do that first */
+            if (ho->ho_state->pending_ka) {
+                ret = xmit_handover_keepalive(ho);
+            }
+
+            /* As long as we have an unanswered keep alive, hold off on
+             * sending any buffered records -- the recipient may be
+             * unavailable and we'd be better off to keep those records in
+             * zmq until we're confident that they're able to receive them.
+             */
+            if (ret != -1 && ho->aliverespev && ho->aliverespev->fd != -1) {
+                ret = 0;
+            } else {
+                ret = consume_available_rmq_records(ho, state);
+            }
             break;
         case OPENLI_EPOLL_LEA:
             ho = (handover_t *)(mev->state);

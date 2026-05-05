@@ -88,9 +88,10 @@ typedef struct handover {
     openli_epoll_ev_t *outev;
     openli_epoll_ev_t *aliveev;
     openli_epoll_ev_t *aliverespev;
+    openli_epoll_ev_t *rmqev;
     per_handover_state_t *ho_state;
     uint8_t disconnect_msg;
-
+    int epoll_fd;
     time_t last_connect_attempt;
 } handover_t;
 

@@ -1103,7 +1103,7 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
     amqp_rpc_reply_t ret;
 
     tv.tv_sec = 0;
-    tv.tv_usec = 2500;
+    tv.tv_usec = 0;
 
     if (state == NULL) {
         usleep(10000);
