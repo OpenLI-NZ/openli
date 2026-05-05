@@ -612,10 +612,13 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
         libtrace_scb_init(ho->ho_state->incoming, (64 * 1024 * 1024), ho_id);
     }
 
-    /* Enable just epoll reading for this handover until we have something
+    /* Enable just epoll reading for this handover unless we have something
      * to send
      */
     epollev = EPOLLIN | EPOLLRDHUP;
+    if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
+        epollev |= EPOLLOUT;
+    }
 
 	ho->outev = create_openli_fdevent(epoll_fd, ho, OPENLI_EPOLL_LEA,
 			outsock, epollev);
@@ -724,6 +727,8 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 
 	/* The output event will be created when the handover is connected */
 	ho->outev = NULL;
+
+    ho->rmqev = NULL;
 
     /* Initialise the remaining handover state */
     if (ipstr) {

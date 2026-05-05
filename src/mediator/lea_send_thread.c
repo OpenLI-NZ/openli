@@ -328,7 +328,11 @@ static inline int send_available_rmq_records(handover_t *ho,
 
     if (get_buffered_amount(&(ho->ho_state->buf)) == 0) {
         /* No records available to send */
-        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
+        if (ho->ho_state->pending_ka) {
+            modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP | EPOLLOUT);
+        } else {
+            modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
+        }
         return 0;
     }
 
@@ -355,9 +359,12 @@ static inline int send_available_rmq_records(handover_t *ho,
             }
         }
         ho->ho_state->valid_rmq_ack = 0;
-        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
-    } else if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
+    }
+    if (get_buffered_amount(&(ho->ho_state->buf)) > 0 ||
+            ho->ho_state->pending_ka) {
         modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP | EPOLLOUT);
+    } else {
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
     }
     return 1;
 }
@@ -945,6 +952,11 @@ static void publish_hi1_notification(lea_thread_state_t *state,
             logger(LOG_INFO,
                     "OpenLI Mediator: unable to enqueue HI1 Notification PDU for %s:%s", ndata->agencyid, ndata->liid);
         }
+    } else {
+
+        /* make sure we enable sending on the handover */
+        modify_openli_fdevent(state->agency.hi2->outev,
+                EPOLLIN | EPOLLOUT | EPOLLRDHUP);
     }
 
 freehi1:
