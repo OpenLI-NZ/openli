@@ -910,7 +910,7 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
         if (mediatype == NULL) {
             goto responseover;
         }
-        if (dir == ETSI_DIR_TO_TARGET) {
+        if (dir == ETSI_DIR_TO_TARGET || dir == ETSI_DIR_FROM_TARGET) {
             r = extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
                         dir);
             if (r < 0) {
