@@ -951,6 +951,10 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
             foreach_liid_agency_mapping(&(state->active_liids), pstate,
                     deregister_unconfirmed_pcap_liids);
             break;
+        case OPENLI_EPOLL_HANDOVER_RMQ:
+            /* Packets are available to be read from RMQ */
+            ret = 1;
+            break;
         case OPENLI_EPOLL_PCAP_TIMER:
             /* halt the timer
              * for each active pcap output:
