@@ -344,7 +344,19 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
     if (thisrtp->invitecseq && invitecseq &&
             strcmp(thisrtp->invitecseq, invitecseq) == 0) {
         // duplicate of the original INVITE, can mostly ignore
-        dir = 0xff;
+        //
+        // ...but we may need to do some self-correction if, due to
+        // scheduling, another worker thread managed to claim this call
+        // first with an INVITE not source from the original inviter but
+        // from a proxy between the inviter and their callee.
+        if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest, 16) == 0 &&
+                thisrtp->inviterport == irimsg->data.ipmmiri.dstport) {
+            memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
+            thisrtp->inviterport = irimsg->data.ipmmiri.srcport;
+            dir = ETSI_DIR_FROM_TARGET;
+        } else {
+            dir = 0xff;
+        }
     } else if (iritype == ETSILI_IRI_BEGIN) {
         // this is the original INVITE, so save the source IP as the
         // inviter
