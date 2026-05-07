@@ -347,9 +347,14 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
         //
         // ...but we may need to do some self-correction if, due to
         // scheduling, another worker thread managed to claim this call
-        // first with an INVITE not source from the original inviter but
-        // from a proxy between the inviter and their callee.
-        if (memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest, 16) == 0 &&
+        // first with an INVITE not sourced from the original inviter but
+        // from a proxy between the inviter and their callee instead.
+        //
+        // Note this self-correction should ONLY be applied for the initial
+        // INVITE, not any subsequent re-INVITEs.
+        if (thisrtp->active == 0 &&
+                memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
+                    16) == 0 &&
                 thisrtp->inviterport == irimsg->data.ipmmiri.dstport) {
             memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
             thisrtp->inviterport = irimsg->data.ipmmiri.srcport;
