@@ -763,10 +763,10 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         if (thisrtp == NULL) {
             continue;
         }
-        thisrtp->changed = 0;
 
         dir = apply_invite_cseq_to_call(thisrtp, invitecseq, irimsg, iritype);
         if (dir != 0xff) {
+            thisrtp->changed = 0;
             r = extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
                         dir);
             if (r < 0) {
