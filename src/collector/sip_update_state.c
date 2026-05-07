@@ -352,10 +352,7 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
         //
         // Note this self-correction should ONLY be applied for the initial
         // INVITE, not any subsequent re-INVITEs.
-        if (thisrtp->active == 0 &&
-                memcmp(thisrtp->inviter, irimsg->data.ipmmiri.ipdest,
-                    16) == 0 &&
-                thisrtp->inviterport == irimsg->data.ipmmiri.dstport) {
+        if (thisrtp->active == 0 && irimsg->data.ipmmiri.dest_sip_server) {
             memcpy(thisrtp->inviter, irimsg->data.ipmmiri.ipsrc, 16);
             thisrtp->inviterport = irimsg->data.ipmmiri.srcport;
             dir = ETSI_DIR_FROM_TARGET;
@@ -638,7 +635,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     char rtpkey[256];
 
     sip_match_source_t matchsrc;
-    int r = 0;
+    int r = 0, owner;
 
     matched = match_sip_target_against_identities(vint->targets,
             all_identities, trust_sip_from, &matchsrc);
@@ -677,12 +674,10 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     if (thisrtp == NULL && (iritype == ETSILI_IRI_BEGIN || matched != NULL)) {
         /* don't create an RTP stream for a call that is already being
          * managed by another worker */
-        if (iritype != ETSILI_IRI_BEGIN) {
-            if (get_voice_call_owner_using_callid(sipworker->call_state,
-                    sipworker->call_state_mutex, callid) !=
-                    sipworker->workerid) {
-                return NULL;
-            }
+        owner = get_voice_call_owner_using_callid(sipworker->call_state,
+                    sipworker->call_state_mutex, callid);
+        if (owner >= 0 && owner != sipworker->workerid) {
+            return NULL;
         }
         thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint,
                 callid);
@@ -1063,29 +1058,13 @@ void redirect_sip_other_workers(openli_sip_worker_t *sipworker,
      * them all.
      */
 
-    struct timeval tv;
-    int i;
     char *cseq = NULL, *ptr = NULL;
-    tv.tv_sec = 0;
     pthread_rwlock_rdlock(sipworker->shared_mutex);
     if (sipworker->shared->disable_sip_redirect) {
         pthread_rwlock_unlock(sipworker->shared_mutex);
         return;
     }
     pthread_rwlock_unlock(sipworker->shared_mutex);
-
-    for (i = 0; i < pkt_cnt; i++) {
-        if (pkts[i] == NULL) {
-            continue;
-        }
-        tv = trace_get_timeval(pkts[i]);
-        break;
-    }
-
-    if (tv.tv_sec == 0 || tv.tv_sec - sipworker->started <
-            SIP_REDIRECT_GRACE_PERIOD) {
-        return;
-    }
 
     /* Don't bother forwarding OPTIONS or REGISTER messages -- they
      * should definitely be using the same 5-tuple for both directions

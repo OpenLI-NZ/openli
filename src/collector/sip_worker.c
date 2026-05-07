@@ -469,6 +469,7 @@ static void populate_baseirimsg_from_pinfo(openli_ipmmiri_job_t *job,
     job->ipfamily = pinfo->family;
     job->srcport = pinfo->srcport;
     job->dstport = pinfo->destport;
+    job->dest_sip_server = pinfo->dest_coreserver;
 
 }
 

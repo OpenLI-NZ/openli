@@ -174,6 +174,7 @@ typedef struct openli_ipmmiri_job {
     uint8_t location_encoding;
     uint8_t dir;
     uint8_t use_sessiondir;
+    uint8_t dest_sip_server;
 }  openli_ipmmiri_job_t;
 
 typedef struct openli_mobiri_job {

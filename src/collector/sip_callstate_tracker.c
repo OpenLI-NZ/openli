@@ -303,14 +303,13 @@ int create_new_intercepted_voice_call(
         return -1 ;
     }
 
-    pthread_rwlock_rdlock(lock);
+    pthread_rwlock_wrlock(lock);
     HASH_FIND(hh, state->known_callids, callid, strlen(callid),
             revfound);
     if (revfound) {
         pthread_rwlock_unlock(lock);
         return 0;
     }
-    pthread_rwlock_unlock(lock);
 
     vc = calloc(1, sizeof(intercepted_voice_call_t));
     vc->owner = owner;
@@ -338,7 +337,6 @@ int create_new_intercepted_voice_call(
     rev->callid = strdup(callid);
     rev->call = vc;
 
-    pthread_rwlock_wrlock(lock);
     HASH_ADD_KEYPTR(hh, state->known_callids, rev->callid,
             strlen(rev->callid), rev);
 

@@ -60,6 +60,7 @@ typedef struct packetinfo {
     uint8_t trans_proto;
     uint16_t fragoff;
     uint8_t moreflag;
+    uint8_t dest_coreserver;
 } packet_info_t;
 
 
