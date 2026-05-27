@@ -562,7 +562,7 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
     int res = 0;
 
     req = &(recvd->data.emailcc);
-    if (req->cc_content_len < MAX_CONTENT_PER_JOB) {
+    if (req->cc_content_len <= MAX_CONTENT_PER_JOB) {
         return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
                 &cinseq->cc_seqno, authcc, delivcc);
     }

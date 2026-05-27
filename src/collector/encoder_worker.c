@@ -1142,10 +1142,14 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_EMAILCC: {
             openli_emailcc_job_t *emailccjob;
+            encoded_header_template_t *tri_hdr_tplate;
             emailccjob = (openli_emailcc_job_t *)&(job->origreq->data.emailcc);
 
             if (emailccjob->segflag == OPENLI_EXPORT_FIRST_SEGMENT_FLAG) {
-                ret = encode_templated_segflag(enc, job, known, hdr_tplate,
+                tri_hdr_tplate = encode_templated_psheader(enc->encoder,
+                        &(t_set->headers), job->preencoded, job->seqno,
+                        NULL, job->cin, job->cept_version, job->timefmt);
+                ret = encode_templated_segflag(enc, job, known, tri_hdr_tplate,
                         res, 1, job->origreq->type);
                 if (ret < 0) {
                     return ret;
@@ -1171,7 +1175,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
                         job->origreq->type, saveddestid);
                 (*next)++;
                 res = &(resarray[*next]);
-                ret = encode_templated_segflag(enc, job, known, hdr_tplate,
+                tri_hdr_tplate = encode_templated_psheader(enc->encoder,
+                        &(t_set->headers), job->preencoded, job->seqno,
+                        NULL, job->cin, job->cept_version, job->timefmt);
+                ret = encode_templated_segflag(enc, job, known, tri_hdr_tplate,
                         res, 0, savedtype);
                 finalize_encoded_result(res, job, enc, known,
                         OPENLI_EXPORT_LAST_SEGMENT_FLAG, saveddestid);
