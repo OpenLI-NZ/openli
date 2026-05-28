@@ -263,6 +263,6 @@ wandder_encoded_result_t *encode_etsi_segment_flag_body(
         wandder_encode_next(encoder, WANDDER_TAG_NULL,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, NULL, 0);
     }
-    END_ENCODED_SEQUENCE(encoder, 2);
+    END_ENCODED_SEQUENCE(encoder, 3);
     return wandder_encode_finish(encoder);
 }
