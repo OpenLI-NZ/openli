@@ -124,8 +124,6 @@ int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
         uint32_t contentlen);
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         libtrace_packet_t *packet, uint8_t logallowed);
-int parse_sip_content(openli_sip_parser_t *parser, uint8_t *sipcontent,
-        uint16_t siplen);
 int parse_next_sip_message(openli_sip_parser_t *parser,
         libtrace_packet_t ***packets, int *pkt_cnt);
 void release_sip_parser(openli_sip_parser_t *parser);
