@@ -152,9 +152,8 @@ if [ ! -f /etc/openli/.intercept-encrypt ]; then
 fi
 
 if [ ! -f /etc/openli/integrity-key.pem ]; then
-    openssl ecparam -name prime256v1 -genkey -noout -out /etc/openli/integrity-key.pem
-    openssl ec -in /etc/openli/integrity-key.pem -pubout -out /etc/openli/integrity-public.pem
-
+    openssl genpkey -algorithm ED448 -out /etc/openli/integrity-key.pem
+    openssl pkey -in /etc/openli/integrity-key.pem -pubout -out /etc/openli/integrity-public.pem
     chmod 0600 /etc/openli/integrity-key.pem /etc/openli/integrity-public.pem
 fi
 
