@@ -41,7 +41,7 @@ voip-ignorecomfort: no
 # You may be required to send integrity check messages to at least one of
 # the agencies for which you are providing intercepts. If so, some of these
 # messages will need to be signed, and this configuration option allows you
-# to specify where to find the DSA private key that should be used for
+# to specify where to find the private key that should be used for
 # generating those signatures.
 integrity-signing-private-key: /etc/openli/integrity-key.pem
 

@@ -410,7 +410,6 @@ struct integrity_check_state {
     uint32_t hashes_since_last_signrec;
 
     EVP_MD_CTX *hash_ctx;
-    EVP_MD_CTX *signature_ctx;
 
     int64_t *hashed_seqnos;
     size_t seqno_array_size;

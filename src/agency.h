@@ -49,6 +49,12 @@ typedef enum {
     OPENLI_DIGEST_HASH_ALGO_SHA512 = 4,
 } openli_integrity_hash_method_t;
 
+typedef enum {
+    OPENLI_DIGEST_SIGNATURE_DSA = 1,
+    OPENLI_DIGEST_SIGNATURE_ECDSA = 2,
+    OPENLI_DIGEST_SIGNATURE_ED448 = 3,
+} openli_integrity_sign_algo_t;
+
 typedef struct liagency_digest_config {
     openli_timestamp_encoding_fmt_t time_fmt;
 
