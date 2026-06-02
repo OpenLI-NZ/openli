@@ -505,7 +505,7 @@ file is minimalist and not pleasant to read.
 
 Default RADIUS usernames are expressed as a YAML sequence with a key of
 `defaultradiususers:`. Each sequence item is a RADIUS Username that you
-want OpenLI to ignore when tracking potentially interceptable sessions
+ant OpenLI to ignore when tracking potentially interceptable sessions
 from captured RADIUS traffic (because the username is a default that has been
 pre-configured on CPEs, and therefore does not correspond to an individual
 user).
@@ -568,10 +568,13 @@ The available fields are:
 * `hashmethod`  -- the algorithm to use when generating message digests from
                    the intercepted data PDUs. Defaults to `sha-256`, but
                    `sha-1`, `sha-384` and `sha-512` are also supported.
-* `signedhashmethod`    -- the algorithm to use when generated a digest from
-                           previous message digests that is going to be signed
+* `signedhashmethod`    -- the algorithm to use when generating a digest from
+                           previous hash PDU that is to be signed
                            using a private key. Defaults to `sha-256` but
                            `sha-1`, `sha-384` and `sha-512` are also supported.
+                           Note that if you are signing using an ED448 key,
+                           then this option will have no effect (as this
+                           signing algorithm does not compute a digest).
 * `hashtimeout`  -- produce an integrity check containing a message digest hash
                     within this number of seconds after seeing the oldest
                     unhashed data PDU. Defaults to 1 second.
