@@ -312,8 +312,7 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
             logger(LOG_INFO,
                     "OpenLI Mediator: Error - Unable to connect to provisioner.");
         }
-        setup_provisioner_reconnect_timer(prov);
-        provfail = 1;
+        provfail = -1;
     } else if (s == 0) {
         setup_provisioner_reconnect_timer(prov);
         provfail = 1;
