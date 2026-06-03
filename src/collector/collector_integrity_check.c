@@ -33,7 +33,7 @@
 #include "collector_base.h"
 #include "collector_integrity_check.h"
 
-#if OPENSSL_VERSION_NUMBER < 0x3000000L
+#if OPENSSL_VERSION_NUMBER < 0x30000000L
 #define EVP_PKEY_get_id(pkey) EVP_PKEY_id(pkey)
 #endif
 
