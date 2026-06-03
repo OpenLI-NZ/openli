@@ -185,7 +185,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     struct addrinfo hints, *res;
     int sockfd;
     int optval;
-    int flags;
+    int flags, x;
     int success = 0;
     socklen_t optlen;
     int so_error = 0;
@@ -204,9 +204,9 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if (getaddrinfo(ipstr, portstr, &hints, &res) == -1) {
+    if ((x = getaddrinfo(ipstr, portstr, &hints, &res)) != 0) {
         logger(LOG_INFO, "OpenLI: Error while trying to look up %s:%s -- %s.",
-                ipstr, portstr, strerror(errno));
+                ipstr, portstr, gai_strerror(x));
         return -1;
     }
 
@@ -318,7 +318,7 @@ endconnect:
 
 int create_listener(char *addr, char *port, const char *name) {
     struct addrinfo hints, *res;
-    int sockfd;
+    int sockfd, x;
     int yes = 1;
 
     memset(&hints, 0, sizeof(hints));
@@ -328,9 +328,9 @@ int create_listener(char *addr, char *port, const char *name) {
         hints.ai_flags = AI_PASSIVE;
     }
 
-    if (getaddrinfo(addr, port, &hints, &res) == -1)
+    if ((x = getaddrinfo(addr, port, &hints, &res)) != 0)
     {
-        logger(LOG_INFO, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
+        logger(LOG_INFO, "OpenLI: Error while trying to getaddrinfo for %s listening socket: %s", name, gai_strerror(x));
         return -1;
     }
 
@@ -415,13 +415,14 @@ void convert_ipstr_to_sockaddr(char *knownip,
 
     struct addrinfo *res = NULL;
     struct addrinfo hints;
+    int x;
 
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
 
-    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+    if ((x = getaddrinfo(knownip, NULL, &hints, &res)) != 0) {
         logger(LOG_INFO, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
-                knownip, gai_strerror(errno));
+                knownip, gai_strerror(x));
     }
 
     *family = res->ai_family;
