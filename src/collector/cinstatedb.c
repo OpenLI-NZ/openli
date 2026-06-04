@@ -51,6 +51,9 @@ const char *update_cinstate_sql =
 const char *remove_cinstate_liid_sql =
         "DELETE FROM cinstate WHERE liid = ?;";
 
+const char *remove_cinstate_cin_sql =
+        "DELETE FROM cinstate WHERE liid = ? AND cin = ?;";
+
 uint8_t cinstate_db_connect(char *filepath, char *key, void **dbptr) {
     int rc;
 
@@ -165,6 +168,38 @@ int cinstate_db_update(void *dbptr, char *liid, uint32_t cin,
 
 #endif
     return 0;
+}
+
+int cinstate_db_remove_by_cin(void *dbptr, char *liid, uint32_t cin) {
+
+    if (dbptr == NULL || liid == NULL) {
+        return 0;
+    }
+
+#if HAVE_SQLCIPHER
+    sqlite3_stmt *del_stmt;
+    int rc;
+
+    if (sqlite3_prepare_v2(dbptr, remove_cinstate_cin_sql, -1, &del_stmt, 0)
+            != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI collector: failed to prepare delete statement for CIN state database: %s", sqlite3_errmsg(dbptr));
+        return -1;
+    }
+
+    sqlite3_bind_text(del_stmt, 1, liid, -1, SQLITE_STATIC);
+    sqlite3_bind_int(del_stmt, 2, cin);
+
+    if ((rc = sqlite3_step(del_stmt)) != SQLITE_DONE)  {
+        logger(LOG_INFO, "OpenLI collector: failed to execute delete statement for CIN state database: %s", sqlite3_errmsg(dbptr));
+        return -1;
+    }
+
+    sqlite3_finalize(del_stmt);
+    return 1;
+
+#endif
+    return 0;
+
 }
 
 int cinstate_db_remove_by_liid(void *dbptr, char *liid) {

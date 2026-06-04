@@ -41,6 +41,7 @@ void cinstate_db_lookup(void *dbptr, char *liid, uint32_t cin,
         struct cinstate_t *result);
 int cinstate_db_update(void *dbptr, char *liid, uint32_t cin,
         struct cinstate_t *update);
+int cinstate_db_remove_by_cin(void *dbptr, char *liid, uint32_t cin);
 int cinstate_db_remove_by_liid(void *dbptr, char *liid);
 
 #endif

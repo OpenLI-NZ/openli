@@ -745,6 +745,11 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             } else {
                 cinseq->iri_end = 1;
                 cinseq->iri_begin = 0;
+
+                // If we've sent IRI end, we should probably remove this
+                // entry from the cinstate DB because a CIN Reset is
+                // going to be meaningless and/or alarmist
+                cinstate_db_remove_by_cin(seqdata->cinstatedb, liid, cin);
             }
         }
         seqno = &(cinseq->iri_seqno);
