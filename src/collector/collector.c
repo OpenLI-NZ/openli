@@ -2085,6 +2085,12 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->sharedinfo.digestsigningkey) {
         EVP_PKEY_free(glob->sharedinfo.digestsigningkey);
     }
+    if (glob->sharedinfo.cinstatedb_file) {
+        free(glob->sharedinfo.cinstatedb_file);
+    }
+    if (glob->sharedinfo.cinstatedb_key) {
+        free(glob->sharedinfo.cinstatedb_key);
+    }
 
     if (glob->alumirrors) {
         free_coreserver_list(glob->alumirrors);
@@ -2233,8 +2239,9 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
     glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
-    glob->sharedinfo.always_request_encrypt_bytecounter = 0;
     glob->sharedinfo.digestsigningkey = NULL;
+    glob->sharedinfo.cinstatedb_file = NULL;
+    glob->sharedinfo.cinstatedb_key = NULL;
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
@@ -2586,8 +2593,18 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
-    glob->sharedinfo.always_request_encrypt_bytecounter =
-            newstate.sharedinfo.always_request_encrypt_bytecounter;
+
+    if (glob->sharedinfo.cinstatedb_file) {
+        free(glob->sharedinfo.cinstatedb_file);
+    }
+    glob->sharedinfo.cinstatedb_file = newstate.sharedinfo.cinstatedb_file;
+    newstate.sharedinfo.cinstatedb_file = NULL;
+
+    if (glob->sharedinfo.cinstatedb_key) {
+        free(glob->sharedinfo.cinstatedb_key);
+    }
+    glob->sharedinfo.cinstatedb_key = newstate.sharedinfo.cinstatedb_key;
+    newstate.sharedinfo.cinstatedb_key = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2961,6 +2978,8 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].encoders = glob->encoding_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
+        glob->forwarders[i].shared = &(glob->sharedinfo);
+        glob->forwarders[i].shared_mutex = &(glob->config_mutex);
         pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
@@ -3068,6 +3087,8 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].rr_next_encoder_assign = 0;
     	glob->seqtrackers[i].haltinfo = NULL;
+        glob->seqtrackers[i].cinstate_enabled = 0xff;
+        glob->seqtrackers[i].cinstatedb = NULL;
         glob->seqtrackers[i].encoders = glob->encoding_threads;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);

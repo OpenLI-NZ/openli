@@ -44,7 +44,7 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/collector_base.h \
 		configparser_common.c configparser_common.h \
 		configwriter_common.c configwriter_common.h \
-        collector/configwriter_collector.c \
+        collector/cinstatedb.c collector/cinstatedb.h \
 		collector/collector_sync.c collector/collector_sync.h \
         collector/configupdating.c \
         yaml_modifier.c yaml_modifier.h \
@@ -105,7 +105,7 @@ openlicollector_SOURCES=collector/collector.c \
 
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
 openlicollector_LDFLAGS=-lpthread -lpatricia @COLLECTOR_LIBS@
-openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir) -Werror -Wall -Wextra
+openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir) @COLLECTOR_CFLAGS@ -Werror -Wall -Wextra
 
 endif
 

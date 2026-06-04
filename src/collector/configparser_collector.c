@@ -762,10 +762,16 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value,
-                    "encryptionalwaysrequestbytecounter") == 0) {
+                    "cinstatedb") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.cinstatedb_file, value);
+        return 0;
+    }
 
-        glob->sharedinfo.always_request_encrypt_bytecounter =
-                config_check_onoff((char *)value->data.scalar.value);
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "cinstatekey") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->sharedinfo.cinstatedb_key, value);
         return 0;
     }
 
