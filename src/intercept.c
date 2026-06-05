@@ -419,13 +419,15 @@ void intercept_encryption_mode_as_string(payload_encryption_method_t method,
 }
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
-        uint32_t cin) {
+        uint32_t cin, time_t created) {
     sipregister_t *newreg;
 
     newreg = (sipregister_t *)calloc(1, sizeof(sipregister_t));
 
-    newreg->callid = strdup(callid);
+    newreg->registerid = strdup(callid);
     newreg->cin = cin;
+    newreg->flagged = 0;
+    newreg->created = created;
     copy_intercept_common(&(vint->common), &(newreg->common));
     newreg->parent = vint;
 
@@ -796,10 +798,10 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
 }
 
-static void free_single_register(sipregister_t *sipr) {
+void free_single_register(sipregister_t *sipr) {
     free_intercept_common(&(sipr->common));
-    if (sipr->callid) {
-        free(sipr->callid);
+    if (sipr->registerid) {
+        free(sipr->registerid);
     }
     free(sipr);
 }

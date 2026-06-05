@@ -273,6 +273,10 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.udpargs.sourcehost) {
             free(msg->data.udpargs.sourcehost);
         }
+    } else if (msg->type == OPENLI_EXPORT_CIN_CLOSE) {
+        if (msg->data.cinclose.liid) {
+            free(msg->data.cinclose.liid);
+        }
     }
 
     free(msg);

@@ -1359,7 +1359,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
     expiringstreams = calloc(128, sizeof(struct rtpstreaminf *));
     topoll_size = 128;
 
-    its.it_value.tv_sec = 60;
+    its.it_value.tv_sec = 5;
     its.it_value.tv_nsec = 0;
     its.it_interval.tv_sec = 0;
     its.it_interval.tv_nsec = 0;
@@ -1424,6 +1424,9 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
              * not been claimed and have been idle for some time
              */
             purge_redirected_sip_calls(sipworker);
+
+            /* and purge registrations that have timed out */
+            purge_expired_registrations(sipworker);
 
             /* reset the timer */
             purgetimer.fdtype = 0;

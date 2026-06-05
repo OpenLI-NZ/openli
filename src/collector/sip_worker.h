@@ -155,20 +155,28 @@ int sip_worker_announce_rtp_streams(openli_sip_worker_t *sipworker,
 void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *thisrtp);
 void purge_expired_sms_sessions(openli_sip_worker_t *sipworker);
-
+void purge_expired_registrations(openli_sip_worker_t *sipworker);
 
 void destroy_sip_call_state(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock);
 uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid);
+uint32_t get_register_cin_using_regid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *regid);
 int get_voice_call_owner_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid);
+int get_register_owner_using_regid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *regid);
 void add_target_call_reference(voipintercept_t *vint,
         openli_sip_identity_t *matched, uint32_t cin,
         char *callid, sip_message_state_t *msg);
 void remove_target_call_reference(voipintercept_t *vint, uint32_t cin);
 void remove_voice_call_by_callid(
         shared_voice_call_state_t *state, pthread_rwlock_t *lock, char *callid);
+void remove_sip_registration_by_regid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *regid);
+void remove_expired_sip_registrations(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, struct timeval *tv);
 int create_new_intercepted_voice_call(
         shared_voice_call_state_t *state, pthread_rwlock_t *lock,
         char *callid, sip_sdp_identifier_t *sdpkey, char *sessionid,
@@ -177,6 +185,12 @@ int create_new_intercepted_voice_call(
 int find_existing_voice_call(
         shared_voice_call_state_t *state, pthread_rwlock_t *lock,
         char *callid, sip_sdp_identifier_t *sdpkey, char *sessionid);
+int create_new_intercepted_registration(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock,
+        char *regid, openli_sip_identity_t *matched,
+        voipintercept_t *vint, int owner, struct timeval *tv);
+void flag_registration_pending_close(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock, char *regid);
 
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
         char *callid, libtrace_packet_t **pkts, int pkt_cnt,

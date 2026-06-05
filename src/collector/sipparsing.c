@@ -1402,6 +1402,29 @@ int sip_is_180ringing(openli_sip_parser_t *parser) {
     return 0;
 }
 
+int sip_is_401unauth(openli_sip_parser_t *parser) {
+
+    if (MSG_IS_RESPONSE(parser->osip)) {
+        if (osip_message_get_status_code(parser->osip) == 401) {
+            return 1;
+        }
+        if (osip_message_get_status_code(parser->osip) == 407) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+int sip_is_explicit_error_response(openli_sip_parser_t *parser) {
+    if (MSG_IS_RESPONSE(parser->osip)) {
+        if (osip_message_get_status_code(parser->osip) > 400) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int sip_is_bye(openli_sip_parser_t *parser) {
     if (MSG_IS_BYE(parser->osip)) {
         return 1;

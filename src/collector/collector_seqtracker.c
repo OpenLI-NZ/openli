@@ -827,6 +827,15 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                     free_published_message(job);
                     break;
 
+                case OPENLI_EXPORT_CIN_CLOSE:
+                    // a worker has determined that a CIN is no longer
+                    // active for a session where an IRI End is not suitable
+                    // e.g. SIP REGISTER exchanges
+                    cinstate_db_remove_by_cin(seqdata->cinstatedb,
+                            job->data.cinclose.liid, job->data.cinclose.cin);
+                    free_published_message(job);
+                    break;
+
                 case OPENLI_EXPORT_IPMMCC:
                 case OPENLI_EXPORT_IPMMIRI:
                 case OPENLI_EXPORT_IPIRI:

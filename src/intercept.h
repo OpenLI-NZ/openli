@@ -347,6 +347,16 @@ typedef struct intercepted_voice_call {
 
 } intercepted_voice_call_t;
 
+typedef struct intercepted_sip_register {
+    uint32_t cin;
+    char *liid;
+    int owner;
+    time_t created;
+    time_t endflag;
+    char *registerid;
+    UT_hash_handle hh;
+} intercepted_sip_register_t;
+
 typedef struct sip_message_state {
     char *callid;
     time_t created;
@@ -382,6 +392,12 @@ typedef struct {
     intercepted_voice_call_t *call;
     UT_hash_handle hh;
 } intercepted_callid_t;
+
+typedef struct {
+    char *registerid;       // Call ID + Cseq
+    intercepted_sip_register_t *reg;
+    UT_hash_handle hh;
+} intercepted_registerid_t;
 
 /* Two types of VOIP intercept structure -- one for the target which stores
  * all CINs for that target, and another for each target/CIN combination
@@ -442,9 +458,14 @@ typedef struct voipintercept {
     UT_hash_handle *hh_xid;
 } voipintercept_t;
 
+#define SIP_REGISTER_PENDING_CLOSE_TIMEOUT 5
+#define SIP_REGISTER_EXPIRY 33
+
 struct sipregister {
-    char *callid;
+    char *registerid;
     uint32_t cin;
+    time_t created;
+    time_t flagged;
 
     intercept_common_t common;
     voipintercept_t *parent;
@@ -595,6 +616,7 @@ void free_all_vendmirror_intercepts(vendmirror_intercept_list_t **mirror_interce
 void free_all_staticipsessions(staticipsession_t **statintercepts);
 void free_all_staticipranges(static_ipranges_t **ipranges);
 
+void free_single_register(sipregister_t *sipr);
 void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
@@ -659,7 +681,7 @@ void flag_voip_intercepts_as_unconfirmed(voipintercept_t **voipintercepts);
 char *list_email_targets(emailintercept_t *m, int maxchars);
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
-        uint32_t cin);
+        uint32_t cin, time_t created);
 
 rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin,
         char *callid);

@@ -186,6 +186,7 @@ typedef struct shared_voice_call_state {
     intercepted_voice_call_t *cept_calls_by_sessionid;
     intercepted_voice_call_t *cept_calls_by_sdpo;
     intercepted_callid_t *known_callids;
+    intercepted_registerid_t *active_registrations;
     target_call_ref_t *live_targets;
 } shared_voice_call_state_t;
 
