@@ -66,8 +66,6 @@ static void destroy_sip_registration(intercepted_sip_register_t *reg) {
 static void _remove_sip_registration(intercepted_registerid_t *rid) {
 
     /* we must be holding the write lock at this point */
-    fprintf(stderr, "removing global sip registration state: %s %u\n",
-            rid->registerid, rid->reg->cin);
     if (rid->reg) {
         destroy_sip_registration(rid->reg);
     }
@@ -346,9 +344,6 @@ void flag_registration_pending_close(
 
     gettimeofday(&tv, NULL);
     rid->reg->endflag = tv.tv_sec;
-
-    fprintf(stderr, "flagging register %s as pending close\n", rid->registerid);
-
     pthread_rwlock_unlock(lock);
 }
 

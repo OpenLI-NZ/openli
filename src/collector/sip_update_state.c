@@ -454,7 +454,7 @@ void purge_expired_registrations(openli_sip_worker_t *sipworker) {
     struct timeval tv;
     voipintercept_t *vint, *vtmp;
     sipregister_t *reg, *regtmp;
-    openli_export_recv_t msg;
+    openli_export_recv_t *msg;
 
     gettimeofday(&tv, NULL);
 
@@ -473,14 +473,12 @@ void purge_expired_registrations(openli_sip_worker_t *sipworker) {
             }
             HASH_DELETE(hh, vint->active_registrations, reg);
 
-            memset(&msg, 0, sizeof(msg));
-            msg.type = OPENLI_EXPORT_CIN_CLOSE;
-            msg.data.cinclose.liid = strdup(reg->common.liid);
-            msg.data.cinclose.cin = reg->cin;
+            msg = calloc(1, sizeof(openli_export_recv_t));
+            msg->type = OPENLI_EXPORT_CIN_CLOSE;
+            msg->data.cinclose.liid = strdup(reg->common.liid);
+            msg->data.cinclose.cin = reg->cin;
             publish_openli_msg(
-                    sipworker->zmq_pubsocks[reg->common.seqtrackerid], &msg);
-            fprintf(stderr, "removing %s:%u from registration map\n",
-                    reg->common.liid, reg->cin);
+                    sipworker->zmq_pubsocks[reg->common.seqtrackerid], msg);
             free_single_register(reg);
 
         }
