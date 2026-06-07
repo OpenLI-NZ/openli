@@ -1,0 +1,23 @@
+set -e
+
+case "$1" in
+        purge)
+
+        rm -f /var/lib/openli/cinstate.db
+        rm -f /etc/openli/cinstatedb.phrase
+        rm -f /etc/openli/*.yaml
+
+        ;;
+        remove|upgrade|failed-upgrade|abort-install|abort-upgrade|disappear)
+        ;;
+
+        *)
+        echo "postrm called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
+

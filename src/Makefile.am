@@ -1,5 +1,6 @@
 bin_PROGRAMS=
 dist_sbin_SCRIPTS=
+dist_bin_SCRIPTS=
 
 if BUILD_PROVISIONER
 bin_PROGRAMS += openliprovisioner
@@ -106,6 +107,9 @@ openlicollector_SOURCES=collector/collector.c \
 openlicollector_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs 
 openlicollector_LDFLAGS=-lpthread -lpatricia @COLLECTOR_LIBS@
 openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(builddir) @COLLECTOR_CFLAGS@ -Werror -Wall -Wextra
+
+dist_bin_SCRIPTS += collector/savedcinstate/openli-coll-cinstatesetup.sh \
+        collector/savedcinstate/openli-coll-reset-cinstate.sh
 
 endif
 

@@ -4,9 +4,16 @@ openli (1.1.19-1) unstable; urgency=medium
     being assigned the correct operator ID.
   * Email: fix collector crash when encoding large email CCs that
     require segmentation.
+  * Collectors now generate CINReset messages prior to sending an IRI
+    Begin for LIID+CIN combinations that had been intercepted by a
+    prior instance of a collector that ran on this host.
   * Collector: remove timestamp field from the header of TRI segment
     notification messages, as the inclusion of a timestamp is not
     valid in the ETSI spec.
+  * Collector: fixed infinite busy loop that could occur in forwarding
+    threads if a TLS connection to a mediator had a full send buffer.
+  * SIP: workers will no longer retain session state for REGISTER
+    transactions in memory indefinitely.
   * Integrity checks: add support for ED448 signing keys for signature
     generation.
   * Integrity checks: replace incorrect implementation of signature
@@ -31,9 +38,12 @@ openli (1.1.19-1) unstable; urgency=medium
   * SIP: fix double-free crash if libosip2 failed to parse a SIP
     message and left its internal structure in a bad state.
   * Mediator: reduce LEA thread CPU usage when the handovers are idle.
+  * Mediator: fix bug where the mediator could hang if the collector
+    cleanup routine was called while a collector was in the process of
+    connecting.
 
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 4 Jun 2026 10:24:04 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 8 Jun 2026 10:10:17 +1200
 
 openli (1.1.18-1) unstable; urgency=medium
 

@@ -5,10 +5,32 @@
 
 set -e
 
+USER=openli
+s=""
+until s="$s$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
+    [ ${#s} -ge 16 ]; do :; done
+CINDBPHRASE=$(printf %.16s $s)
+
 case "$1" in
     configure|abort-upgrade|abort-remove|abort-deconfigure)
-        ;;
 
+    adduser --quiet --system --group --no-create-home \
+                --home /etc/openli ${USER}
+
+    mkdir -p /var/lib/openli/
+    mkdir -p /etc/openli/
+
+    if [ ! -f /var/lib/openli/cinstate.db ]; then
+        /usr/bin/openli-coll-cinstatesetup.sh ${CINDBPHRASE} /var/lib/openli/cinstate.db
+        echo ${CINDBPHRASE} > /etc/openli/cinstatedb.phrase
+        chmod 0640 /etc/openli/cinstatedb.phrase
+        chmod 0640 /var/lib/openli/cinstate.db
+    fi
+
+    chown -R ${USER}: /etc/openli
+    chown -R ${USER}: /var/lib/openli
+    chmod 2750 /etc/openli
+        ;;
     *)
         echo "postinst called with unknown argument \`$1'" >&2
         exit 1
