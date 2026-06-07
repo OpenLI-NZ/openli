@@ -684,17 +684,28 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             cinstate_db_lookup(seqdata->cinstatedb, liid, cin, &init_cinstate);
         }
 
-        if (init_cinstate.cc_seqno > 0 || init_cinstate.iri_seqno > 0) {
-            // send a CIN reset for this LIID/CIN combo TODO
-            fprintf(stderr, "RESET REQUIRED FOR %s\n", cinstr);
-        }
-
         cinseq->cin = cin;
         cinseq->iri_seqno = 0;
         cinseq->cc_seqno = 0;
         cinseq->cin_string = strdup(cinstr);
         cinseq->iri_begin = 0;
         cinseq->iri_end = 0;
+
+        if (init_cinstate.cc_seqno > 0 || init_cinstate.iri_seqno > 0) {
+            // send a CIN reset for this LIID/CIN combo TODO
+            uint32_t dummyseqno = 0;
+            openli_export_recv_t *resetjob;
+
+            fprintf(stderr, "RESET REQUIRED FOR %s\n", cinstr);
+            resetjob = calloc(1, sizeof(openli_export_recv_t));
+            resetjob->type = OPENLI_EXPORT_CIN_RESET;
+            resetjob->destid = recvd->destid;
+            resetjob->data.cininfo.liid = strdup(liid);
+            resetjob->data.cininfo.cin = cin;
+
+            generate_encoding_job(seqdata, resetjob, intstate, cinseq,
+                    liid, &dummyseqno, authcc, delivcc);
+        }
 
         HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
                 sizeof(cin), cinseq);
@@ -832,7 +843,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                     // active for a session where an IRI End is not suitable
                     // e.g. SIP REGISTER exchanges
                     cinstate_db_remove_by_cin(seqdata->cinstatedb,
-                            job->data.cinclose.liid, job->data.cinclose.cin);
+                            job->data.cininfo.liid, job->data.cininfo.cin);
                     free_published_message(job);
                     break;
 

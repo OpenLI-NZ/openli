@@ -92,6 +92,7 @@ enum {
     OPENLI_EXPORT_LAST_SEGMENT_FLAG = 29,
     OPENLI_EXPORT_AGENCY_DIGEST_CONFIG = 30,
     OPENLI_EXPORT_CIN_CLOSE = 31,
+    OPENLI_EXPORT_CIN_RESET = 32,
 };
 
 typedef struct openli_ipcc_job {
@@ -217,10 +218,10 @@ typedef struct openli_rawip_job {
     uint32_t cin;
 }  openli_rawip_job_t;
 
-typedef struct openli_cin_close_job {
+typedef struct openli_cin_info_job {
     char *liid;
     uint32_t cin;
-} openli_cin_close_job_t;
+} openli_cin_info_job_t;
 
 enum {
     OPENLI_IPIRI_STANDARD,
@@ -302,7 +303,7 @@ struct openli_export_recv {
         udp_sink_worker_args_t udpargs;
         liagency_digest_config_t digest;
     	halt_info_t *haltinfo;
-        openli_cin_close_job_t cinclose;
+        openli_cin_info_job_t cininfo;
     } data;
 };
 

@@ -324,6 +324,7 @@ int create_etsi_encoded_result(openli_encoded_result_t *res,
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
         case OPENLI_EXPORT_EMAILIRI:
+        case OPENLI_EXPORT_CIN_RESET:
             res->header.intercepttype = htons(OPENLI_PROTO_ETSI_IRI);
             break;
         default:

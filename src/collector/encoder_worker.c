@@ -393,7 +393,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
 
     // update digest state
     if (known && !known->digest_config_disabled &&
-            known->digest_config.required) {
+            known->digest_config.required && type != OPENLI_EXPORT_CIN_RESET) {
         integrity_res = update_integrity_check_state(&(enc->integrity_state),
                 known, res->msgbody->encoded + res->preamblen,
                 res->msgbody->len - res->preamblen,
@@ -690,6 +690,44 @@ static inline void create_mobile_operator_identifier(openli_encoder_t *enc,
     HASH_ADD_KEYPTR(hh, irijob->customparams,
             &(np->itemnum), sizeof(np->itemnum), np);
 
+}
+
+static int encode_templated_cinreset(openli_encoder_t *enc,
+        openli_encoding_job_t *job, encoder_liid_state_t *known,
+        encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res) {
+
+    wandder_encoded_result_t *body = NULL;
+
+    reset_wandder_encoder(enc->encoder);
+
+    body = encode_etsi_cin_reset(enc->encoder, job->preencoded);
+    if (body == NULL || body->len == 0 || body->encoded == NULL) {
+        logger(LOG_INFO, "OpenLI: failed to encode ETSI TRI CIN Reset body");
+        if (body) {
+            wandder_release_encoded_result(enc->encoder, body);
+        }
+        return -1;
+    }
+
+    if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
+        if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
+                res, hdr_tplate,
+                body->encoded, body->len, NULL, 0, job) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    } else {
+        if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
+                body->len, NULL, 0, OPENLI_EXPORT_CIN_RESET, job->liid) < 0) {
+            wandder_release_encoded_result(enc->encoder, body);
+            return -1;
+        }
+    }
+
+    wandder_release_encoded_result(enc->encoder, body);
+    /* Success */
+    return 1;
 }
 
 static int encode_templated_segflag(openli_encoder_t *enc,
@@ -1192,6 +1230,20 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
         case OPENLI_EXPORT_EPSCC:
             ret = encode_templated_epscc(enc, job, known, hdr_tplate, res);
             break;
+        case OPENLI_EXPORT_CIN_RESET: {
+            struct timeval tv;
+            encoded_header_template_t *cin_reset_tplate;
+
+            gettimeofday(&tv, NULL);
+            tsptr = &tv;
+            fprintf(stderr, "CIN RESET for %s:%lu\n", job->liid, job->cin);
+            cin_reset_tplate = encode_templated_psheader(enc->encoder,
+                    &(t_set->headers), job->preencoded, job->seqno, tsptr,
+                    job->cin, job->cept_version, job->timefmt);
+            ret = encode_templated_cinreset(enc, job, known, cin_reset_tplate,
+                    res);
+            break;
+        }
         default:
             ret = 0;
     }

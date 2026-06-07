@@ -475,8 +475,8 @@ void purge_expired_registrations(openli_sip_worker_t *sipworker) {
 
             msg = calloc(1, sizeof(openli_export_recv_t));
             msg->type = OPENLI_EXPORT_CIN_CLOSE;
-            msg->data.cinclose.liid = strdup(reg->common.liid);
-            msg->data.cinclose.cin = reg->cin;
+            msg->data.cininfo.liid = strdup(reg->common.liid);
+            msg->data.cininfo.cin = reg->cin;
             publish_openli_msg(
                     sipworker->zmq_pubsocks[reg->common.seqtrackerid], msg);
             free_single_register(reg);
