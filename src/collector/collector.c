@@ -2445,6 +2445,12 @@ static collector_global_t *parse_global_config(char *configfile) {
         return NULL;
     }
 
+    if (glob->sharedinfo.cinstatedb_file == NULL) {
+        glob->sharedinfo.cinstatedb_file = strdup("/var/lib/openli/cinstate.db");
+    }
+    logger(LOG_INFO, "OpenLI: storing observed CIN state in %s",
+            glob->sharedinfo.cinstatedb_file);
+
     if (glob->sharedinfo.provisionerport == NULL) {
         glob->sharedinfo.provisionerport = strdup("8993");
     }
