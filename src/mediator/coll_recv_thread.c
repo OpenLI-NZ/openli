@@ -1451,6 +1451,7 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
 
         while (iter) {
             if (iter->forwarder_id < 0) {
+                iter = iter->next;
                 continue;
             }
 
