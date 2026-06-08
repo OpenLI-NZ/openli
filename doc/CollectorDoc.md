@@ -295,6 +295,11 @@ The basic option keys are:
 * emailthreads      -- set the number of threads to use for processing email
                        traffic (defaults to 1, can be set to zero to disable
                        email interception).
+* cinstatedb        -- the location of the CIN state database file. Defaults
+                       to /var/lib/openli/cinstate.db
+* cinstatekey       -- the location of the file containing the key to decrypt
+                       the CIN state database file. Defaults to
+                       /etc/openli/cinstatedb.key.
 
 Be aware that increasing the number of threads used for sequence number
 tracking, encoding or forwarding can actually decrease OpenLI's performance,
@@ -513,6 +518,42 @@ vendor for not implementing SDP O properly and b) send them a copy of this
 detailed explanation as to why your intercept software is unable to join the
 legs together.
 
+### CIN State database
+From version 1.1.19 onwards, collectors maintain a database of the LIID
+(Lawful Intercept Identifier) and CINs (Communication Identity Numbers) of
+all sessions that are active and being intercepted. If a collector is restarted,
+this database is used to determine when a CIN Reset message needs to be
+sent to a receiving agency to tell them that there has been a break in the
+interception for that session and that the sequence numbering is restarting
+from zero.
+
+By default, OpenLI will initialize a database at `/var/lib/openli/cinstate.db`
+upon installation of the collector. If you have built from source and changed
+the install prefix then the database can be found at
+`${PREFIX}/var/lib/openli/cinstate.db` instead. The database is encrypted and
+the key for the database can be found in `/etc/openli/cinstatedb.key` (or
+`${PREFIX}/etc/openli/cinstatedb.key` for custom install prefixes).
+
+When the collector starts, it will attempt to open a CIN state database
+located at `/var/lib/openli/cinstate.db` using the key string found in the
+file `/etc/openli/cinstatedb.key` as the password. If this fails, the
+collector will report an error and immediately halt. Note that while most
+error messages are reasonably clear, the error "file is not a database" can
+mean that the keyphrase in `/etc/openli/cinstatedb.key` is incorrect.
+
+If either your database or key file are located elsewhere, you may override
+these by providing their full path as values for the `cinstatedb` and/or
+`cinstatekey` options in the collector configuration file. If desired, you
+may also set the `cinstatekey` option value to be the key string directly.
+
+If you, for some reason, wish to clear all tracked CINs from the state
+database, you may do so by running the openli-coll-reset-cinstate.sh script
+that is installed into your `bin/` directory alongside the collector software
+itself, e.g.:
+    `/usr/bin/openli-coll-reset-cinstate.sh <key> <database file>`
+
+Note that when running the command above, `<key>` is the actual key string,
+not the path to the key file.
 
 
 
