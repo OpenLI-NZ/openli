@@ -1236,7 +1236,6 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
 
             gettimeofday(&tv, NULL);
             tsptr = &tv;
-            fprintf(stderr, "CIN RESET for %s:%lu\n", job->liid, job->cin);
             cin_reset_tplate = encode_templated_psheader(enc->encoder,
                     &(t_set->headers), job->preencoded, job->seqno, tsptr,
                     job->cin, job->cept_version, job->timefmt);

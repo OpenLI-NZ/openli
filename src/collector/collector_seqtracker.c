@@ -696,7 +696,6 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             uint32_t dummyseqno = 0;
             openli_export_recv_t *resetjob;
 
-            fprintf(stderr, "RESET REQUIRED FOR %s\n", cinstr);
             resetjob = calloc(1, sizeof(openli_export_recv_t));
             resetjob->type = OPENLI_EXPORT_CIN_RESET;
             resetjob->destid = recvd->destid;
