@@ -35,8 +35,13 @@
 #include "collector_base.h"
 #include "collector_publish.h"
 #include "intercept.h"
+#include "cinstatedb.h"
 
 #define MAX_CONTENT_PER_JOB 64000
+
+#if HAVE_SQLCIPHER
+#include <sqlcipher/sqlite3.h>
+#endif
 
 static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->liid) {
@@ -390,6 +395,23 @@ static void reconfigure_intercepts(seqtracker_thread_data_t *seqdata) {
         intstate->version ++;
     }
 
+    /* Just in case the CIN state database configuration has been changed... */
+    seqdata->cinstate_enabled = 0xff;
+    cinstate_db_close(&(seqdata->cinstatedb));
+}
+
+static inline void establish_cinstate_dbconn(seqtracker_thread_data_t *seqdata)
+{
+    if (seqdata->cinstatedb == NULL && seqdata->cinstate_enabled != 0) {
+        pthread_rwlock_rdlock(seqdata->colident_mutex);
+
+        seqdata->cinstate_enabled = cinstate_db_connect(
+                seqdata->colident->cinstatedb_file,
+                seqdata->colident->cinstatedb_key,
+                &(seqdata->cinstatedb));
+
+        pthread_rwlock_unlock(seqdata->colident_mutex);
+    }
 }
 
 static inline void free_intercept_state(seqtracker_thread_data_t *seqdata,
@@ -485,6 +507,9 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         }
         break;
     }
+
+    establish_cinstate_dbconn(seqdata);
+    cinstate_db_remove_by_liid(seqdata->cinstatedb, msg->liid);
 
     HASH_DELETE(hh, seqdata->intercepts, intstate);
     free_intercept_state(seqdata, intstate);
@@ -620,6 +645,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     etsili_iri_type_t iritype = ETSILI_IRI_NONE;
     openli_encoding_job_t job;
     uint32_t *seqno;
+    struct cinstate_t update_cinstate;
+    int res = 0;
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
@@ -639,7 +666,9 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
     if (!cinseq) {
         char cinstr[1024];
+        struct cinstate_t init_cinstate;
 
+        establish_cinstate_dbconn(seqdata);
         cinseq = (cin_seqno_t *)malloc(sizeof(cin_seqno_t));
 
         if (!cinseq) {
@@ -650,6 +679,11 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
         snprintf(cinstr, 1024, "%s-%u", liid, cin);
 
+        memset(&init_cinstate, 0, sizeof(init_cinstate));
+        if (seqdata->cinstatedb) {
+            cinstate_db_lookup(seqdata->cinstatedb, liid, cin, &init_cinstate);
+        }
+
         cinseq->cin = cin;
         cinseq->iri_seqno = 0;
         cinseq->cc_seqno = 0;
@@ -657,14 +691,32 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->iri_begin = 0;
         cinseq->iri_end = 0;
 
+        if (init_cinstate.cc_seqno > 0 || init_cinstate.iri_seqno > 0) {
+            // send a CIN reset for this LIID/CIN combo TODO
+            uint32_t dummyseqno = 0;
+            openli_export_recv_t *resetjob;
+
+            fprintf(stderr, "RESET REQUIRED FOR %s\n", cinstr);
+            resetjob = calloc(1, sizeof(openli_export_recv_t));
+            resetjob->type = OPENLI_EXPORT_CIN_RESET;
+            resetjob->destid = recvd->destid;
+            resetjob->data.cininfo.liid = strdup(liid);
+            resetjob->data.cininfo.cin = cin;
+
+            generate_encoding_job(seqdata, resetjob, intstate, cinseq,
+                    liid, &dummyseqno, authcc, delivcc);
+        }
+
         HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
                 sizeof(cin), cinseq);
     }
 
     switch(recvd->type) {
         case OPENLI_EXPORT_EMAILCC:
-            return handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid,
+            res = handle_emailcc_job(seqdata, recvd, intstate, cinseq, liid,
                     authcc, delivcc);
+            seqno = &(cinseq->cc_seqno);
+            goto postencodepush;
     }
 
 
@@ -689,6 +741,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                 return 0;
             } else {
                 cinseq->iri_begin = 1;
+                cinseq->iri_end = 0;
             }
         } else if (iritype == ETSILI_IRI_END ||
                 iritype == ETSILI_IRI_END_DISCARDABLE) {
@@ -702,13 +755,37 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                 return 0;
             } else {
                 cinseq->iri_end = 1;
+                cinseq->iri_begin = 0;
+
+                // If we've sent IRI end, we should probably remove this
+                // entry from the cinstate DB because a CIN Reset is
+                // going to be meaningless and/or alarmist
+                cinstate_db_remove_by_cin(seqdata->cinstatedb, liid, cin);
             }
         }
         seqno = &(cinseq->iri_seqno);
 	}
 
-    return generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
+    res = generate_encoding_job(seqdata, recvd, intstate, cinseq, liid,
             seqno, authcc, delivcc);
+
+postencodepush:
+
+    if (*seqno == 1) {
+        establish_cinstate_dbconn(seqdata);
+        update_cinstate.iri_seqno = cinseq->iri_seqno;
+        update_cinstate.cc_seqno = cinseq->cc_seqno;
+
+        if (seqdata->cinstate_enabled) {
+            if (cinstate_db_update(seqdata->cinstatedb, liid, cin,
+                    &update_cinstate) < 0) {
+                seqdata->cinstate_enabled = 0;
+                cinstate_db_close(&(seqdata->cinstatedb));
+            }
+        }
+    }
+
+    return res;
 
 }
 
@@ -758,6 +835,15 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 
                 case OPENLI_EXPORT_INTERCEPT_CHANGED:
                     modify_tracked_intercept(seqdata, &(job->data.cept));
+                    free_published_message(job);
+                    break;
+
+                case OPENLI_EXPORT_CIN_CLOSE:
+                    // a worker has determined that a CIN is no longer
+                    // active for a session where an IRI End is not suitable
+                    // e.g. SIP REGISTER exchanges
+                    cinstate_db_remove_by_cin(seqdata->cinstatedb,
+                            job->data.cininfo.liid, job->data.cininfo.cin);
                     free_published_message(job);
                     break;
 
@@ -895,6 +981,8 @@ haltseqtracker:
         pthread_cond_signal(&(seqdata->haltinfo->cond));
         pthread_mutex_unlock(&(seqdata->haltinfo->mutex));
     }
+
+    cinstate_db_close(&(seqdata->cinstatedb));
     pthread_exit(NULL);
 }
 

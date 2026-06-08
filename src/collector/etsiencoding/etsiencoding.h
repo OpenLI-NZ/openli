@@ -216,6 +216,9 @@ wandder_encoded_result_t *encode_etsi_interim_integrity_signature(
         int64_t *inclseqnos, size_t numseqnos,
         openli_integrity_sign_algo_t sign_algo);
 
+wandder_encoded_result_t *encode_etsi_cin_reset(
+        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed);
+
 wandder_encoded_result_t *encode_etsi_integrity_check(
         wandder_encoder_t *encoder, wandder_etsipshdr_data_t *hdrdata,
         int64_t cin,

@@ -54,6 +54,7 @@
 #include "cisco_parser.h"
 #include "util.h"
 #include "collector_integrity_check.h"
+#include "cinstatedb.h"
 
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
@@ -2085,6 +2086,12 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->sharedinfo.digestsigningkey) {
         EVP_PKEY_free(glob->sharedinfo.digestsigningkey);
     }
+    if (glob->sharedinfo.cinstatedb_file) {
+        free(glob->sharedinfo.cinstatedb_file);
+    }
+    if (glob->sharedinfo.cinstatedb_key) {
+        free(glob->sharedinfo.cinstatedb_key);
+    }
 
     if (glob->alumirrors) {
         free_coreserver_list(glob->alumirrors);
@@ -2233,8 +2240,9 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
     glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
-    glob->sharedinfo.always_request_encrypt_bytecounter = 0;
     glob->sharedinfo.digestsigningkey = NULL;
+    glob->sharedinfo.cinstatedb_file = NULL;
+    glob->sharedinfo.cinstatedb_key = NULL;
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
@@ -2308,6 +2316,8 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
     char *jsonconfig;
+    char *cinstatekey_file = NULL;
+    void *dbptr = NULL;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2437,6 +2447,62 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (create_ssl_context(&(glob->sslconf)) < 0) {
         return NULL;
     }
+
+    if (glob->sharedinfo.cinstatedb_file == NULL) {
+        glob->sharedinfo.cinstatedb_file = strdup("/var/lib/openli/cinstate.db");
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        cinstatekey_file = "/etc/openli/cinstatedb.key";
+    } else if (glob->sharedinfo.cinstatedb_key[0] == '/') {
+        cinstatekey_file = glob->sharedinfo.cinstatedb_key;
+    }
+
+    if (cinstatekey_file) {
+        FILE *f = fopen(cinstatekey_file, "r");
+        if (f) {
+            char keybuf[1024];
+            char *kp = NULL;
+            if (fgets(keybuf, 1024, f) != NULL) {
+                kp = rtrim(keybuf);
+                if (glob->sharedinfo.cinstatedb_key) {
+                    free(glob->sharedinfo.cinstatedb_key);
+                }
+                if (kp) {
+                    glob->sharedinfo.cinstatedb_key = strdup(kp);
+                } else {
+                    glob->sharedinfo.cinstatedb_key = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: unable to read CIN state database key from %s: %s",
+                    cinstatekey_file, strerror(errno));
+            clear_global_config(glob);
+            return NULL;
+        }
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: no valid key is configured for the CIN state database, exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    if (cinstate_db_connect(glob->sharedinfo.cinstatedb_file,
+            glob->sharedinfo.cinstatedb_key, &dbptr) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: exiting due to CIN state database failure");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    cinstate_db_close(&dbptr);
+
+    logger(LOG_INFO, "OpenLI: storing observed CIN state in %s",
+            glob->sharedinfo.cinstatedb_file);
 
     if (glob->sharedinfo.provisionerport == NULL) {
         glob->sharedinfo.provisionerport = strdup("8993");
@@ -2586,8 +2652,18 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
-    glob->sharedinfo.always_request_encrypt_bytecounter =
-            newstate.sharedinfo.always_request_encrypt_bytecounter;
+
+    if (glob->sharedinfo.cinstatedb_file) {
+        free(glob->sharedinfo.cinstatedb_file);
+    }
+    glob->sharedinfo.cinstatedb_file = newstate.sharedinfo.cinstatedb_file;
+    newstate.sharedinfo.cinstatedb_file = NULL;
+
+    if (glob->sharedinfo.cinstatedb_key) {
+        free(glob->sharedinfo.cinstatedb_key);
+    }
+    glob->sharedinfo.cinstatedb_key = newstate.sharedinfo.cinstatedb_key;
+    newstate.sharedinfo.cinstatedb_key = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2961,6 +3037,8 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].encoders = glob->encoding_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
+        glob->forwarders[i].shared = &(glob->sharedinfo);
+        glob->forwarders[i].shared_mutex = &(glob->config_mutex);
         pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
@@ -3068,6 +3146,8 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].rr_next_encoder_assign = 0;
     	glob->seqtrackers[i].haltinfo = NULL;
+        glob->seqtrackers[i].cinstate_enabled = 0xff;
+        glob->seqtrackers[i].cinstatedb = NULL;
         glob->seqtrackers[i].encoders = glob->encoding_threads;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);

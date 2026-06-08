@@ -450,6 +450,41 @@ void purge_expired_sms_sessions(openli_sip_worker_t *sipworker) {
     }
 }
 
+void purge_expired_registrations(openli_sip_worker_t *sipworker) {
+    struct timeval tv;
+    voipintercept_t *vint, *vtmp;
+    sipregister_t *reg, *regtmp;
+    openli_export_recv_t *msg;
+
+    gettimeofday(&tv, NULL);
+
+    remove_expired_sip_registrations(sipworker->call_state,
+            sipworker->call_state_mutex, &tv);
+
+    HASH_ITER(hh_liid, sipworker->voipintercepts, vint, vtmp) {
+        HASH_ITER(hh, vint->active_registrations, reg, regtmp) {
+            if (reg->flagged == 0) {
+                if (tv.tv_sec - reg->created < SIP_REGISTER_EXPIRY) {
+                    continue;
+                }
+            } else if (tv.tv_sec - reg->flagged <
+                    SIP_REGISTER_PENDING_CLOSE_TIMEOUT) {
+                continue;
+            }
+            HASH_DELETE(hh, vint->active_registrations, reg);
+
+            msg = calloc(1, sizeof(openli_export_recv_t));
+            msg->type = OPENLI_EXPORT_CIN_CLOSE;
+            msg->data.cininfo.liid = strdup(reg->common.liid);
+            msg->data.cininfo.cin = reg->cin;
+            publish_openli_msg(
+                    sipworker->zmq_pubsocks[reg->common.seqtrackerid], msg);
+            free_single_register(reg);
+
+        }
+    }
+}
+
 static int update_rtp_stream(rtpstreaminf_t *rtp, char *ipstr, char *portstr,
         char *mediatype, uint8_t dir) {
 
@@ -553,19 +588,26 @@ static sipregister_t *create_new_voip_registration(
 
     sipregister_t *newreg = NULL;
     uint32_t cin_id = 0;
+    char regid[1024];
 
-    create_new_intercepted_voice_call(sipworker->call_state,
-                sipworker->call_state_mutex, callid, NULL, NULL,
+    if (callid == NULL) {
+        return NULL;
+    }
+
+    snprintf(regid, 1024, "%s--%lu", callid, tv->tv_sec / 60);
+
+    create_new_intercepted_registration(sipworker->call_state,
+                sipworker->call_state_mutex, regid,
                 targetuser, vint, sipworker->workerid, tv);
 
-    HASH_FIND(hh, vint->active_registrations, callid, strlen(callid), newreg);
+    HASH_FIND(hh, vint->active_registrations, regid, strlen(regid), newreg);
     if (!newreg) {
-        cin_id = get_voice_call_cin_using_callid(sipworker->call_state,
-                sipworker->call_state_mutex, callid);
-        newreg = create_sipregister(vint, callid, cin_id);
+        cin_id = get_register_cin_using_regid(sipworker->call_state,
+                sipworker->call_state_mutex, regid);
+        newreg = create_sipregister(vint, regid, cin_id, tv->tv_sec);
 
-        HASH_ADD_KEYPTR(hh, vint->active_registrations, newreg->callid,
-                strlen(newreg->callid), newreg);
+        HASH_ADD_KEYPTR(hh, vint->active_registrations, newreg->registerid,
+                strlen(newreg->registerid), newreg);
     }
 
     return newreg;
@@ -599,6 +641,7 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
     pthread_rwlock_unlock(sipworker->shared_mutex);
 
     gettimeofday(&tv, NULL);
+
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
         sipreg = NULL;
 
@@ -616,7 +659,6 @@ static int process_sip_register(openli_sip_worker_t *sipworker, char *callid,
                 sipreg->cin, locptr, loc_cnt, pkts, pkt_cnt, ETSI_DIR_FROM_TARGET);
         exportcount += 1;
     }
-
     release_openli_sip_identity_set(&all_identities);
 
     return exportcount;
@@ -954,30 +996,64 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
     rtpstreaminf_t *thisrtp;
     etsili_iri_type_t iritype = ETSILI_IRI_CONTINUE;
     int exportcount = 0;
-    uint32_t cin;
+    uint32_t cin, regcin;
     sip_message_state_t *msg;
-
-    cin = get_voice_call_cin_using_callid(sipworker->call_state,
-            sipworker->call_state_mutex, callid);
+    char regid[1024];
+    char regid_bkup[1024];
+    struct timeval tv;
 
     if (sipworker->sipparser->badsip) {
         return 0;
     }
 
+    gettimeofday(&tv, NULL);
+    // we need regid_bkup just in case a REGISTER was just prior to the
+    // minute boundary and the response was just after it
+    snprintf(regid, 1024, "%s--%lu", callid, tv.tv_sec / 60);
+    snprintf(regid_bkup, 1024, "%s--%lu", callid, (tv.tv_sec / 60) - 1);
+
+    cin = get_voice_call_cin_using_callid(sipworker->call_state,
+            sipworker->call_state_mutex, callid);
+    regcin = get_register_cin_using_regid(sipworker->call_state,
+            sipworker->call_state_mutex, regid);
+    if (regcin == 0) {
+        regcin = get_register_cin_using_regid(sipworker->call_state,
+            sipworker->call_state_mutex, regid_bkup);
+    }
+
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
-        HASH_FIND(hh, vint->active_registrations, callid, strlen(callid),
+        HASH_FIND(hh, vint->active_registrations, regid, strlen(regid),
                 findreg);
+        if (findreg == NULL) {
+            HASH_FIND(hh, vint->active_registrations, regid_bkup,
+                    strlen(regid_bkup), findreg);
+        }
+
         HASH_FIND(hh, vint->active_messages, callid, strlen(callid), msg);
 
-        if (cin == 0 && !msg) {
+        if (cin == 0 && regcin == 0 && !msg) {
             continue;
         }
 
         if (findreg) {
             create_sip_ipmmiri(sipworker, vint, irimsg,
                     ETSILI_IRI_REPORT, findreg->cin, NULL, 0, pkts,
-                    pkt_cnt, ETSI_DIR_FROM_TARGET);
+                    pkt_cnt, ETSI_DIR_TO_TARGET);
             exportcount ++;
+
+            if (sip_is_200ok(sipworker->sipparser)) {
+                // registration successful, flag state for removal
+                flag_registration_pending_close(sipworker->call_state,
+                        sipworker->call_state_mutex, findreg->registerid);
+                findreg->flagged = tv.tv_sec;
+            }
+            else if (sip_is_explicit_error_response(sipworker->sipparser) &&
+                    !sip_is_401unauth(sipworker->sipparser)) {
+                // fatal error, flag state for removal
+                flag_registration_pending_close(sipworker->call_state,
+                        sipworker->call_state_mutex, findreg->registerid);
+                findreg->flagged = tv.tv_sec;
+            }
             continue;
         }
 
@@ -1040,7 +1116,6 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
      */
         conclude_redirected_sip_call(sipworker, callid);
     }
-
 
     if (sipworker->sipparser->badsip) {
         return -1;

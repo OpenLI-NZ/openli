@@ -37,6 +37,7 @@ COLLECTOR_LIBS=
 MEDIATOR_LIBS=
 
 PROVISIONER_CFLAGS=
+COLLECTOR_CFLAGS=
 
 AC_CHECK_LIB([trace], [trace_get_uri_format],,libtrace_found=0)
 AC_CHECK_LIB([yaml], [yaml_document_get_node],,libyaml_found=0)
@@ -91,28 +92,27 @@ if test "x$enable_collector" != "xno"; then
 fi
 
 if test "x$enable_provisioner" != "xno" -o "x$enable_collector" != "xno"; then
-        AC_CHECK_LIB([microhttpd], [MHD_destroy_post_processor],libmicrohttpd_found=1,libmicrohttpd_found=0)
-        if test "$libmicrohttpd_found" = 0; then
-                AC_MSG_ERROR(Required library libmicrohttpd not found; use LDFLAGS to specify library location)
+    AC_CHECK_LIB([microhttpd], [MHD_destroy_post_processor],libmicrohttpd_found=1,libmicrohttpd_found=0)
+    if test "$libmicrohttpd_found" = 0; then
+            AC_MSG_ERROR(Required library libmicrohttpd not found; use LDFLAGS to specify library location)
+    fi
+
+    COLLECTOR_LIBS="$COLLECTOR_LIBS -lmicrohttpd"
+    PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd"
+
+    if test "x$libssl11_found" = "x1"; then
+        AC_CHECK_LIB([sqlcipher], [sqlite3_key], sqlcipher_found=1, sqlcipher_found=0)
+
+        if test "$sqlcipher_found" = 0; then
+            AC_MSG_ERROR(Required library libsqlcipher not found; use LDFLAGS to specify library location)
         fi
 
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -lmicrohttpd"
-        PROVISIONER_LIBS="$PROVISIONER_LIBS -lmicrohttpd"
-fi
-
-if test "x$enable_provisioner" != "xno"; then
-
-        if test "x$libssl11_found" = "x1"; then
-                AC_CHECK_LIB([sqlcipher], [sqlite3_key], sqlcipher_found=1, sqlcipher_found=0)
-
-                if test "$sqlcipher_found" = 0; then
-                        AC_MSG_ERROR(Required library libsqlcipher not found; use LDFLAGS to specify library location)
-                fi
-
-		AC_DEFINE(HAVE_SQLCIPHER, 1, [defined to 1 if SQLCipher is available])
-                PROVISIONER_LIBS="$PROVISIONER_LIBS -lsqlcipher"
-                PROVISIONER_CFLAGS="-DSQLITE_HAS_CODEC"
-        fi
+        AC_DEFINE(HAVE_SQLCIPHER, 1, [defined to 1 if SQLCipher is available])
+        PROVISIONER_LIBS="$PROVISIONER_LIBS -lsqlcipher"
+        COLLECTOR_LIBS="$COLLECTOR_LIBS -lsqlcipher"
+        PROVISIONER_CFLAGS="$PROVISIONER_CFLAGS -DSQLITE_HAS_CODEC"
+        COLLECTOR_CFLAGS="$PROVISIONER_CFLAGS -DSQLITE_HAS_CODEC"
+    fi
 fi
 
 if test "x$enable_collector" != "xno" -o "x$enable_mediator" != "xno"; then
@@ -198,6 +198,7 @@ AC_SUBST([COLLECTOR_LIBS])
 AC_SUBST([MEDIATOR_LIBS])
 AC_SUBST([PROVISIONER_LIBS])
 AC_SUBST([PROVISIONER_CFLAGS])
+AC_SUBST([COLLECTOR_CFLAGS])
 
 AC_OUTPUT
 

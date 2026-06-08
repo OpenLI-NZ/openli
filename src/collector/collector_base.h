@@ -186,6 +186,7 @@ typedef struct shared_voice_call_state {
     intercepted_voice_call_t *cept_calls_by_sessionid;
     intercepted_voice_call_t *cept_calls_by_sdpo;
     intercepted_callid_t *known_callids;
+    intercepted_registerid_t *active_registrations;
     target_call_ref_t *live_targets;
 } shared_voice_call_state_t;
 
@@ -221,13 +222,10 @@ typedef struct collector_identity {
     int networkelemid_len;
     int intpointid_len;
 
-    /* If not set, encryption for intercepts that have a dedicated key
-     * will keep track of their byteCounter in the encoding thread itself.
-     * This is faster as long as the LIID is going to be observed at a single
-     * collector only, which should be true in almost all cases.
-     */
-    uint8_t always_request_encrypt_bytecounter;
     uint8_t cisco_noradius;
+
+    char *cinstatedb_file;
+    char *cinstatedb_key;
 
     EVP_PKEY *digestsigningkey;
 } collector_identity_t;
@@ -275,6 +273,9 @@ typedef struct seqtracker_thread_data {
     size_t encoders;
     void **zmq_pushjobsocks;
     void *zmq_recvpublished;
+
+    uint8_t cinstate_enabled;
+    void *cinstatedb;
 
     exporter_intercept_state_t *intercepts;
     removed_intercept_t *removedints;
@@ -324,6 +325,9 @@ typedef struct forwarding_thread_data {
 
     SSL_CTX *ctx;
     pthread_mutex_t sslmutex;
+
+    collector_identity_t *shared;
+    pthread_rwlock_t *shared_mutex;
 
     amqp_connection_state_t ampq_conn;
     amqp_socket_t *ampq_sock;

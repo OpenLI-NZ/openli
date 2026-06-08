@@ -1,4 +1,5 @@
 usr/bin/openlicollector
+usr/bin/openli-coll-*.sh
 etc/openli/collector*
 etc/openli/rsyslog.d/10-openli-collector.conf
 usr/share/doc/openli/CollectorDoc.md

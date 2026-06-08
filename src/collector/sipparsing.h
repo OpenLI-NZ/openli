@@ -172,6 +172,8 @@ int sip_is_message(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 int sip_is_cancel(openli_sip_parser_t *parser);
 int sip_is_response(openli_sip_parser_t *parser);
+int sip_is_401unauth(openli_sip_parser_t *parser);
+int sip_is_explicit_error_response(openli_sip_parser_t *parser);
 
 int get_sip_header_session_id(openli_sip_parser_t *parser, char **idstr);
 int get_sip_identity_by_header_name(openli_sip_parser_t *parser,

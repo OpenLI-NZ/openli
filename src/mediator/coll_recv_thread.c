@@ -1438,8 +1438,14 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
     coll_recv_t *newhead, *oldhead, *oldtail;
     struct timeval tv;
     col_thread_msg_t end_msg;
+    coll_recv_t **to_add = NULL;
+    int toadd_ind = 0, i;
 
     gettimeofday(&tv, NULL);
+
+    if (HASH_COUNT(medcol->threads) > 0) {
+        to_add = calloc(HASH_COUNT(medcol->threads), sizeof(coll_recv_t *));
+    }
 
     HASH_ITER(hh, medcol->threads, col, tmp) {
         seensofar = NULL;
@@ -1451,6 +1457,7 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
 
         while (iter) {
             if (iter->forwarder_id < 0) {
+                iter = iter->next;
                 continue;
             }
 
@@ -1533,12 +1540,11 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
         iter = newhead;
 
         /* If we have removed the head of the list, then we need to
-         * update the threads hashmap to point to the new head when we
-         * next do a look for the receiver threads for this collector
+         * update the threads hashmap to point to the new head.
          */
         if (newhead != oldhead) {
-            HASH_ADD_KEYPTR(hh, medcol->threads, newhead->ipaddr,
-                    newhead->iplen, newhead);
+            to_add[toadd_ind] = newhead;
+            toadd_ind ++;
         }
 
         while (iter) {
@@ -1550,6 +1556,15 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
             }
             iter = iter->next;
         }
+    }
+
+    for (i = 0; i < toadd_ind; i++) {
+        HASH_ADD_KEYPTR(hh, medcol->threads, to_add[i]->ipaddr,
+                to_add[i]->iplen, to_add[i]);
+    }
+
+    if (to_add) {
+        free(to_add);
     }
 }
 

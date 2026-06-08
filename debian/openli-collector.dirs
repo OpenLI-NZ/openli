@@ -2,3 +2,4 @@
 /usr/share/doc/openli
 /etc/openli
 /etc/openli/rsyslog.d
+/var/lib/openli

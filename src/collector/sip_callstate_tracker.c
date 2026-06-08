@@ -57,6 +57,23 @@ static void destroy_voice_call(shared_voice_call_state_t *state,
     free(vc);
 }
 
+static void destroy_sip_registration(intercepted_sip_register_t *reg) {
+
+    if (reg->registerid) free(reg->registerid);
+    free(reg);
+}
+
+static void _remove_sip_registration(intercepted_registerid_t *rid) {
+
+    /* we must be holding the write lock at this point */
+    if (rid->reg) {
+        destroy_sip_registration(rid->reg);
+    }
+    free(rid->registerid);
+    free(rid);
+}
+
+
 static void _remove_voice_call(shared_voice_call_state_t *state,
         intercepted_callid_t *kc) {
 
@@ -87,6 +104,7 @@ void destroy_sip_call_state(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock) {
 
     intercepted_callid_t *kc, *kctmp;
+    intercepted_registerid_t *rid, *ridtmp;
 
     pthread_rwlock_wrlock(lock);
 
@@ -95,6 +113,25 @@ void destroy_sip_call_state(shared_voice_call_state_t *state,
         _remove_voice_call(state, kc);
     }
 
+    HASH_ITER(hh, state->active_registrations, rid, ridtmp) {
+        HASH_DELETE(hh, state->active_registrations, rid);
+        _remove_sip_registration(rid);
+    }
+
+    pthread_rwlock_unlock(lock);
+
+}
+
+void remove_sip_registration_by_regid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *regid) {
+
+    intercepted_registerid_t *rid = NULL;
+    pthread_rwlock_wrlock(lock);
+    HASH_FIND(hh, state->active_registrations, regid, strlen(regid), rid);
+    if (rid) {
+        HASH_DELETE(hh, state->active_registrations, rid);
+        _remove_sip_registration(rid);
+    }
     pthread_rwlock_unlock(lock);
 
 }
@@ -287,6 +324,98 @@ int find_existing_voice_call(
     return ret;
 }
 
+void flag_registration_pending_close(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock, char *regid) {
+
+
+    intercepted_registerid_t *rid;
+    struct timeval tv;
+
+    if (regid == NULL) {
+        return;
+    }
+
+    pthread_rwlock_wrlock(lock);
+    HASH_FIND(hh, state->active_registrations, regid, strlen(regid), rid);
+    if (!rid) {
+        pthread_rwlock_unlock(lock);
+        return;
+    }
+
+    gettimeofday(&tv, NULL);
+    rid->reg->endflag = tv.tv_sec;
+    pthread_rwlock_unlock(lock);
+}
+
+void remove_expired_sip_registrations(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, struct timeval *tv) {
+
+    intercepted_registerid_t *rid, *tmp;
+
+    pthread_rwlock_wrlock(lock);
+    HASH_ITER(hh, state->active_registrations, rid, tmp) {
+        if (rid->reg->endflag > 0 &&
+                tv->tv_sec - rid->reg->endflag > SIP_REGISTER_PENDING_CLOSE_TIMEOUT) {
+            HASH_DELETE(hh, state->active_registrations, rid);
+            _remove_sip_registration(rid);
+        } else if (tv->tv_sec - rid->reg->created > SIP_REGISTER_EXPIRY) {
+            HASH_DELETE(hh, state->active_registrations, rid);
+            _remove_sip_registration(rid);
+        }
+    }
+
+    pthread_rwlock_unlock(lock);
+}
+
+int create_new_intercepted_registration(
+        shared_voice_call_state_t *state, pthread_rwlock_t *lock,
+        char *regid, openli_sip_identity_t *matched,
+        voipintercept_t *vint, int owner, struct timeval *tv) {
+
+    intercepted_registerid_t *rev, *revfound;
+    intercepted_sip_register_t *reg;
+
+    if (regid == NULL) {
+        return -1;
+    }
+
+    pthread_rwlock_wrlock(lock);
+    HASH_FIND(hh, state->active_registrations, regid, strlen(regid), revfound);
+    if (revfound) {
+        // duplicate or retransmit?
+        pthread_rwlock_unlock(lock);
+        return 0;
+    }
+
+    reg = calloc(1, sizeof(intercepted_sip_register_t));
+    reg->registerid = strdup(regid);
+    reg->owner = owner;
+    reg->created = tv->tv_sec;
+    reg->endflag = 0;
+    reg->cin = hashlittle(regid, strlen(regid), 0xbaddface);
+    reg->cin = (reg->cin % (uint32_t)(pow(2,31)));
+    if (reg->cin == 0) {
+        reg->cin = 1;
+    }
+
+    rev = calloc(1, sizeof(intercepted_registerid_t));
+    rev->registerid = strdup(regid);
+    rev->reg = reg;
+
+    HASH_ADD_KEYPTR(hh, state->active_registrations, rev->registerid,
+            strlen(rev->registerid), rev);
+
+    // TODO decide if it is important to keep track of this (probably)
+    if (matched && vint) {
+        //add_target_call_reference(vint, matched, cin_copy, rev->callid, NULL);
+    }
+
+    pthread_rwlock_unlock(lock);
+
+    return 1;
+    
+
+}
 
 int create_new_intercepted_voice_call(
         shared_voice_call_state_t *state, pthread_rwlock_t *lock,
@@ -433,6 +562,21 @@ int get_voice_call_owner(pthread_rwlock_t *lock, intercepted_voice_call_t *vc) {
     return owner;
 }
 
+int get_register_owner_using_regid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *regid) {
+
+    int owner = -1;
+    intercepted_registerid_t *rid;
+
+    pthread_rwlock_rdlock(lock);
+    HASH_FIND(hh, state->active_registrations, regid, strlen(regid), rid);
+    if (rid) {
+        owner = rid->reg->owner;
+    }
+    pthread_rwlock_unlock(lock);
+    return owner;
+}
+
 int get_voice_call_owner_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid) {
 
@@ -446,6 +590,20 @@ int get_voice_call_owner_using_callid(shared_voice_call_state_t *state,
     }
     pthread_rwlock_unlock(lock);
     return owner;
+}
+
+uint32_t get_register_cin_using_regid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *regid) {
+    uint32_t cin = 0;
+    intercepted_registerid_t *rid;
+
+    pthread_rwlock_rdlock(lock);
+    HASH_FIND(hh, state->active_registrations, regid, strlen(regid), rid);
+    if (rid) {
+        cin = rid->reg->cin;
+    }
+    pthread_rwlock_unlock(lock);
+    return cin;
 }
 
 uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
