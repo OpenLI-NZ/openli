@@ -675,6 +675,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
     openli_sip_identity_t *matched = NULL;
     rtpstreaminf_t *thisrtp;
     char rtpkey[256];
+    char *primary = NULL;
 
     sip_match_source_t matchsrc;
     int r = 0, owner;
@@ -710,7 +711,10 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
         return NULL;
     }
 
-    snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, *cin, callid);
+    primary = get_primary_callid_using_callid(sipworker->call_state,
+            sipworker->call_state_mutex, callid);
+    snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, *cin,
+            primary ? primary : callid);
     HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
 
     if (thisrtp == NULL && (iritype == ETSILI_IRI_BEGIN || matched != NULL)) {
@@ -719,12 +723,14 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
         owner = get_voice_call_owner_using_callid(sipworker->call_state,
                     sipworker->call_state_mutex, callid);
         if (owner >= 0 && owner != sipworker->workerid) {
+            if (primary) free(primary);
             return NULL;
         }
         thisrtp = create_new_voipcin(&(vint->active_cins), *cin, vint,
                 callid);
         if (thisrtp) thisrtp->dir = matchsrc_to_dir(matchsrc);
     }
+    if (primary) free(primary);
     return thisrtp;
 }
 
@@ -1000,6 +1006,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
     char regid[1024];
     char regid_bkup[1024];
     struct timeval tv;
+    char *primary = NULL;
 
     if (sipworker->sipparser->badsip) {
         return 0;
@@ -1019,6 +1026,9 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         regcin = get_register_cin_using_regid(sipworker->call_state,
             sipworker->call_state_mutex, regid_bkup);
     }
+
+    primary = get_primary_callid_using_callid(sipworker->call_state,
+            sipworker->call_state_mutex, callid);
 
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
         HASH_FIND(hh, vint->active_registrations, regid, strlen(regid),
@@ -1064,7 +1074,8 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
             continue;
         }
 
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin, callid);
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin,
+                primary ? primary : callid);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             continue;
@@ -1116,6 +1127,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
         conclude_redirected_sip_call(sipworker, callid);
     }
 
+    if (primary) free(primary);
     if (sipworker->sipparser->badsip) {
         return -1;
     }

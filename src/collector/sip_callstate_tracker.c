@@ -90,8 +90,9 @@ static void _remove_voice_call(shared_voice_call_state_t *state,
             free(found->callid);
             free(found);
 
-            if (HASH_CNT(hh, vc->callids) == 0) {
-                // All call legs have ended
+            if (HASH_CNT(hh, vc->callids) == 0 ||
+                    strcmp(kc->callid, vc->primary_callid) == 0) {
+                // All call legs have ended, or the primary call is over
                 destroy_voice_call(state, vc);
             }
         }
