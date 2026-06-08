@@ -54,6 +54,7 @@
 #include "cisco_parser.h"
 #include "util.h"
 #include "collector_integrity_check.h"
+#include "cinstatedb.h"
 
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
@@ -2315,6 +2316,8 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
     char *jsonconfig;
+    char *cinstatekey_file = NULL;
+    void *dbptr = NULL;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2448,6 +2451,56 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (glob->sharedinfo.cinstatedb_file == NULL) {
         glob->sharedinfo.cinstatedb_file = strdup("/var/lib/openli/cinstate.db");
     }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        cinstatekey_file = "/etc/openli/cinstatedb.key";
+    } else if (glob->sharedinfo.cinstatedb_key[0] == '/') {
+        cinstatekey_file = glob->sharedinfo.cinstatedb_key;
+    }
+
+    if (cinstatekey_file) {
+        FILE *f = fopen(cinstatekey_file, "r");
+        if (f) {
+            char keybuf[1024];
+            char *kp = NULL;
+            if (fgets(keybuf, 1024, f) != NULL) {
+                kp = rtrim(keybuf);
+                if (glob->sharedinfo.cinstatedb_key) {
+                    free(glob->sharedinfo.cinstatedb_key);
+                }
+                if (kp) {
+                    glob->sharedinfo.cinstatedb_key = strdup(kp);
+                } else {
+                    glob->sharedinfo.cinstatedb_key = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: unable to read CIN state database key from %s: %s",
+                    cinstatekey_file, strerror(errno));
+            clear_global_config(glob);
+            return NULL;
+        }
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: no valid key is configured for the CIN state database, exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    if (cinstate_db_connect(glob->sharedinfo.cinstatedb_file,
+            glob->sharedinfo.cinstatedb_key, &dbptr) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: exiting due to CIN state database failure");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    cinstate_db_close(&dbptr);
+
     logger(LOG_INFO, "OpenLI: storing observed CIN state in %s",
             glob->sharedinfo.cinstatedb_file);
 
