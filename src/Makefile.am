@@ -1,6 +1,7 @@
 bin_PROGRAMS=
 dist_sbin_SCRIPTS=
 dist_bin_SCRIPTS=
+INSTALL_EXEC_HOOKS=
 
 if BUILD_PROVISIONER
 bin_PROGRAMS += openliprovisioner
@@ -111,6 +112,27 @@ openlicollector_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/ -I$(
 dist_bin_SCRIPTS += collector/savedcinstate/openli-coll-cinstatesetup.sh \
         collector/savedcinstate/openli-coll-reset-cinstate.sh
 
+INSTALL_EXEC_HOOKS += install-cin-database
+install-cin-database:
+	@if [ -z "$(DESTDIR)" ]; then \
+        $(MKDIR_P) "$(DESTDIR)$(sysconfdir)/openli" && \
+        $(MKDIR_P) "$(DESTDIR)$(localstatedir)/lib/openli" && \
+        if [ ! -f "$(DESTDIR)$(sysconfdir)/openli/cinstatedb.key" ]; then \
+            echo "Generating encryption key for CIN state database..."; \
+            if command -v openssl >/dev/null 2>&1; then \
+                openssl rand -hex 16 > "$(DESTDIR)$(sysconfdir)/openli/cinstatedb.key"; \
+            else \
+                head -c 16 /dev/urandom | od -An -tx1 | tr -d ' \n' > "$(DESTDIR)$(sysconfdir)/openli/cinstatedb.key"; \
+            fi; \
+            chmod 640 "$(DESTDIR)$(sysconfdir)/openli/cinstatedb.key"; \
+        fi && \
+        if [ ! -f "$(DESTDIR)$(localstatedir)/lib/openli/cinstate.db" ]; then \
+            echo "Initializing CIN state database at $(DESTDIR)$(localstatedir)/lib/openli/cinstate.db"; \
+            KEY=$$(cat "$(DESTDIR)$(sysconfdir)/openli/cinstatedb.key"); \
+            $(DESTDIR)$(bindir)/openli-coll-cinstatesetup.sh "$$KEY" "$(DESTDIR)$(localstatedir)/lib/openli/cinstate.db"; \
+        fi; \
+    fi
+
 endif
 
 if BUILD_MEDIATOR
@@ -143,3 +165,4 @@ openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 
+install-exec-hook: $(INSTALL_EXEC_HOOKS)
