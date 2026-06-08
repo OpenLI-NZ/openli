@@ -69,8 +69,8 @@ interface 2 and 3, using keep-alives as per the ETSI standard.
 
 %package        collector
 Summary:        Collector daemon for an OpenLI system
+Requires:       sqlcipher
 Requires:       rabbitmq-server
-Requires:       libwandder2 >= 2.0.13
 
 %description collector
 OpenLI is a software suite that allows network operators to conduct
