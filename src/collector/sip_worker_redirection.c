@@ -218,6 +218,7 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
     voipintercept_t *vint, *tmp;
     uint32_t cin;
     char rtpkey[256];
+    char *callid = NULL;
     rtpstreaminf_t *thisrtp;
 
     if (msg->callid == NULL) {
@@ -259,8 +260,12 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
         goto reject;
     }
 
+    callid = get_primary_callid_using_callid(sipworker->call_state,
+            sipworker->call_state_mutex, msg->callid);
+
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin, msg->callid);
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin,
+                callid ? callid : msg->callid);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             continue;
@@ -275,6 +280,7 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
             send_sip_redirect_reply(sipworker, REDIRECTED_SIP_CLAIM, msg);
             rd->receive_status = REDIRECTED_SIP_STATUS_CLAIMED;
         }
+        if (callid) free(callid);
         return 1;
     }
 
@@ -282,6 +288,7 @@ reject:
     /* No matching existing state for this call ID in this thread */
     send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
     rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
+    if (callid) free(callid);
     return 0;
 }
 

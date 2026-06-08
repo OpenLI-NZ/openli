@@ -53,6 +53,7 @@ static void destroy_voice_call(shared_voice_call_state_t *state,
     }
 
     if (vc->sessionid) free(vc->sessionid);
+    if (vc->primary_callid) free(vc->primary_callid);
 
     free(vc);
 }
@@ -413,7 +414,6 @@ int create_new_intercepted_registration(
     pthread_rwlock_unlock(lock);
 
     return 1;
-    
 
 }
 
@@ -442,6 +442,7 @@ int create_new_intercepted_voice_call(
 
     vc = calloc(1, sizeof(intercepted_voice_call_t));
     vc->owner = owner;
+    vc->primary_callid = strdup(callid);
     vc->created = tv->tv_sec;
     vc->cin = hashlittle(callid, strlen(callid), 0xceefface);
     vc->cin = (vc->cin % (uint32_t)(pow(2, 31)));
@@ -621,3 +622,16 @@ uint32_t get_voice_call_cin_using_callid(shared_voice_call_state_t *state,
     return cin;
 }
 
+char *get_primary_callid_using_callid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *callid) {
+
+    char *primary = NULL;
+    intercepted_callid_t *kc;
+    pthread_rwlock_rdlock(lock);
+    HASH_FIND(hh, state->known_callids, callid, strlen(callid), kc);
+    if (kc) {
+        primary = strdup(kc->call->primary_callid);
+    }
+    pthread_rwlock_unlock(lock);
+    return primary;
+}

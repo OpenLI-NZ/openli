@@ -165,6 +165,8 @@ uint32_t get_register_cin_using_regid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *regid);
 int get_voice_call_owner_using_callid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *callid);
+char *get_primary_callid_using_callid(shared_voice_call_state_t *state,
+        pthread_rwlock_t *lock, char *callid);
 int get_register_owner_using_regid(shared_voice_call_state_t *state,
         pthread_rwlock_t *lock, char *regid);
 void add_target_call_reference(voipintercept_t *vint,

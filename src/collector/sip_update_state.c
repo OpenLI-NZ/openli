@@ -706,7 +706,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
 
     *cin = get_voice_call_cin_using_callid(sipworker->call_state,
             sipworker->call_state_mutex, callid);
-    if (cin == 0) {
+    if (*cin == 0) {
         return NULL;
     }
 
@@ -805,7 +805,6 @@ static int process_sip_invite(openli_sip_worker_t *sipworker, char *callid,
         if (thisrtp == NULL) {
             continue;
         }
-
         dir = apply_invite_cseq_to_call(thisrtp, invitecseq, irimsg, iritype);
         if (dir != 0xff) {
             thisrtp->changed = 0;

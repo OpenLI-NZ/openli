@@ -340,6 +340,7 @@ typedef struct intercepted_voice_call {
     sip_sdp_identifier_t sdpkey;
     uint8_t sdpvalid;
     char *sessionid;
+    char *primary_callid;
     voice_participant_t *participants;
 
     UT_hash_handle hh_sdp;
