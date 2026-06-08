@@ -274,6 +274,8 @@ if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
 
         # Create cinstate database
+        mkdir -p /var/lib/openli/
+        mkdir -p /etc/openli/
         s=""
         until s+=$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')
              ((${#s} >= 16)); do :; done
