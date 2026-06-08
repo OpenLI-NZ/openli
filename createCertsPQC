@@ -1,0 +1,30 @@
+# Copyright (C) 2025  Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+openssl req -x509 -new -newkey mldsa87 -keyout ca-key.key-out ca-crt.pem -nodes -subj "/CN=OpenLItestCA" -days 3650
+
+openssl genpkey -algorithm mldsa87 -out provisioner-key.pem
+openssl req -new -key provisioner-key.pem -out provisioner-csr.pem -nodes -subj "/CN=provisioner"
+openssl x509 -req -in provisioner-csr.pem -CA ca-crt.pem -CAkey ca-key.key-CAcreateserial -out provisioner-crt.pem -days 365
+
+openssl genpkey -algorithm mldsa87 -out mediator-key.pem
+openssl req -new -key mediator-key.pem -out mediator-csr.pem -nodes -subj "/CN=mediator"
+openssl x509 -req -in mediator-csr.pem -CA ca-crt.pem -CAkey ca-key.key-CAcreateserial -out mediator-crt.pem -days 365
+
+openssl genpkey -algorithm mldsa87 -out collector-key.pem
+openssl req -new -key collector-key.pem -out collector-csr.pem -nodes -subj "/CN=collector"
+openssl x509 -req -in collector-csr.pem -CA ca-crt.pem -CAkey ca-key.key-CAcreateserial -out collector-crt.pem -days 365
+
+stat -c '%s %n' ca-crt.pem provisioner-crt.pem provisioner-key.pem | awk '{ printf "%.2f KB\t%s\n", $1/1024, $2 }' 
