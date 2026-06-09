@@ -4,7 +4,7 @@ case "$1" in
         purge)
 
         rm -f /var/lib/openli/cinstate.db
-        rm -f /etc/openli/cinstatedb.phrase
+        rm -f /etc/openli/cinstatedb.key
         rm -f /etc/openli/*.yaml
 
         ;;

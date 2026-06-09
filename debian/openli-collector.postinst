@@ -22,8 +22,8 @@ case "$1" in
 
     if [ ! -f /var/lib/openli/cinstate.db ]; then
         /usr/bin/openli-coll-cinstatesetup.sh ${CINDBPHRASE} /var/lib/openli/cinstate.db
-        echo ${CINDBPHRASE} > /etc/openli/cinstatedb.phrase
-        chmod 0640 /etc/openli/cinstatedb.phrase
+        echo ${CINDBPHRASE} > /etc/openli/cinstatedb.key
+        chmod 0640 /etc/openli/cinstatedb.key
         chmod 0640 /var/lib/openli/cinstate.db
     fi
 

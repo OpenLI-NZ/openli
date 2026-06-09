@@ -281,8 +281,8 @@ if [ $1 -eq 1 ]; then
              ((${#s} >= 16)); do :; done
         DBPHRASE=${s:0:16}
         /usr/bin/openli-coll-cinstatesetup.sh ${DBPHRASE} /var/lib/openli/cinstate.db
-        echo ${DBPHRASE} > /etc/openli/cinstatedb.phrase
-        chmod 0640 /etc/openli/cinstatedb.phrase
+        echo ${DBPHRASE} > /etc/openli/cinstatedb.key
+        chmod 0640 /etc/openli/cinstatedb.key
         chmod 0640 /var/lib/openli/cinstate.db
 fi
 
@@ -293,7 +293,7 @@ if [ $1 -eq 0 ]; then
         /bin/systemctl stop openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
         # Remove cinstate database
         rm -f /var/lib/openli/cinstate.db
-        rm -f /etc/openli/cinstatedb.phrase
+        rm -f /etc/openli/cinstatedb.key
 fi
 
 %postun collector
