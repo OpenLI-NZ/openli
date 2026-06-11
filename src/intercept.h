@@ -544,6 +544,7 @@ struct rtpstreaminf {
     uint8_t changed;
     uint8_t byematched;
     char *invitecseq;
+    uint8_t invitecseq_dir;
     char *byecseq;
 
     uint8_t inviter[16];

@@ -418,6 +418,7 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
         if (dir != 0xff && thisrtp->invitecseq == NULL) {
             // this is the first INVITE for the call
             thisrtp->invitecseq = strdup(invitecseq);
+            thisrtp->invitecseq_dir = dir;
         } else if (thisrtp->invitecseq != NULL &&
                 strcmp(invitecseq, thisrtp->invitecseq) == 0) {
             // this is a copy of the original INVITE
@@ -426,6 +427,7 @@ static uint8_t apply_invite_cseq_to_call(rtpstreaminf_t *thisrtp,
             free(thisrtp->invitecseq);
             thisrtp->invitecseq = NULL;
             thisrtp->invitecseq = strdup(invitecseq);
+            thisrtp->invitecseq_dir = dir;
         }
     }
 
@@ -957,7 +959,8 @@ static int process_sip_response(openli_sip_worker_t *sipworker,
         if (mediatype == NULL) {
             goto responseover;
         }
-        if (dir == ETSI_DIR_TO_TARGET || dir == ETSI_DIR_FROM_TARGET) {
+        if ((dir == ETSI_DIR_TO_TARGET || dir == ETSI_DIR_FROM_TARGET)
+                && dir != thisrtp->invitecseq_dir) {
             r = extract_media_streams_from_sdp(thisrtp, sipworker->sipparser,
                         dir);
             if (r < 0) {
