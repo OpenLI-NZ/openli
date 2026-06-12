@@ -41,9 +41,10 @@ openli (1.1.19-1) unstable; urgency=medium
   * Mediator: fix bug where the mediator could hang if the collector
     cleanup routine was called while a collector was in the process of
     connecting.
+  * Provisioner: fix segfault if the configured integrity key file is absent or
+    unreadable.
 
-
- -- Shane Alcock <salcock@searchlight.nz>  Mon, 8 Jun 2026 10:10:17 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 12 Jun 2026 14:00:50 +1200
 
 openli (1.1.18-1) unstable; urgency=medium
 
