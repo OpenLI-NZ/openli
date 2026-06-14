@@ -211,10 +211,19 @@ wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
         wandder_etsipshdr_data_t *hdrdata, int64_t seqno,
         openli_timestamp_encoding_fmt_t timefmt);
 
+wandder_encoded_result_t *encode_etsi_interim_integrity_signature(
+        wandder_encoder_t *encoder, openli_proto_msgtype_t msgtype,
+        int64_t *inclseqnos, size_t numseqnos,
+        openli_integrity_sign_algo_t sign_algo);
+
+wandder_encoded_result_t *encode_etsi_cin_reset(
+        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed);
+
 wandder_encoded_result_t *encode_etsi_integrity_check(
         wandder_encoder_t *encoder, wandder_etsipshdr_data_t *hdrdata,
         int64_t cin,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
+        openli_integrity_sign_algo_t sign_algo,
         uint32_t datatype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
         int64_t *inclseqnos, size_t numseqnos,
@@ -231,6 +240,7 @@ wandder_encoded_result_t *encode_encrypted_etsi_integrity_check(
         payload_encryption_method_t encryptmethod, uint8_t *encryptkey,
         size_t encryptkey_len, int64_t cin,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
+        openli_integrity_sign_algo_t sign_algo,
         uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
         int64_t *inclseqnos, size_t numseqnos,

@@ -50,13 +50,13 @@ void encode_umtscc_body(wandder_encoder_t *encoder,
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
     jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
 
-    if (dir == 0) {
+    if (dir == ETSI_DIR_FROM_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
         nextjob = 4;
-    } else if (dir == 1) {
+    } else if (dir == ETSI_DIR_TO_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
         nextjob = 4;
-    } else if (dir == 2) {
+    } else if (dir == ETSI_DIR_INDETERMINATE) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
         nextjob = 4;
     } else {
@@ -87,9 +87,9 @@ static inline void encode_emailcc_body(wandder_encoder_t *encoder,
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
     jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
 
-    if (dir == 0) {
+    if (dir == ETSI_DIR_FROM_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
-    } else if (dir == 1) {
+    } else if (dir == ETSI_DIR_TO_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
     } else {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
@@ -119,13 +119,13 @@ static inline void encode_ipcc_body(wandder_encoder_t *encoder,
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
     jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
 
-    if (dir == 0) {
+    if (dir == ETSI_DIR_FROM_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
         nextjob = 4;
-    } else if (dir == 1) {
+    } else if (dir == ETSI_DIR_TO_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
         nextjob = 4;
-    } else if (dir == 2) {
+    } else if (dir == ETSI_DIR_INDETERMINATE) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
         nextjob = 4;
     } else {
@@ -672,13 +672,13 @@ void encode_ipmmcc_body(wandder_encoder_t *encoder,
     jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_1]);
     jobarray[2] = &(precomputed[OPENLI_PREENCODE_USEQUENCE]);
 
-    if (dir == 0) {
+    if (dir == ETSI_DIR_FROM_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRFROM]);
         nextjob = 4;
-    } else if (dir == 1) {
+    } else if (dir == ETSI_DIR_TO_TARGET) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRTO]);
         nextjob = 4;
-    } else if (dir == 2) {
+    } else if (dir == ETSI_DIR_INDETERMINATE) {
         jobarray[3] = &(precomputed[OPENLI_PREENCODE_DIRUNKNOWN]);
         nextjob = 4;
     } else {
@@ -1152,6 +1152,24 @@ void etsili_preencode_static_fields(
     p = &(pendarray[OPENLI_PREENCODE_DIRUNKNOWN]);
     p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
     p->identifier = 0;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &dirunk, sizeof(dirunk));
+
+    p = &(pendarray[OPENLI_PREENCODE_SESSDIRFROM]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &dirin, sizeof(dirin));
+
+    p = &(pendarray[OPENLI_PREENCODE_SESSDIRTO]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
+    p->encodeas = WANDDER_TAG_ENUM;
+    wandder_encode_preencoded_value(p, &dirout, sizeof(dirout));
+
+    p = &(pendarray[OPENLI_PREENCODE_SESSDIRUNKNOWN]);
+    p->identclass = WANDDER_CLASS_CONTEXT_PRIMITIVE;
+    p->identifier = 5;
     p->encodeas = WANDDER_TAG_ENUM;
     wandder_encode_preencoded_value(p, &dirunk, sizeof(dirunk));
 

@@ -54,6 +54,7 @@
 #include "cisco_parser.h"
 #include "util.h"
 #include "collector_integrity_check.h"
+#include "cinstatedb.h"
 
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
@@ -602,10 +603,11 @@ static void *start_processing_thread(libtrace_t *trace,
 
     collector_global_t *glob = (collector_global_t *)global;
     colthread_local_t *loc = NULL;
-    int i;
+    int i, zero=0;
     sync_sendq_t *syncq, *sendq_hash;
     struct timeval tv;
     char locname[1024];
+    char returnq[256];
 
     snprintf(locname, 1024, "%s-%s-%d", trace_get_uri_format(trace),
             trace_get_uri_body(trace), trace_get_perpkt_thread_id(t));
@@ -620,6 +622,39 @@ static void *start_processing_thread(libtrace_t *trace,
                 strlen(loc->localname), loc);
     } else {
         init_collocal(loc, glob);
+    }
+
+    loc->zmq_packet_return = zmq_socket(glob->zmq_ctxt, ZMQ_PULL);
+    for (i = 0; i < glob->sip_threads; i++) {
+        snprintf(returnq, 256, "inproc://sip-packet-return-%d", i);
+        if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
+            logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from SIP worker %d: %s",
+                    loc->localname, i, strerror(errno));
+        }
+    }
+
+    for (i = 0; i < glob->gtp_threads; i++) {
+        snprintf(returnq, 256, "inproc://gtp-packet-return-%d", i);
+        if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
+            logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from GTP worker %d: %s",
+                    loc->localname, i, strerror(errno));
+        }
+    }
+
+    for (i = 0; i < glob->email_threads; i++) {
+        snprintf(returnq, 256, "inproc://email-packet-return-%d", i);
+        if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
+            logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from email worker %d: %s",
+                    loc->localname, i, strerror(errno));
+        }
+    }
+
+    if (zmq_setsockopt(loc->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to configure ZMQ for packet object returns: %s", loc->localname,
+                strerror(errno));
+        zmq_close(loc->zmq_packet_return);
+        loc->zmq_packet_return = NULL;
     }
 
     populate_coreserver_fast_filters_from_global(loc, glob);
@@ -693,6 +728,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     openli_pushed_t syncpush;
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
+    libtrace_packet_t *pkt = NULL;
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
@@ -700,6 +736,14 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     }
 
     deregister_sync_queues(&(glob->syncip), t);
+
+    if (loc->zmq_packet_return) {
+        while (zmq_recv(loc->zmq_packet_return, &pkt, sizeof(pkt),
+                ZMQ_DONTWAIT) > 0) {
+            trace_destroy_packet(pkt);
+        }
+        zmq_close(loc->zmq_packet_return);
+    }
 
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
 
@@ -821,32 +865,66 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
 
 }
 
-static inline void send_packet_to_sync(libtrace_packet_t *pkt,
-        void *q, uint8_t updatetype) {
+static inline void send_packet_to_sync(void *returnq, libtrace_packet_t *pkt,
+        packet_info_t *pinfo, void *q, uint8_t updatetype) {
+
     openli_state_update_t syncup;
-    libtrace_packet_t *copy;
+    libtrace_packet_t *copy = NULL;
+    int rc;
 
     if (collector_halt) {
         return;
     }
 
-    /* We do this ourselves instead of calling trace_copy_packet() because
-     * we don't want to be allocating 64K per copied packet -- we could be
-     * doing this a lot and don't want to be wasteful */
-    copy = openli_copy_packet(pkt);
-    if (copy == NULL) {
-        return;
+    if (returnq == NULL) {
+        copy = trace_copy_packet(pkt);
+    } else {
+        rc = zmq_recv(returnq, &copy, sizeof(copy), ZMQ_DONTWAIT);
+        if (rc < 0) {
+            // no spare packets available
+            copy = trace_copy_packet(pkt);
+            if (copy == NULL) {
+                return;
+            }
+        } else {
+            if (openli_deepcopy_packet(pkt, copy) < 0) {
+                return;
+            }
+        }
     }
 
-    syncup.type = updatetype;
-    syncup.data.pkt = copy;
 
-    //trace_increment_packet_refcount(pkt);
+    syncup.type = updatetype;
+    syncup.data.packet.lt_pkt = copy;
+    if (pinfo) {
+        syncup.data.packet.pinfo = *pinfo;
+        if (pinfo->payload_ptr) {
+            void *buf_orig;
+            void *buf_copy;
+            size_t offset;
+
+            buf_orig = trace_get_packet_buffer(pkt, NULL, NULL);
+            buf_copy = trace_get_packet_buffer(copy, NULL, NULL);
+            if (buf_orig && buf_copy) {
+                offset = pinfo->payload_ptr - (uint8_t *)buf_orig;
+                syncup.data.packet.pinfo.payload_ptr =
+                        ((uint8_t *)buf_copy) + offset;
+            } else {
+                syncup.data.packet.pinfo.payload_ptr = NULL;
+            }
+        } else {
+            syncup.data.packet.pinfo.payload_ptr = NULL;
+        }
+    } else {
+        memset(&(syncup.data.packet.pinfo), 0, sizeof(packet_info_t));
+    }
+
     zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
 }
 
-static void send_packet_to_emailworker(libtrace_packet_t *pkt,
-        void **queues, int qcount, uint32_t hashval, uint8_t pkttype) {
+static void send_packet_to_emailworker(void *returnq, libtrace_packet_t *pkt,
+        packet_info_t *pinfo, void **queues, int qcount, uint32_t hashval,
+        uint8_t pkttype) {
 
     int destind;
 
@@ -855,7 +933,7 @@ static void send_packet_to_emailworker(libtrace_packet_t *pkt,
     }
     assert(hashval != 0);
     destind = (hashval - 1) % qcount;
-    send_packet_to_sync(pkt, queues[destind], pkttype);
+    send_packet_to_sync(returnq, pkt, pinfo, queues[destind], pkttype);
 }
 
 static void add_payload_info_from_packet(libtrace_packet_t *pkt,
@@ -960,12 +1038,23 @@ static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
 }
 
 static inline uint32_t is_core_server_packet(
-        packet_info_t *pinfo, coreserver_t *servers, uint8_t hashrequired) {
+        packet_info_t *pinfo, coreserver_t *servers, uint8_t hashrequired,
+        uint8_t *matched_dest) {
 
     coreserver_t *found = NULL;
     uint32_t hashval = 0;
 
-    found = match_packet_to_coreserver(servers, pinfo, 0);
+    found = match_packet_to_coreserver(servers, pinfo, 1);
+    if (found) {
+        if (matched_dest) {
+            *matched_dest = 1;
+        }
+    } else {
+        found = match_packet_to_coreserver(servers, pinfo, 0);
+        if (found && matched_dest) {
+            *matched_dest = 0;
+        }
+    }
 
     /* Doesn't match any of our known core servers */
     if (found == NULL) {
@@ -1005,7 +1094,7 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         return 0;
     }
 
-    if ( !is_core_server_packet(pinfo, loc->gtpservers, 0)) {
+    if ( !is_core_server_packet(pinfo, loc->gtpservers, 0, NULL)) {
         return 0;
     }
 
@@ -1071,7 +1160,8 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         }
     }
 
-    send_packet_to_sync(pkt, loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP);
+    send_packet_to_sync(loc->zmq_packet_return, pkt, pinfo,
+            loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP);
 
     pthread_mutex_lock(&(glob->stats_mutex));
     glob->stats.packets_gtp ++;
@@ -1091,7 +1181,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint8_t proto;
     int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
-    uint16_t fragoff = 0, offset;
+    uint16_t offset;
     uint32_t servhash = 0;
 
     packet_info_t pinfo;
@@ -1109,7 +1199,6 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     pinfo.tv = trace_get_timeval(pkt);
     iprem = rem;
     if (ethertype == TRACE_ETHERTYPE_IP) {
-        uint8_t moreflag;
         ip_reassemble_stream_t *ipstream;
         libtrace_ip_t *ipheader = (libtrace_ip_t *)l3;
         struct sockaddr_in *in4;
@@ -1126,15 +1215,15 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         offset = ntohs(ipheader->ip_off);
         /* fast check for IP fragmentation */
         if ((offset & 0x2000) || (offset & 0x1FFF)) {
-            fragoff = trace_get_fragment_offset(pkt, &moreflag);
+            pinfo.fragoff = trace_get_fragment_offset(pkt, &(pinfo.moreflag));
             ipstream = get_ipfrag_reassemble_stream(loc->fragreass, pkt);
             if (!ipstream) {
                 logger(LOG_INFO, "OpenLI: error trying to reassemble IP fragment in collector.");
                 return pkt;
             }
 
-            ret = update_ipfrag_reassemble_stream(ipstream, pkt, fragoff,
-                    moreflag, 0);
+            ret = update_ipfrag_reassemble_stream(ipstream, pkt, pinfo.fragoff,
+                    pinfo.moreflag, 0);
 
             if (ret < 0) {
                 logger(LOG_INFO, "OpenLI: error while trying to reassemble IP fragment in collector.");
@@ -1275,8 +1364,9 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(&pinfo,
-                    loc->radiusservers, 0)) {
-            send_packet_to_sync(pkt, loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
+                    loc->radiusservers, 0, NULL)) {
+            send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
             ipsynced = 1;
             goto processdone;
         }
@@ -1285,10 +1375,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(&pinfo,
-                    loc->sipservers, 0)) {
+                    loc->sipservers, 0, &(pinfo.dest_coreserver))) {
 
             add_payload_info_from_packet(pkt, &pinfo);
-            if (!check_for_invalid_sip(&pinfo, fragoff)) {
+            if (!check_for_invalid_sip(&pinfo, pinfo.fragoff)) {
                 int sipthread;
                 if (glob->sip_threads > 1) {
                     sipthread = hash_packet_info_fivetuple(&pinfo,
@@ -1297,7 +1387,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     sipthread = 0;
                 }
 
-                send_packet_to_sync(pkt, loc->sip_worker_queues[sipthread],
+                send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
+                        loc->sip_worker_queues[sipthread],
                         OPENLI_UPDATE_SIP);
                 voipsynced = 1;
             }
@@ -1305,7 +1396,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     } else if (proto == TRACE_IPPROTO_TCP) {
         /* Is this a SIP packet? -- if yes, create a state update */
         if (loc->sipservers && is_core_server_packet(&pinfo,
-                    loc->sipservers, 0)) {
+                    loc->sipservers, 0, &(pinfo.dest_coreserver))) {
 
             int sipthread;
             if (glob->sip_threads > 1) {
@@ -1314,15 +1405,18 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             } else {
                 sipthread = 0;
             }
-            send_packet_to_sync(pkt, loc->sip_worker_queues[sipthread],
-                    OPENLI_UPDATE_SIP);
+            add_payload_info_from_packet(pkt, &pinfo);
+            send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->sip_worker_queues[sipthread], OPENLI_UPDATE_SIP);
             voipsynced = 1;
         }
 
         else if (loc->smtpservers &&
                 (servhash = is_core_server_packet(&pinfo,
-                    loc->smtpservers, 1))) {
-            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    loc->smtpservers, 1, NULL))) {
+            add_payload_info_from_packet(pkt, &pinfo);
+            send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
             emailsynced = 1;
 
@@ -1330,16 +1424,20 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
         else if (loc->imapservers &&
                 (servhash = is_core_server_packet(&pinfo,
-                    loc->imapservers, 1))) {
-            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    loc->imapservers, 1, NULL))) {
+            add_payload_info_from_packet(pkt, &pinfo);
+            send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
             emailsynced = 1;
         }
 
         else if (loc->pop3servers &&
                 (servhash = is_core_server_packet(&pinfo,
-                    loc->pop3servers, 1))) {
-            send_packet_to_emailworker(pkt, loc->email_worker_queues,
+                    loc->pop3servers, 1, NULL))) {
+            add_payload_info_from_packet(pkt, &pinfo);
+            send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->email_worker_queues,
                     glob->email_threads, servhash, OPENLI_UPDATE_POP3);
             emailsynced = 1;
         }
@@ -1988,6 +2086,12 @@ static void clear_global_config(collector_global_t *glob) {
     if (glob->sharedinfo.digestsigningkey) {
         EVP_PKEY_free(glob->sharedinfo.digestsigningkey);
     }
+    if (glob->sharedinfo.cinstatedb_file) {
+        free(glob->sharedinfo.cinstatedb_file);
+    }
+    if (glob->sharedinfo.cinstatedb_key) {
+        free(glob->sharedinfo.cinstatedb_key);
+    }
 
     if (glob->alumirrors) {
         free_coreserver_list(glob->alumirrors);
@@ -2136,8 +2240,9 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sharedinfo.networkelemid = NULL;
     glob->sharedinfo.networkelemid_len = 0;
     glob->sharedinfo.cisco_noradius = 0;       // defaults to "expect RADIUS"
-    glob->sharedinfo.always_request_encrypt_bytecounter = 0;
     glob->sharedinfo.digestsigningkey = NULL;
+    glob->sharedinfo.cinstatedb_file = NULL;
+    glob->sharedinfo.cinstatedb_key = NULL;
     glob->total_col_threads = 0;
     glob->collocals = NULL;
     glob->expired_inputs = NULL;
@@ -2177,6 +2282,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->etsitls = 1;
     glob->sipconfig.ignore_sdpo_matches = 0;
     glob->sipconfig.ignore_sessionid_matches = 0;
+    glob->sipconfig.use_sessiondir = 0;
     glob->sipconfig.sipdebugfile = NULL;
     glob->encoding_method = OPENLI_ENCODING_DER;
 
@@ -2210,6 +2316,8 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     collector_global_t *glob = NULL;
     char *jsonconfig;
+    char *cinstatekey_file = NULL;
+    void *dbptr = NULL;
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2339,6 +2447,62 @@ static collector_global_t *parse_global_config(char *configfile) {
     if (create_ssl_context(&(glob->sslconf)) < 0) {
         return NULL;
     }
+
+    if (glob->sharedinfo.cinstatedb_file == NULL) {
+        glob->sharedinfo.cinstatedb_file = strdup("/var/lib/openli/cinstate.db");
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        cinstatekey_file = "/etc/openli/cinstatedb.key";
+    } else if (glob->sharedinfo.cinstatedb_key[0] == '/') {
+        cinstatekey_file = glob->sharedinfo.cinstatedb_key;
+    }
+
+    if (cinstatekey_file) {
+        FILE *f = fopen(cinstatekey_file, "r");
+        if (f) {
+            char keybuf[1024];
+            char *kp = NULL;
+            if (fgets(keybuf, 1024, f) != NULL) {
+                kp = rtrim(keybuf);
+                if (glob->sharedinfo.cinstatedb_key) {
+                    free(glob->sharedinfo.cinstatedb_key);
+                }
+                if (kp) {
+                    glob->sharedinfo.cinstatedb_key = strdup(kp);
+                } else {
+                    glob->sharedinfo.cinstatedb_key = NULL;
+                }
+            }
+            fclose(f);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: unable to read CIN state database key from %s: %s",
+                    cinstatekey_file, strerror(errno));
+            clear_global_config(glob);
+            return NULL;
+        }
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: no valid key is configured for the CIN state database, exiting.");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    if (cinstate_db_connect(glob->sharedinfo.cinstatedb_file,
+            glob->sharedinfo.cinstatedb_key, &dbptr) == 0) {
+        logger(LOG_INFO,
+                "OpenLI: exiting due to CIN state database failure");
+        clear_global_config(glob);
+        return NULL;
+    }
+
+    cinstate_db_close(&dbptr);
+
+    logger(LOG_INFO, "OpenLI: storing observed CIN state in %s",
+            glob->sharedinfo.cinstatedb_file);
 
     if (glob->sharedinfo.provisionerport == NULL) {
         glob->sharedinfo.provisionerport = strdup("8993");
@@ -2488,8 +2652,18 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.intpointid_len = newstate.sharedinfo.intpointid_len;
     newstate.sharedinfo.intpointid = NULL;
     glob->sharedinfo.cisco_noradius = newstate.sharedinfo.cisco_noradius;
-    glob->sharedinfo.always_request_encrypt_bytecounter =
-            newstate.sharedinfo.always_request_encrypt_bytecounter;
+
+    if (glob->sharedinfo.cinstatedb_file) {
+        free(glob->sharedinfo.cinstatedb_file);
+    }
+    glob->sharedinfo.cinstatedb_file = newstate.sharedinfo.cinstatedb_file;
+    newstate.sharedinfo.cinstatedb_file = NULL;
+
+    if (glob->sharedinfo.cinstatedb_key) {
+        free(glob->sharedinfo.cinstatedb_key);
+    }
+    glob->sharedinfo.cinstatedb_key = newstate.sharedinfo.cinstatedb_key;
+    newstate.sharedinfo.cinstatedb_key = NULL;
 
     pthread_rwlock_unlock(&(glob->config_mutex));
 
@@ -2501,6 +2675,8 @@ static int reload_collector_config(collector_global_t *glob,
             newstate.sipconfig.ignore_sdpo_matches;
     glob->sipconfig.ignore_sessionid_matches =
             newstate.sipconfig.ignore_sessionid_matches;
+    glob->sipconfig.use_sessiondir =
+            newstate.sipconfig.use_sessiondir;
     if (glob->sipconfig.sipdebugfile) {
         free(glob->sipconfig.sipdebugfile);
     }
@@ -2861,6 +3037,8 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].encoders = glob->encoding_threads;
         glob->forwarders[i].zmq_ctrlsock = NULL;
         glob->forwarders[i].zmq_pullressock = NULL;
+        glob->forwarders[i].shared = &(glob->sharedinfo);
+        glob->forwarders[i].shared_mutex = &(glob->config_mutex);
         pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
@@ -2907,6 +3085,7 @@ int main(int argc, char *argv[]) {
             snprintf(name, 1024, "emailworker-%d", i);
 
             glob->emailworkers[i].zmq_ctxt = glob->zmq_ctxt;
+            glob->emailworkers[i].zmq_packet_return = NULL;
             glob->emailworkers[i].topoll = NULL;
             glob->emailworkers[i].topoll_size = 0;
             glob->emailworkers[i].fragreass = NULL;
@@ -2967,6 +3146,8 @@ int main(int argc, char *argv[]) {
         glob->seqtrackers[i].intercepts = NULL;
         glob->seqtrackers[i].rr_next_encoder_assign = 0;
     	glob->seqtrackers[i].haltinfo = NULL;
+        glob->seqtrackers[i].cinstate_enabled = 0xff;
+        glob->seqtrackers[i].cinstatedb = NULL;
         glob->seqtrackers[i].encoders = glob->encoding_threads;
         glob->seqtrackers[i].colident = &(glob->sharedinfo);
         glob->seqtrackers[i].colident_mutex = &(glob->config_mutex);

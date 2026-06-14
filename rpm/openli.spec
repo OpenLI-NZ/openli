@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.1.18
+Version:        1.1.19
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -14,10 +14,10 @@ BuildRequires: bison
 BuildRequires: doxygen
 BuildRequires: flex
 BuildRequires: libyaml-devel
-BuildRequires: libtrace4-devel >= 4.0.30
+BuildRequires: libtrace4-devel >= 4.0.33
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder2-devel >= 2.0.19
+BuildRequires: libwandder2-devel >= 2.0.21
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel >= 5.0.0
@@ -69,8 +69,8 @@ interface 2 and 3, using keep-alives as per the ETSI standard.
 
 %package        collector
 Summary:        Collector daemon for an OpenLI system
+Requires:       sqlcipher
 Requires:       rabbitmq-server
-Requires:       libwandder2 >= 2.0.13
 
 %description collector
 OpenLI is a software suite that allows network operators to conduct
@@ -152,9 +152,8 @@ if [ ! -f /etc/openli/.intercept-encrypt ]; then
 fi
 
 if [ ! -f /etc/openli/integrity-key.pem ]; then
-    openssl ecparam -name prime256v1 -genkey -noout -out /etc/openli/integrity-key.pem
-    openssl ec -in /etc/openli/integrity-key.pem -pubout -out /etc/openli/integrity-public.pem
-
+    openssl genpkey -algorithm ED448 -out /etc/openli/integrity-key.pem
+    openssl pkey -in /etc/openli/integrity-key.pem -pubout -out /etc/openli/integrity-public.pem
     chmod 0600 /etc/openli/integrity-key.pem /etc/openli/integrity-public.pem
 fi
 
@@ -273,6 +272,18 @@ fi
 %post collector
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
+
+        # Create cinstate database
+        mkdir -p /var/lib/openli/
+        mkdir -p /etc/openli/
+        s=""
+        until s+=$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')
+             ((${#s} >= 16)); do :; done
+        DBPHRASE=${s:0:16}
+        /usr/bin/openli-coll-cinstatesetup.sh ${DBPHRASE} /var/lib/openli/cinstate.db
+        echo ${DBPHRASE} > /etc/openli/cinstatedb.key
+        chmod 0640 /etc/openli/cinstatedb.key
+        chmod 0640 /var/lib/openli/cinstate.db
 fi
 
 %preun collector
@@ -280,6 +291,9 @@ if [ $1 -eq 0 ]; then
         # Disable and stop the units
         /bin/systemctl disable openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
         /bin/systemctl stop openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
+        # Remove cinstate database
+        rm -f /var/lib/openli/cinstate.db
+        rm -f /etc/openli/cinstatedb.key
 fi
 
 %postun collector
@@ -310,6 +324,8 @@ fi
 
 %files collector
 %{_bindir}/openlicollector
+%{_bindir}/openli-coll-cinstatesetup.sh
+%{_bindir}/openli-coll-reset-cinstate.sh
 %{_unitdir}/openli-collector.service
 %config %{_sysconfdir}/openli/rsyslog.d/10-openli-collector.conf
 %config %{_sysconfdir}/openli/collector-example.yaml
@@ -317,6 +333,9 @@ fi
 
 
 %changelog
+* Wed Apr 22 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.19-1
+- Updated for 1.1.19 release
+
 * Tue Mar 24 2026 Shane Alcock <salcock@searchlight.nz> - 1.1.18-1
 - Updated for 1.1.18 release
 

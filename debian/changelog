@@ -1,3 +1,51 @@
+openli (1.1.19-1) unstable; urgency=medium
+
+  * REST API: fix bug where intercepts added via the REST API were not
+    being assigned the correct operator ID.
+  * Email: fix collector crash when encoding large email CCs that
+    require segmentation.
+  * Collectors now generate CINReset messages prior to sending an IRI
+    Begin for LIID+CIN combinations that had been intercepted by a
+    prior instance of a collector that ran on this host.
+  * Collector: remove timestamp field from the header of TRI segment
+    notification messages, as the inclusion of a timestamp is not
+    valid in the ETSI spec.
+  * Collector: fixed infinite busy loop that could occur in forwarding
+    threads if a TLS connection to a mediator had a full send buffer.
+  * SIP: workers will no longer retain session state for REGISTER
+    transactions in memory indefinitely.
+  * Integrity checks: add support for ED448 signing keys for signature
+    generation.
+  * Integrity checks: replace incorrect implementation of signature
+    generation with (hopefully) a correct one.
+  * SIP: add ability to include the sessionDirection field in IPMMIRIs.
+  * UDP sinks: improved throughput through optimizations that decrease
+    the amount of "receive" system calls required.
+  * Collector: improved performance in general through recycling of
+    libtrace packet structures.
+  * Collector: reduced duplicated packet header parsing by passing the
+    parsing results from the packet capture threads through to the worker
+    threads alongside the packet itself.
+  * REST API: fix provisioner crash if a new agency is POSTed without the
+    "operatorid" field.
+  * SIP: fix split brain bug where re-INVITEs were not being redirected
+    to the correct SIP worker thread.
+  * SIP: fix race condition that can cause call interception to fail when
+    a collector is seeing both sides of proxied SIP session.
+  * SIP: fix race condition where a duplicate INVITE could incorrectly
+    prevent a SIP worker from recognising the 200 OK response for the
+    original INVITE.
+  * SIP: fix double-free crash if libosip2 failed to parse a SIP
+    message and left its internal structure in a bad state.
+  * Mediator: reduce LEA thread CPU usage when the handovers are idle.
+  * Mediator: fix bug where the mediator could hang if the collector
+    cleanup routine was called while a collector was in the process of
+    connecting.
+  * Provisioner: fix segfault if the configured integrity key file is absent or
+    unreadable.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Fri, 12 Jun 2026 14:00:50 +1200
+
 openli (1.1.18-1) unstable; urgency=medium
 
   * Collector: fix bad encoding of ASN.1 elements that were sequences of

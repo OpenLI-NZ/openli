@@ -185,7 +185,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     struct addrinfo hints, *res;
     int sockfd;
     int optval;
-    int flags;
+    int flags, x;
     int success = 0;
     socklen_t optlen;
     int so_error = 0;
@@ -204,9 +204,9 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
 
-    if (getaddrinfo(ipstr, portstr, &hints, &res) == -1) {
+    if ((x = getaddrinfo(ipstr, portstr, &hints, &res)) != 0) {
         logger(LOG_INFO, "OpenLI: Error while trying to look up %s:%s -- %s.",
-                ipstr, portstr, strerror(errno));
+                ipstr, portstr, gai_strerror(x));
         return -1;
     }
 
@@ -318,7 +318,7 @@ endconnect:
 
 int create_listener(char *addr, char *port, const char *name) {
     struct addrinfo hints, *res;
-    int sockfd;
+    int sockfd, x;
     int yes = 1;
 
     memset(&hints, 0, sizeof(hints));
@@ -328,9 +328,9 @@ int create_listener(char *addr, char *port, const char *name) {
         hints.ai_flags = AI_PASSIVE;
     }
 
-    if (getaddrinfo(addr, port, &hints, &res) == -1)
+    if ((x = getaddrinfo(addr, port, &hints, &res)) != 0)
     {
-        logger(LOG_INFO, "OpenLI: Error while trying to getaddrinfo for %s listening socket.", name);
+        logger(LOG_INFO, "OpenLI: Error while trying to getaddrinfo for %s listening socket: %s", name, gai_strerror(x));
         return -1;
     }
 
@@ -415,13 +415,14 @@ void convert_ipstr_to_sockaddr(char *knownip,
 
     struct addrinfo *res = NULL;
     struct addrinfo hints;
+    int x;
 
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
 
-    if (getaddrinfo(knownip, NULL, &hints, &res) != 0) {
+    if ((x = getaddrinfo(knownip, NULL, &hints, &res)) != 0) {
         logger(LOG_INFO, "OpenLI: getaddrinfo cannot parse IP address %s: %s",
-                knownip, gai_strerror(errno));
+                knownip, gai_strerror(x));
     }
 
     *family = res->ai_family;
@@ -775,6 +776,43 @@ int hash_packet_info_fivetuple(packet_info_t *pinfo, int modulo) {
     }
 
     return hashlittle(buf, used, 12582917) % modulo;
+}
+
+int openli_deepcopy_packet(libtrace_packet_t *src, libtrace_packet_t *dest) {
+
+    // assumes dest is a created packet with a full sized buffer already
+    // allocated
+
+    int caplen = trace_get_capture_length(src);
+    int framelen = trace_get_framing_length(src);
+
+    if (caplen == -1 || framelen == -1) {
+        return -1;
+    }
+
+    dest->trace = src->trace;
+    dest->buf_control = TRACE_CTRL_PACKET;
+    dest->type = src->type;
+    dest->header = dest->buffer;
+    dest->payload = ((char *)dest->buffer) + framelen;
+    dest->order = src->order;
+    dest->hash = src->hash;
+    dest->error = src->error;
+    dest->srcbucket = NULL;
+    dest->fmtdata = NULL;
+    dest->refcount = 0;
+    dest->internalid = 0;
+    dest->which_trace_start = src->which_trace_start;
+    memset(&(dest->cached), 0, sizeof(libtrace_packet_cache_t));
+    dest->cached.capture_length = caplen;
+    dest->cached.framing_length = framelen;
+    dest->cached.wire_length = -1;
+    dest->cached.payload_length = -1;
+
+    pthread_mutex_init(&dest->ref_lock, NULL);
+    memcpy(dest->header, src->header, framelen);
+    memcpy(dest->payload, src->payload, caplen);
+    return 0;
 }
 
 libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {

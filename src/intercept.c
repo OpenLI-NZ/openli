@@ -419,13 +419,15 @@ void intercept_encryption_mode_as_string(payload_encryption_method_t method,
 }
 
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
-        uint32_t cin) {
+        uint32_t cin, time_t created) {
     sipregister_t *newreg;
 
     newreg = (sipregister_t *)calloc(1, sizeof(sipregister_t));
 
-    newreg->callid = strdup(callid);
+    newreg->registerid = strdup(callid);
     newreg->cin = cin;
+    newreg->flagged = 0;
+    newreg->created = created;
     copy_intercept_common(&(vint->common), &(newreg->common));
     newreg->parent = vint;
 
@@ -456,6 +458,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin,
     newcin->otheraddr = NULL;
     newcin->ai_family = 0;
     newcin->seqno = 0;
+    newcin->dir = ETSI_DIR_INDETERMINATE;
     newcin->invitecseq = NULL;
     newcin->byecseq = NULL;
     newcin->timeout_ev = NULL;
@@ -525,6 +528,7 @@ rtpstreaminf_t *deep_copy_rtpstream(rtpstreaminf_t *orig) {
     memcpy(copy->otheraddr, orig->otheraddr, sizeof(struct sockaddr_storage));
     copy->skip_comfort = orig->skip_comfort;
     copy->seqno = 0;
+    copy->dir = orig->dir;
     copy->active = 1;
     copy->invitecseq = NULL;
     copy->byecseq = NULL;
@@ -794,10 +798,10 @@ static void free_voip_cins(rtpstreaminf_t *cins) {
 
 }
 
-static void free_single_register(sipregister_t *sipr) {
+void free_single_register(sipregister_t *sipr) {
     free_intercept_common(&(sipr->common));
-    if (sipr->callid) {
-        free(sipr->callid);
+    if (sipr->registerid) {
+        free(sipr->registerid);
     }
     free(sipr);
 }

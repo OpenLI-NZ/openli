@@ -133,6 +133,10 @@ enum {
     /** A signal that there may be more messages in a ZMQ that we had to
      *  stop reading from for some reason. */
     OPENLI_EPOLL_ZMQ_YIELD,
+
+    /** Messages are available to read from rabbitMQ for a particular
+     *  mediator handover */
+    OPENLI_EPOLL_HANDOVER_RMQ,
 };
 
 /** Starts an existing timer and adds it to the global epoll event set.

@@ -58,6 +58,8 @@
 #include "sipparsing.h"
 #include "x2x3_ingest.h"
 
+#define PACKET_RETURN_ZMQ "inproc://coll-packet-return"
+
 enum {
     OPENLI_PUSH_IPINTERCEPT = 1,
     OPENLI_PUSH_HALT_IPINTERCEPT = 2,
@@ -98,12 +100,18 @@ typedef struct openli_sip_content {
     struct timeval timestamp;
 } PACKED openli_sip_content_t;
 
+#define RECVD_PKT recvd.data.packet.lt_pkt
+#define RECVD_PINFO recvd.data.packet.pinfo
+
 typedef struct openli_state_msg {
 
     uint8_t type;
     union {
         libtrace_message_queue_t *replyq;
-        libtrace_packet_t *pkt;
+        struct {
+            libtrace_packet_t *lt_pkt;
+            packet_info_t pinfo;
+        } packet;
         openli_sip_content_t sip;
     } data;
 
@@ -292,6 +300,8 @@ typedef struct colthread_local {
     time_t startedat;
     uint16_t pkts_since_msg_read;
     uint16_t tick_counter;
+
+    void *zmq_packet_return;
 
     UT_hash_handle hh;
 

@@ -116,6 +116,13 @@ encoded_header_template_t *encode_templated_psheader(
         return NULL;
     }
 
+    // special case that would otherwise clash with the generalized
+    // timestamp template key -- the 23rd bit is safe to use because seqlen
+    // cannot be larger than 8.
+    if (tv == NULL) {
+        key |= (1 << 23);
+    }
+
     JLI(pval, *headermap, key);
     if (*pval == 0) {
         tplate = calloc(1, sizeof(encoded_header_template_t));

@@ -361,6 +361,7 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->clientfd = NULL;
     state->mediatorfd = NULL;
     state->timerfd = NULL;
+    state->signalfd = NULL;
 
     if (create_ssl_context(&(state->sslconf)) < 0) {
         return -1;

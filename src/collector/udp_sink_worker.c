@@ -24,6 +24,8 @@
  *
  */
 
+#define _GNU_SOURCE
+
 #include "util.h"
 #include "logger.h"
 #include "collector.h"
@@ -37,6 +39,9 @@
 #include <zmq.h>
 #include <unistd.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
+
+#define UDP_BATCH_SIZE 64
 
 typedef struct udp_sink_local {
 
@@ -67,13 +72,18 @@ typedef struct udp_sink_local {
 
     uint8_t outformat;
 
+    uint8_t **recvbufs;
+    struct iovec *iovecs;
+    struct mmsghdr *msgs;
+    struct sockaddr_storage *srcs;
+
 } udp_sink_local_t;
 
 static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
 
     udp_sink_local_t *local = calloc(1, sizeof(udp_sink_local_t));
     char sockname[1024];
-    int zero = 0, hwm = 1000, timeout=1000;
+    int zero = 0, hwm = 1000, timeout=1000, i;
 
     local->zmq_publish = NULL;
     local->sockfd = -1;
@@ -177,10 +187,36 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
         local->sourceport = 0;
     }
     local->sourcereset = 1;
+
+    local->recvbufs = calloc(UDP_BATCH_SIZE, sizeof(uint8_t *));
+    local->iovecs = calloc(UDP_BATCH_SIZE, sizeof(struct iovec));
+    local->msgs = calloc(UDP_BATCH_SIZE, sizeof(struct mmsghdr));
+    local->srcs = calloc(UDP_BATCH_SIZE, sizeof(struct sockaddr_storage));
+
+    for (i = 0; i < UDP_BATCH_SIZE; i++) {
+        local->recvbufs[i] = malloc(65536);
+        local->iovecs[i].iov_len = 65536;
+        local->iovecs[i].iov_base = local->recvbufs[i];
+        local->msgs[i].msg_hdr.msg_iov = &(local->iovecs[i]);
+        local->msgs[i].msg_hdr.msg_iovlen = 1;
+        local->msgs[i].msg_hdr.msg_name = &(local->srcs[i]);
+        local->msgs[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
+    }
+
     return local;
 }
 
 static void cleanup_local_udp_sink(udp_sink_local_t *local) {
+    int i;
+
+    for (i = 0; i < UDP_BATCH_SIZE; i++) {
+        if (local->recvbufs[i]) free(local->recvbufs[i]);
+    }
+    if (local->recvbufs) free(local->recvbufs);
+    if (local->iovecs) free(local->iovecs);
+    if (local->msgs) free(local->msgs);
+    if (local->srcs) free(local->srcs);
+
     if (local->sockfd != -1) {
         close(local->sockfd);
     }
@@ -220,6 +256,7 @@ static int bind_udp_sink_listener(udp_sink_local_t *local, char *key) {
     int sockfd, rv, lasterr;
     struct addrinfo hints, *res, *rp;
     int zero=0;
+    int rcvbuf = 32 * 1024 * 1024;
 
     memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
@@ -243,6 +280,8 @@ static int bind_udp_sink_listener(udp_sink_local_t *local, char *key) {
         if (rp->ai_family == AF_INET6) {
             setsockopt(sockfd, IPPROTO_IPV6, IPV6_V6ONLY, &zero, sizeof(zero));
         }
+        // set a large default buffer size
+        setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, &rcvbuf, sizeof(rcvbuf));
         if (bind(sockfd, rp->ai_addr, rp->ai_addrlen) == 0) {
             local->sockfd = sockfd;
             local->listen_family = rp->ai_family;
@@ -306,31 +345,20 @@ static int apply_source_filter(udp_sink_local_t *local,
     return 1;
 }
 
-static int process_udp_datagram(udp_sink_local_t *local, char *key) {
+static int process_single_udp_datagram(udp_sink_local_t *local, char *key,
+        uint8_t *recvbuf, ssize_t got, struct sockaddr_storage *src) {
 
-    uint8_t recvbuf[65536];
     uint8_t *skipptr = NULL;
-    ssize_t got = 0;
     uint32_t iplen;
     uint32_t cin;
     uint8_t dir;
-    struct sockaddr_storage src;
-    socklen_t srclen = sizeof(src);
 
     openli_export_recv_t *job;
-
-    got = recvfrom(local->sockfd, recvbuf, 65536, 0, (struct sockaddr *)&src,
-            &srclen);
-    if (got < 0) {
-        logger(LOG_INFO,
-                "OpenLI: error while receiving UDP datagram in sink thread '%s': %s", key, strerror(errno));
-        return -1;
-    }
 
     if (got > 65535) {
         logger(LOG_INFO,
                 "OpenLI: UDP sink thread '%s' received excessively large datagram, skipping because it is probably invalid", key);
-        return 0;
+        return 1;
     }
 
     if (local->sourcereset && local->sourcehost) {
@@ -372,8 +400,8 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
      *   firewall -- not something we should touch from within OpenLI but
      *               we should strongly recommend to deployers
      */
-    if (apply_source_filter(local, &src) == 0) {
-        return 0;
+    if (apply_source_filter(local, src) == 0) {
+        return 1;
     }
 
     if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_RAW) {
@@ -387,14 +415,14 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         skipptr = decode_alushim_from_udp_payload(recvbuf, got, &cin, &dir,
                 &shimintid, &iplen, 0);
         if (skipptr == NULL) {
-            return 0;
+            return 1;
         }
     } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_NOKIA_L3) {
         uint32_t shimintid = 0;
         skipptr = decode_alushim_from_udp_payload(recvbuf, got, &cin, &dir,
                 &shimintid, &iplen, 1);
         if (skipptr == NULL) {
-            return 0;
+            return 1;
         }
 
     } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_JMIRROR) {
@@ -402,7 +430,7 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         skipptr = decode_jmirror_from_udp_payload(recvbuf, got, &cin,
                 &shimintid, &iplen);
         if (skipptr == NULL) {
-            return 0;
+            return 1;
         }
         dir = local->direction;
     } else if (local->encapfmt == INTERCEPT_UDP_ENCAP_FORMAT_CISCO) {
@@ -410,12 +438,12 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
         skipptr = decode_cisco_from_udp_payload(recvbuf, got, &shimintid,
                 &iplen);
         if (skipptr == NULL) {
-            return 0;
+            return 1;
         }
         dir = local->direction;
         cin = local->cin;
     } else {
-        return 0;
+        return 1;
     }
 
     if (local->outformat == OPENLI_EXPORT_RAW_CC) {
@@ -435,10 +463,44 @@ static int process_udp_datagram(udp_sink_local_t *local, char *key) {
     }
 
     if (!job) {
-        return -1;
+        return 0;
     }
 
     publish_openli_msg(local->zmq_publish, job);
+    return 1;
+}
+
+static int process_udp_datagrams(udp_sink_local_t *local, char *key) {
+    int r;
+    int msgcnt = 0, i;
+
+    // reset the message buffers
+    for (i = 0; i < UDP_BATCH_SIZE; i++) {
+        local->msgs[i].msg_hdr.msg_namelen = sizeof(struct sockaddr_storage);
+        local->msgs[i].msg_len = 0;
+    }
+
+    msgcnt = recvmmsg(local->sockfd, local->msgs, UDP_BATCH_SIZE,
+            MSG_DONTWAIT, NULL);
+    if (msgcnt == -1) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            return 0;
+        }
+        logger(LOG_INFO, "OpenLI collector: error calling recvmmsg in UDP sink worker '%s': %s", key, strerror(errno));
+        return -1;
+    }
+
+    for (i = 0; i < msgcnt; i++) {
+        uint8_t *recvbuf = local->recvbufs[i];
+        ssize_t got = local->msgs[i].msg_len;
+        struct sockaddr_storage *src = &(local->srcs[i]);
+
+        r = process_single_udp_datagram(local, key, recvbuf, got, src);
+        if (r < 0) {
+            return -1;
+        }
+    }
+
     return 0;
 }
 
@@ -593,7 +655,7 @@ static int udp_sink_main_loop(udp_sink_local_t *local, char *key) {
     }
 
     if (topoll_len > 1 && topoll[1].revents & ZMQ_POLLIN) {
-        x = process_udp_datagram(local, key);
+        x = process_udp_datagrams(local, key);
         if (x < 0) {
             close(local->sockfd);
             local->sockfd = -1;

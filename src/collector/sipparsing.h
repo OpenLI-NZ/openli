@@ -109,12 +109,21 @@ typedef struct openli_sip_parser {
     uint8_t badsip;
 } openli_sip_parser_t;
 
+typedef enum {
+    SIP_MATCH_NONE = 0,
+    SIP_MATCH_TO,
+    SIP_MATCH_PASSERT,
+    SIP_MATCH_RPID,
+    SIP_MATCH_PROXYAUTH,
+    SIP_MATCH_REGAUTH,
+    SIP_MATCH_PPREFERRED,
+    SIP_MATCH_FROM
+} sip_match_source_t;
+
 int add_sip_content_to_parser(openli_sip_parser_t **parser, uint8_t *content,
         uint32_t contentlen);
 int add_sip_packet_to_parser(openli_sip_parser_t **parser,
         libtrace_packet_t *packet, uint8_t logallowed);
-int parse_sip_content(openli_sip_parser_t *parser, uint8_t *sipcontent,
-        uint16_t siplen);
 int parse_next_sip_message(openli_sip_parser_t *parser,
         libtrace_packet_t ***packets, int *pkt_cnt);
 void release_sip_parser(openli_sip_parser_t *parser);
@@ -163,6 +172,8 @@ int sip_is_message(openli_sip_parser_t *parser);
 int sip_is_bye(openli_sip_parser_t *parser);
 int sip_is_cancel(openli_sip_parser_t *parser);
 int sip_is_response(openli_sip_parser_t *parser);
+int sip_is_401unauth(openli_sip_parser_t *parser);
+int sip_is_explicit_error_response(openli_sip_parser_t *parser);
 
 int get_sip_header_session_id(openli_sip_parser_t *parser, char **idstr);
 int get_sip_identity_by_header_name(openli_sip_parser_t *parser,
@@ -171,7 +182,7 @@ int extract_sip_identities(openli_sip_parser_t *parser,
         openli_sip_identity_set_t *idset, uint8_t log_error);
 openli_sip_identity_t *match_sip_target_against_identities(
         libtrace_list_t *targets, openli_sip_identity_set_t *idset,
-        uint8_t trust_from);
+        uint8_t trust_from, sip_match_source_t *pmatch_src);
 void release_openli_sip_identity_set(openli_sip_identity_set_t *idset);
 #endif
 

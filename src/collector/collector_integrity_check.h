@@ -56,6 +56,10 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         openli_proto_msgtype_t msgtype, openli_encoding_job_t *job,
         int epoll_fd, integrity_check_state_t **chain);
 
+wandder_encoded_result_t *encode_etsi_interim_integrity_signature(
+        wandder_encoder_t *encoder, openli_proto_msgtype_t msgtype,
+        int64_t *inclseqnos, size_t numseqnos,
+        openli_integrity_sign_algo_t sign_algo);
 int generate_integrity_check_hash_pdu(openli_encoded_result_t *res,
         integrity_check_state_t *ics, char *netelemid, char *operatorid,
         wandder_encoder_t *encoder, wandder_etsispec_t *etsidecoder,

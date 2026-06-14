@@ -128,6 +128,11 @@ logstatfrequency: 5
 # by most VoIP software vendors.
 sipignoresessionid: no
 
+# If set to 'yes', the collector tries to determine the SIP sessionDirection
+# and set the attribute accordingly in the ETSI packet.
+# Some jurisdictions make the use of this field mandatory.
+# sipusesessiondir: yes
+
 # List of Juniper mirrors that we are acting as a mediator for.
 # NOTE: This should be the IP and port of the *recipient* of the mirrored
 #       traffic, not the host that is doing the mirroring.
@@ -236,3 +241,11 @@ udpsinks:
    listenaddr: 10.230.1.200
    listenport: 17872
 
+
+# The location of the CIN state database and the file containing the key to
+# decrypt it. Most users won't need to define either of these options, as
+# the install process should create a suitable database and key at the
+# default locations (`/var/lib/openli/cinstate.db` and
+# `/etc/openli/cinstatedb.key` respectively).
+#cinstatedb: /var/lib/openli/cinstate.db
+#cinstatekey: /etc/openli/cinstatedb.key

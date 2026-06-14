@@ -33,13 +33,14 @@
 
 static int _encode_etsi_integrity_check_payload(
         wandder_encoder_t *encoder, openli_integrity_hash_method_t hashmethod,
+        openli_integrity_sign_algo_t sign_algo,
         uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
         int64_t *inclseqnos, size_t numseqnos) {
 
     uint32_t datatype_val = 0;
     size_t i;
-    uint32_t hashalgo = 0;
+    uint32_t hashalgo = 0, signalgo = 0;
 
     ENC_CSEQUENCE(encoder, 2);          // Payload
     ENC_CSEQUENCE(encoder, 2);          // TRIPayload
@@ -62,6 +63,7 @@ static int _encode_etsi_integrity_check_payload(
     }
 
     hashalgo = (uint32_t)hashmethod;
+    signalgo = (uint32_t)sign_algo;
 
     wandder_encode_next(encoder, WANDDER_TAG_ENUM,
             WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &checktype, sizeof(checktype));
@@ -77,7 +79,11 @@ static int _encode_etsi_integrity_check_payload(
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 4, &hashalgo,
                 sizeof(hashalgo));
     }
-
+    if (signalgo != 0) {
+        wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &signalgo,
+                sizeof(signalgo));
+    }
     END_ENCODED_SEQUENCE(encoder, 3); // End Payload, TRIPayload, integrityCheck
     return 0;
 }
@@ -89,6 +95,7 @@ wandder_encoded_result_t *encode_encrypted_etsi_integrity_check(
         payload_encryption_method_t encryptmethod, uint8_t *encryptkey,
         size_t encryptkey_len, int64_t cin,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
+        openli_integrity_sign_algo_t sign_algo,
         uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
         int64_t *inclseqnos, size_t numseqnos,
@@ -106,8 +113,9 @@ wandder_encoded_result_t *encode_encrypted_etsi_integrity_check(
     wandder_encoded_result_t *final;
 
     reset_wandder_encoder(encoder);
-    if (_encode_etsi_integrity_check_payload(encoder, hashmethod, checktype,
-            msgtype, checkval, checkvallen, inclseqnos, numseqnos) < 0) {
+    if (_encode_etsi_integrity_check_payload(encoder, hashmethod, sign_algo,
+            checktype, msgtype, checkval, checkvallen, inclseqnos,
+            numseqnos) < 0) {
         return NULL;
     }
     content = wandder_encode_finish(encoder);
@@ -206,6 +214,7 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
         wandder_encoder_t *encoder, wandder_etsipshdr_data_t *hdrdata,
         int64_t cin,
         int64_t self_seqno, openli_integrity_hash_method_t hashmethod,
+        openli_integrity_sign_algo_t sign_algo,
         uint32_t checktype, openli_proto_msgtype_t msgtype,
         uint8_t *checkval, unsigned int checkvallen,
         int64_t *inclseqnos, size_t numseqnos,
@@ -217,13 +226,61 @@ wandder_encoded_result_t *encode_etsi_integrity_check(
     gettimeofday(&tv, NULL);
     ENC_USEQUENCE(encoder);
     encode_etsili_pshdr(encoder, hdrdata, cin, self_seqno, &tv, timefmt);
-    if (_encode_etsi_integrity_check_payload(encoder, hashmethod, checktype,
-            msgtype, checkval, checkvallen, inclseqnos, numseqnos) < 0) {
+    if (_encode_etsi_integrity_check_payload(encoder, hashmethod, sign_algo,
+            checktype, msgtype, checkval, checkvallen, inclseqnos,
+            numseqnos) < 0) {
         return NULL;
     }
 
     END_ENCODED_SEQUENCE(encoder, 1); // End outer PS-PDU
     return wandder_encode_finish(encoder);
+}
+
+wandder_encoded_result_t *encode_etsi_interim_integrity_signature(
+        wandder_encoder_t *encoder, openli_proto_msgtype_t msgtype,
+        int64_t *inclseqnos, size_t numseqnos,
+        openli_integrity_sign_algo_t sign_algo) {
+
+    uint32_t checktype = 2;
+    uint32_t signalgo = sign_algo;
+    size_t i;
+    uint32_t datatype_val = 0;
+
+    reset_wandder_encoder(encoder);
+    ENC_CSEQUENCE(encoder, 0);          // integrityCheck
+    ENC_CSEQUENCE(encoder, 0);          // includedSequenceNumbers
+
+    for (i = 0; i < numseqnos; i++) {
+        wandder_encode_next(encoder, WANDDER_TAG_INTEGER,
+                WANDDER_CLASS_UNIVERSAL_PRIMITIVE,
+                WANDDER_TAG_INTEGER, &(inclseqnos[i]), sizeof(int64_t));
+    }
+    END_ENCODED_SEQUENCE(encoder, 1);    // End includedSequenceNumbers
+
+    if (msgtype == OPENLI_PROTO_ETSI_IRI) {
+        datatype_val = 1;
+    } else if (msgtype == OPENLI_PROTO_ETSI_CC) {
+        datatype_val = 2;
+    } else {
+        return NULL;
+    }
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 1, &checktype, sizeof(checktype));
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 2, &datatype_val,
+            sizeof(datatype_val));
+
+    wandder_encode_next(encoder, WANDDER_TAG_OCTETSTRING,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 3, (uint8_t *)"", 0);
+
+    wandder_encode_next(encoder, WANDDER_TAG_ENUM,
+            WANDDER_CLASS_CONTEXT_PRIMITIVE, 5, &signalgo,
+            sizeof(signalgo));
+
+    END_ENCODED_SEQUENCE(encoder, 1);
+    return wandder_encode_finish(encoder);
+
 }
 
 wandder_encoded_result_t *encode_etsi_keepalive(wandder_encoder_t *encoder,
@@ -263,6 +320,21 @@ wandder_encoded_result_t *encode_etsi_segment_flag_body(
         wandder_encode_next(encoder, WANDDER_TAG_NULL,
                 WANDDER_CLASS_CONTEXT_PRIMITIVE, 6, NULL, 0);
     }
+    END_ENCODED_SEQUENCE(encoder, 3);
+    return wandder_encode_finish(encoder);
+}
+
+wandder_encoded_result_t *encode_etsi_cin_reset(
+        wandder_encoder_t *encoder, wandder_encode_job_t *precomputed) {
+
+    wandder_encode_job_t *jobarray[2];
+
+    jobarray[0] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // Payload
+    jobarray[1] = &(precomputed[OPENLI_PREENCODE_CSEQUENCE_2]); // TRIPayload
+    wandder_encode_next_preencoded(encoder, jobarray, 2);
+
+    wandder_encode_next(encoder, WANDDER_TAG_NULL,
+                WANDDER_CLASS_CONTEXT_PRIMITIVE, 7, NULL, 0);
     END_ENCODED_SEQUENCE(encoder, 3);
     return wandder_encode_finish(encoder);
 }

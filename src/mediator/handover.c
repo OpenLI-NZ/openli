@@ -111,6 +111,13 @@ int xmit_handover_keepalive(handover_t *ho) {
                 ho->ho_state->pending_ka->len - ret);
         ho->ho_state->pending_ka->len -= ret;
     }
+
+    if (ho->ho_state->pending_ka == NULL &&
+            get_buffered_amount(&(ho->ho_state->buf)) == 0) {
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP);
+    } else {
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLRDHUP | EPOLLOUT);
+    }
     return 0;
 }
 
@@ -291,7 +298,12 @@ int trigger_handover_keepalive(handover_t *ho, uint32_t mediator_id,
 
         ho->ho_state->pending_ka = kamsg;
         ho->ho_state->lastkaseq += 1;
+
+        // enable write on the output socket
+        modify_openli_fdevent(ho->outev, EPOLLIN | EPOLLOUT | EPOLLRDHUP);
     }
+
+
 
     /* Reset the keep alive timer */
     return restart_handover_keepalive(ho);
@@ -319,6 +331,11 @@ void disconnect_handover(handover_t *ho) {
 				"OpenLI Mediator: Disconnecting from handover %s:%s HI%d",
 				ho->ipstr, ho->portstr, ho->handover_type);
 	}
+
+    if (remove_openli_fdevent(ho->rmqev) < 0 && ho->disconnect_msg == 0) {
+		logger(LOG_INFO, "OpenLI Mediator: unable to remove handover RMQ fd from epoll: %s.", strerror(errno));
+	}
+    ho->rmqev = NULL;
 
 	if (remove_openli_fdevent(ho->outev) < 0 && ho->disconnect_msg == 0) {
 		logger(LOG_INFO, "OpenLI Mediator: unable to remove handover fd from epoll: %s.", strerror(errno));
@@ -495,6 +512,8 @@ static int register_known_liid_consumers(liid_map_entry_t *m, void *arg) {
 int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
         char *agencyid, char *password) {
 
+    int fd;
+
     /* Attach to RMQ if required */
     if (ho->rmq_consumer == NULL) {
         ho->rmq_consumer = join_mediator_RMQ_as_consumer(agencyid,
@@ -525,6 +544,10 @@ int register_handover_RMQ_all(handover_t *ho, liid_map_t *liidmap,
         }
         ho->amqp_log_failure = 1;
         ho->rmq_registered = 1;
+        fd = amqp_get_sockfd(ho->rmq_consumer);
+
+        ho->rmqev = create_openli_fdevent(ho->epoll_fd, ho,
+                OPENLI_EPOLL_HANDOVER_RMQ, fd, EPOLLIN);
         logger(LOG_INFO, "OpenLI Mediator: successfully registered consumer queues for HI%d for agency %s", ho->handover_type, agencyid);
     }
 
@@ -589,8 +612,13 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
         libtrace_scb_init(ho->ho_state->incoming, (64 * 1024 * 1024), ho_id);
     }
 
-    /* Enable both epoll reading and writing for this handover */
-    epollev = EPOLLIN | EPOLLOUT | EPOLLRDHUP;
+    /* Enable just epoll reading for this handover unless we have something
+     * to send
+     */
+    epollev = EPOLLIN | EPOLLRDHUP;
+    if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
+        epollev |= EPOLLOUT;
+    }
 
 	ho->outev = create_openli_fdevent(epoll_fd, ho, OPENLI_EPOLL_LEA,
 			outsock, epollev);
@@ -675,6 +703,7 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     ho->rmq_registered = 0;
     ho->amqp_log_failure = 1;
     ho->last_connect_attempt = 0;
+    ho->epoll_fd = epoll_fd;
 
 	pthread_mutex_init(&(ho->ho_state->ho_mutex), NULL);
 
@@ -698,6 +727,8 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
 
 	/* The output event will be created when the handover is connected */
 	ho->outev = NULL;
+
+    ho->rmqev = NULL;
 
     /* Initialise the remaining handover state */
     if (ipstr) {
@@ -873,6 +904,10 @@ int check_handover_rmq_status(handover_t *ho, char *agencyid) {
 void reset_handover_rmq(handover_t *ho) {
     if (ho->rmq_consumer) {
         amqp_destroy_connection(ho->rmq_consumer);
+    }
+    if (ho->rmqev) {
+        remove_openli_fdevent(ho->rmqev);
+        ho->rmqev = NULL;
     }
     /* MUST set to NULL, so that re-registration will take place */
     ho->rmq_consumer = NULL;

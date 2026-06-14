@@ -218,6 +218,7 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
     voipintercept_t *vint, *tmp;
     uint32_t cin;
     char rtpkey[256];
+    char *callid = NULL;
     rtpstreaminf_t *thisrtp;
 
     if (msg->callid == NULL) {
@@ -259,8 +260,12 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
         goto reject;
     }
 
+    callid = get_primary_callid_using_callid(sipworker->call_state,
+            sipworker->call_state_mutex, msg->callid);
+
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin, msg->callid);
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin,
+                callid ? callid : msg->callid);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
             continue;
@@ -275,6 +280,7 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
             send_sip_redirect_reply(sipworker, REDIRECTED_SIP_CLAIM, msg);
             rd->receive_status = REDIRECTED_SIP_STATUS_CLAIMED;
         }
+        if (callid) free(callid);
         return 1;
     }
 
@@ -282,6 +288,7 @@ reject:
     /* No matching existing state for this call ID in this thread */
     send_sip_redirect_reply(sipworker, REDIRECTED_SIP_REJECTED, msg);
     rd->receive_status = REDIRECTED_SIP_STATUS_REJECTED;
+    if (callid) free(callid);
     return 0;
 }
 
@@ -359,7 +366,8 @@ void purge_redirected_sip_calls(openli_sip_worker_t *sipworker) {
 }
 
 int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
-        char *callid, libtrace_packet_t **pkts, int pkt_cnt) {
+        char *callid, libtrace_packet_t **pkts, int pkt_cnt,
+        packet_info_t *pinfo) {
 
     Word_t *pval;
     sip_saved_redirection_t *rd;
@@ -418,8 +426,16 @@ int redirect_sip_worker_packets(openli_sip_worker_t *sipworker,
                 msg.packets[j] = NULL;
                 continue;
             }
-            msg.packets[j] = openli_copy_packet(pkts[j]);
+            msg.packets[j] = trace_copy_packet(pkts[j]);
         }
+        msg.pinfo = *pinfo;
+        /* We don't use the payload_ptr in SIP workers, otherwise we would
+         * need to set it properly by calculating the offset between
+         * pkts[j]->buffer and pinfo->payload_ptr. But since we don't
+         * use it, we can just set this to NULL and save ourselves the
+         * trouble.
+         */
+        msg.pinfo.payload_ptr = NULL;
 
         if (zmq_send(sipworker->zmq_redirect_outsocks[i], &msg,
                     sizeof(msg), 0) < 0) {

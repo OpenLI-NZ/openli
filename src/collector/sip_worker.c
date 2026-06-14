@@ -52,6 +52,10 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
         release_sip_parser(sipworker->sipparser);
     }
 
+    if (sipworker->zmq_packet_return) {
+        zmq_close(sipworker->zmq_packet_return);
+    }
+
     HASH_ITER(hh, sipworker->timeouts, syncev, tmp) {
         HASH_DELETE(hh, sipworker->timeouts, syncev);
     }
@@ -107,8 +111,9 @@ static void destroy_sip_worker_thread(openli_sip_worker_t *sipworker) {
 }
 
 static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
-    int zero = 0;
+    int zero = 0, hwm = 2000;
     char sockname[256];
+    char returnq[256];
 
     sipworker->zmq_pubsocks = calloc(sipworker->tracker_threads,
             sizeof(void *));
@@ -187,6 +192,30 @@ static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
                 sipworker->workerid, strerror(errno));
         return -1;
     }
+
+    sipworker->zmq_packet_return = zmq_socket(sipworker->zmq_ctxt,
+            ZMQ_PUSH);
+    snprintf(returnq, 256, "inproc://sip-packet-return-%d",
+            sipworker->workerid);
+    if (zmq_bind(sipworker->zmq_packet_return, returnq) < 0) {
+        logger(LOG_INFO, "OpenLI: SIP processing thread %d failed to bind to packet return ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        zmq_close(sipworker->zmq_packet_return);
+        sipworker->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(sipworker->zmq_packet_return, ZMQ_SNDHWM,
+            &hwm, sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: SIP processing thread %d failed to set HWM on packet return ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        zmq_close(sipworker->zmq_packet_return);
+        sipworker->zmq_packet_return = NULL;
+    } else if (zmq_setsockopt(sipworker->zmq_packet_return, ZMQ_LINGER, &zero,
+            sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: SIP processing thread %d failed to set linger on packet return ZMQ: %s",
+                sipworker->workerid, strerror(errno));
+        zmq_close(sipworker->zmq_packet_return);
+        sipworker->zmq_packet_return = NULL;
+    }
+
     return 0;
 }
 
@@ -422,9 +451,30 @@ static void handle_bad_sip_update(openli_sip_worker_t *sipworker,
     }
 }
 
+static void populate_baseirimsg_from_pinfo(openli_ipmmiri_job_t *job,
+        packet_info_t *pinfo) {
+
+    if (pinfo->family == AF_INET) {
+        struct sockaddr_in *in4 = (struct sockaddr_in *)(&(pinfo->srcip));
+        memcpy(job->ipsrc, &(in4->sin_addr), 4);
+        in4 = (struct sockaddr_in *)(&(pinfo->destip));
+        memcpy(job->ipdest, &(in4->sin_addr), 4);
+    } else if (pinfo->family == AF_INET6) {
+        struct sockaddr_in6 *in6 = (struct sockaddr_in6 *)(&(pinfo->srcip));
+        memcpy(job->ipsrc, &(in6->sin6_addr), 16);
+        in6 = (struct sockaddr_in6 *)(&(pinfo->destip));
+        memcpy(job->ipdest, &(in6->sin6_addr), 16);
+    }
+
+    job->ipfamily = pinfo->family;
+    job->srcport = pinfo->srcport;
+    job->dstport = pinfo->destport;
+    job->dest_sip_server = pinfo->dest_coreserver;
+
+}
 
 static void sip_update_fast_path(openli_sip_worker_t *sipworker,
-        libtrace_packet_t *packet) {
+        libtrace_packet_t *packet, packet_info_t *pinfo) {
 
     int ret;
     openli_export_recv_t baseirimsg;
@@ -440,16 +490,20 @@ static void sip_update_fast_path(openli_sip_worker_t *sipworker,
     baseirimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
     baseirimsg.ts = trace_get_timeval(packet);
 
-    if (extract_ip_addresses(packet, baseirimsg.data.ipmmiri.ipsrc,
-            baseirimsg.data.ipmmiri.ipdest,
-            &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
-        handle_bad_sip_update(sipworker, &packet, 1,
-                SIP_PROCESSING_EXTRACTING_IPS);
-        return;
-    }
+    if (pinfo->family == 0) {
+        if (extract_ip_addresses(packet, baseirimsg.data.ipmmiri.ipsrc,
+                baseirimsg.data.ipmmiri.ipdest,
+                &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
+            handle_bad_sip_update(sipworker, &packet, 1,
+                    SIP_PROCESSING_EXTRACTING_IPS);
+            return;
+        }
 
-    baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packet);
-    baseirimsg.data.ipmmiri.dstport = trace_get_destination_port(packet);
+        baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packet);
+        baseirimsg.data.ipmmiri.dstport = trace_get_destination_port(packet);
+    } else {
+        populate_baseirimsg_from_pinfo(&(baseirimsg.data.ipmmiri), pinfo);
+    }
 
     ret = parse_next_sip_message(sipworker->sipparser, NULL, NULL);
     if (ret == 0) {
@@ -463,7 +517,8 @@ static void sip_update_fast_path(openli_sip_worker_t *sipworker,
     baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
             sipworker->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
 
-    if (sipworker_update_sip_state(sipworker, &packet, 1, &baseirimsg) < 0) {
+    if (sipworker_update_sip_state(sipworker, &packet, 1, pinfo,
+                &baseirimsg) < 0) {
         handle_bad_sip_update(sipworker, &packet, 1,
                 SIP_PROCESSING_UPDATING_STATE);
     }
@@ -471,7 +526,7 @@ static void sip_update_fast_path(openli_sip_worker_t *sipworker,
 }
 
 static void sip_update_slow_path(openli_sip_worker_t *sipworker,
-        libtrace_packet_t *packet, uint8_t doonce) {
+        libtrace_packet_t *packet, packet_info_t *pinfo, uint8_t doonce) {
 
     int ret, i;
     openli_export_recv_t baseirimsg;
@@ -484,19 +539,31 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
     baseirimsg.data.ipmmiri.ipmmiri_style = OPENLI_IPMMIRI_SIP;
     baseirimsg.ts = trace_get_timeval(packet);
 
-    if (extract_ip_addresses(packet, baseirimsg.data.ipmmiri.ipsrc,
-            baseirimsg.data.ipmmiri.ipdest,
-            &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
-        handle_bad_sip_update(sipworker, &packet, 1,
-                SIP_PROCESSING_EXTRACTING_IPS);
-        return;
+    if (pinfo->family != 0) {
+        populate_baseirimsg_from_pinfo(&(baseirimsg.data.ipmmiri), pinfo);
+    } else {
+        if (extract_ip_addresses(packet, baseirimsg.data.ipmmiri.ipsrc,
+                baseirimsg.data.ipmmiri.ipdest,
+                &(baseirimsg.data.ipmmiri.ipfamily)) != 0) {
+            handle_bad_sip_update(sipworker, &packet, 1,
+                    SIP_PROCESSING_EXTRACTING_IPS);
+            return;
+        }
     }
 
     do {
         if (packets != NULL) {
             for (i = 0; i < pkt_cnt; i++) {
                 if (packets[i]) {
-                    trace_destroy_packet(packets[i]);
+                    if (sipworker->zmq_packet_return) {
+                        ret = zmq_send(sipworker->zmq_packet_return,
+                                &packets[i], sizeof(packets[i]), ZMQ_DONTWAIT);
+                        if (ret < 0) {
+                            trace_destroy_packet(packets[i]);
+                        }
+                    } else {
+                        trace_destroy_packet(packets[i]);
+                    }
                 }
             }
             free(packets);
@@ -516,13 +583,13 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
         baseirimsg.data.ipmmiri.content = (uint8_t *)get_sip_contents(
                 sipworker->sipparser, &(baseirimsg.data.ipmmiri.contentlen));
 
-        if (pkt_cnt > 0) {
+        if (pkt_cnt > 0 && pinfo->family == 0) {
             baseirimsg.data.ipmmiri.srcport = trace_get_source_port(packets[0]);
             baseirimsg.data.ipmmiri.dstport =
                     trace_get_destination_port(packets[0]);
         }
 
-        if (sipworker_update_sip_state(sipworker, packets, pkt_cnt,
+        if (sipworker_update_sip_state(sipworker, packets, pkt_cnt, pinfo,
                     &baseirimsg) < 0) {
             handle_bad_sip_update(sipworker, packets, pkt_cnt,
                     SIP_PROCESSING_UPDATING_STATE);
@@ -534,7 +601,15 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
     if (packets) {
         for (i = 0; i < pkt_cnt; i++) {
             if (packets[i]) {
-                trace_destroy_packet(packets[i]);
+                if (sipworker->zmq_packet_return) {
+                    ret = zmq_send(sipworker->zmq_packet_return, &packets[i],
+                            sizeof(packets[i]), ZMQ_DONTWAIT);
+                    if (ret < 0) {
+                        trace_destroy_packet(packets[i]);
+                    }
+                } else {
+                    trace_destroy_packet(packets[i]);
+                }
             }
         }
         free(packets);
@@ -543,7 +618,7 @@ static void sip_update_slow_path(openli_sip_worker_t *sipworker,
 }
 
 static void process_received_sip_packet(openli_sip_worker_t *sipworker,
-        libtrace_packet_t *packet) {
+        libtrace_packet_t *packet, packet_info_t *pinfo) {
 
     int ret;
 
@@ -554,19 +629,29 @@ static void process_received_sip_packet(openli_sip_worker_t *sipworker,
         handle_bad_sip_update(sipworker, &packet, 1,
                 SIP_PROCESSING_ADD_PARSER);
     } else if (ret == SIP_ACTION_USE_PACKET) {
-        sip_update_fast_path(sipworker, packet);
+        sip_update_fast_path(sipworker, packet, pinfo);
     } else if (ret == SIP_ACTION_REASSEMBLE_TCP) {
-        sip_update_slow_path(sipworker, packet, 0);
+        sip_update_slow_path(sipworker, packet, pinfo, 0);
         packet = NULL;        // consumed by the reassembler
     } else if (ret == SIP_ACTION_REASSEMBLE_IPFRAG) {
-        sip_update_slow_path(sipworker, packet, 1);
+        sip_update_slow_path(sipworker, packet, pinfo, 1);
         packet = NULL;
     } else if (ret == SIP_ACTION_HOLDING) {
         packet = NULL;
     }
 
     if (packet) {
-        trace_destroy_packet(packet);
+        // recycle the packet structure if possible -- if there are too
+        // many recycled packets, destroy it
+        if (sipworker->zmq_packet_return) {
+            ret = zmq_send(sipworker->zmq_packet_return, &packet,
+                    sizeof(packet), ZMQ_DONTWAIT);
+            if (ret < 0) {
+                trace_destroy_packet(packet);
+            }
+        } else {
+            trace_destroy_packet(packet);
+        }
     }
 }
 
@@ -1187,7 +1272,8 @@ static int sip_worker_process_packets(openli_sip_worker_t *sipworker) {
                         recvd.data.replyq, v);
             }
         } else if (recvd.type == OPENLI_UPDATE_SIP) {
-            process_received_sip_packet(sipworker, recvd.data.pkt);
+            packet_info_t pinfo = RECVD_PINFO;
+            process_received_sip_packet(sipworker, RECVD_PKT, &pinfo);
         } else {
             logger(LOG_INFO,
                     "OpenLI: SIP worker thread %d received unexpected update type %u",
@@ -1223,7 +1309,8 @@ static int sip_worker_receive_redirect(openli_sip_worker_t *sipworker) {
                 if (r != 0) {
                     uint32_t i;
                     for (i = 0; i < msg.pkt_cnt; i++) {
-                        process_received_sip_packet(sipworker, msg.packets[i]);
+                        process_received_sip_packet(sipworker, msg.packets[i],
+                                &(msg.pinfo));
                         msg.packets[i] = NULL;
                     }
                 }
@@ -1272,7 +1359,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
     expiringstreams = calloc(128, sizeof(struct rtpstreaminf *));
     topoll_size = 128;
 
-    its.it_value.tv_sec = 60;
+    its.it_value.tv_sec = 5;
     its.it_value.tv_nsec = 0;
     its.it_interval.tv_sec = 0;
     its.it_interval.tv_nsec = 0;
@@ -1338,6 +1425,9 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
              */
             purge_redirected_sip_calls(sipworker);
 
+            /* and purge registrations that have timed out */
+            purge_expired_registrations(sipworker);
+
             /* reset the timer */
             purgetimer.fdtype = 0;
             purgetimer.fd = timerfd_create(CLOCK_MONOTONIC, 0);
@@ -1362,7 +1452,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
 void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
         voipintercept_t *vint, openli_export_recv_t *irimsg,
         etsili_iri_type_t iritype, int64_t cin, openli_location_t *loc,
-        int loc_count, libtrace_packet_t **pkts, int pkt_cnt) {
+        int loc_count, libtrace_packet_t **pkts, int pkt_cnt, uint8_t dir) {
 
     openli_export_recv_t *copy;
 
@@ -1411,6 +1501,11 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     copy->data.ipmmiri.cin = cin;
     copy->data.ipmmiri.authcc = strdup(vint->common.authcc);
     copy->data.ipmmiri.delivcc = strdup(vint->common.delivcc);
+    copy->data.ipmmiri.dir = dir;
+
+    pthread_rwlock_rdlock(sipworker->shared_mutex);
+    copy->data.ipmmiri.use_sessiondir = sipworker->shared->use_sessiondir;
+    pthread_rwlock_unlock(sipworker->shared_mutex);
 
     copy->data.ipmmiri.content = malloc(copy->data.ipmmiri.contentlen);
     memcpy(copy->data.ipmmiri.content, irimsg->data.ipmmiri.content,
@@ -1449,7 +1544,8 @@ void *start_sip_worker_thread(void *arg) {
         x = zmq_recv(sipworker->zmq_colthread_recvsock, &recvd,
                 sizeof(recvd), ZMQ_DONTWAIT);
         if (x > 0) {
-            trace_destroy_packet(recvd.data.pkt);
+            // don't recycle here as we are shutting down
+            trace_destroy_packet(RECVD_PKT);
         }
     } while (x > 0);
 

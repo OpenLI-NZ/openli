@@ -19,6 +19,8 @@ In no particular order, we would like to thank the following people:
  * Pim van Stam for contributing code to support the "agencycountrycode"
    configuration option, as well as handling of certain NL-specific
    requirements.
+ * NETPLANET GmbH for contributing code to support the "sipusesessiondir"
+   configuration option (AT-specific requirement)
 
 Apologies to anyone that has made a contribution but we've forgotten to
 mention you here -- if this has happened to you, please get in touch with the
