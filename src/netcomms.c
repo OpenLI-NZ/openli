@@ -1828,10 +1828,10 @@ int push_coreserver_withdraw_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
 }
 
 #define X2X3_BODY_LEN(addr, port) \
-    (strlen(addr) + strlen(port) + sizeof(uint64_t) + (3 * 4))
+    (strlen(addr) + strlen(port) + sizeof(uint64_t) + sizeof(uint8_t) + (4 * 4))
 
 static int push_x2x3_listener_msg_onto_net_buffer(net_buffer_t *nb,
-        const char *ipaddr, const char *port, uint64_t ts,
+        const char *ipaddr, const char *port, uint64_t ts, uint8_t isactive,
         openli_proto_msgtype_t type) {
 
     ii_header_t hdr;
@@ -1851,6 +1851,10 @@ static int push_x2x3_listener_msg_onto_net_buffer(net_buffer_t *nb,
             sizeof(ii_header_t))) == -1) {
         return -1;
     }
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_ISACTIVE,
+            (uint8_t *)&isactive, sizeof(isactive))) == -1) {
+        return -1;
+    }
     /* may as well re-use these field types */
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_CORESERVER_IP,
             (uint8_t *)ipaddr, strlen(ipaddr))) == -1) {
@@ -1868,23 +1872,23 @@ static int push_x2x3_listener_msg_onto_net_buffer(net_buffer_t *nb,
 }
 
 int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts) {
+        char *port, uint64_t ts, uint8_t isactive) {
 
-    return push_x2x3_listener_msg_onto_net_buffer(nb, addr, port, ts,
+    return push_x2x3_listener_msg_onto_net_buffer(nb, addr, port, ts, isactive,
             OPENLI_PROTO_X2X3_LISTENER_DETAILS);
 }
 
 int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
         const char *ipaddr, const char *port) {
 
-    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0,
+    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0, 0,
             OPENLI_PROTO_WITHDRAW_X2X3LISTENER);
 }
 
 int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
         const char *ipaddr, const char *port) {
 
-    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0,
+    return push_x2x3_listener_msg_onto_net_buffer(nb, ipaddr, port, 0, 0,
             OPENLI_PROTO_ANNOUNCE_X2X3LISTENER);
 }
 
@@ -3095,7 +3099,7 @@ int decode_udp_sink(uint8_t *msgbody, uint16_t len, char **addr,
 }
 
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
-        char **port, uint64_t *ts) {
+        char **port, uint64_t *ts, uint8_t *isactive) {
 
     uint8_t *msgend = msgbody + len;
 
@@ -3114,6 +3118,8 @@ int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
             DECODE_STRING_FIELD(*port, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_TS_SEC) {
             (*ts) = *((uint64_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_ISACTIVE) {
+            (*isactive) = *valptr;
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,

@@ -39,10 +39,11 @@
 #include <time.h>
 
 const char *insert_x2x3_sql =
-        "INSERT INTO x2x3_listeners (collector, ip_address, port, last_seen)"
-        " VALUES (?, ?, ?, ?); ";
+        "INSERT INTO x2x3_listeners (collector, ip_address, port, last_seen,"
+        " isactive)"
+        " VALUES (?, ?, ?, ?, ?); ";
 const char *update_x2x3_sql =
-        "UPDATE x2x3_listeners SET last_seen = ? "
+        "UPDATE x2x3_listeners SET last_seen = ?, isactive = ? "
         "WHERE collector = ? AND ip_address = ? AND port = ?;";
 const char *select_x2x3_sql =
         "SELECT * FROM x2x3_listeners WHERE collector = ? AND last_seen > ?;";
@@ -144,6 +145,15 @@ int init_clientdb(provision_state_t *state) {
         goto endofinit;
     }
 
+    if (sqlite3_exec(state->clientdb, "ALTER TABLE x2x3_listeners ADD COLUMN isactive INTEGER DEFAULT 0", NULL, NULL, &errmsg) != SQLITE_OK) {
+        if (errmsg && strstr(errmsg, "duplicate column name")) {
+            // column already exists, carry on
+        } else {
+            logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
+            rc = -1;
+            goto endofinit;
+        }
+    }
     if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS udp_sinks (collector text not null, ip_address text not null, port text not null, identifier text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address, identifier));", NULL, NULL,
                 NULL) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: error while validating UDP sink table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
@@ -232,7 +242,8 @@ int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
 }
 
 int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
-       char *listenaddr, char *listenport, uint64_t timestamp) {
+       char *listenaddr, char *listenport, uint64_t timestamp,
+       uint8_t isactive) {
 
     if (state->clientdb == NULL) {
         return 0;
@@ -268,14 +279,16 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
     sqlite3_bind_text(ins_stmt, 2, listenaddr, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, listenport, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 4, dt_str, -1, SQLITE_STATIC);
+    sqlite3_bind_int(ins_stmt, 5, isactive);
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, dt_str, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 2, col->identifier, -1,
+        sqlite3_bind_int(upd_stmt, 2, isactive);
+        sqlite3_bind_text(upd_stmt, 3, col->identifier, -1,
                 SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 3, listenaddr, -1, SQLITE_STATIC);
-        sqlite3_bind_text(upd_stmt, 4, listenport, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 4, listenaddr, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 5, listenport, -1, SQLITE_STATIC);
 
         rc = sqlite3_step(upd_stmt);
     }
@@ -657,6 +670,7 @@ x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
             x2x3[ind].lastseen = timegm(&tm);
         }
+        x2x3[ind].isactive = (uint8_t)sqlite3_column_int(sel_stmt, 4);
         ind ++;
     }
 #endif

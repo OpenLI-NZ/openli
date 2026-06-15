@@ -107,7 +107,7 @@ and `balanced`.
 
 ### X2/X3 Support
 OpenLI collectors now support being able to receive intercepted traffic using
-the X2/X3 standards (i.e. ETSI TS 102 221-2).
+the X2/X3 standards (i.e. ETSI TS 103 221-2).
 
 To enable this feature, specify the IP address and port that you want your
 collector to listen on using the `x2x3inputs` configuration option. You may
