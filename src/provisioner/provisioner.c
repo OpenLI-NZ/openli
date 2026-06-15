@@ -1323,15 +1323,17 @@ static int process_x2x3_listener_details(provision_state_t *state,
     char *listenport = NULL;
     char *listenaddr = NULL;
     uint64_t ts = 0;
+    uint8_t isactive = 0;
 
     if (decode_x2x3_listener(msgbody, msglen, &listenaddr, &listenport,
-            &ts) < 0) {
+            &ts, &isactive) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: error decoding X2/X3 announcement from collector %s -- ignoring", col->identifier);
         return -1;
     }
 
     if (listenport != NULL && listenaddr != NULL && ts != 0) {
-        if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
+        if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts,
+                isactive) < 0) {
             logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
             return -1;
         }

@@ -2412,12 +2412,14 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
 
     char *ipaddr = NULL, *port = NULL;
     uint64_t ts;
+    uint8_t isactive;
     char identifier[1024];
     x_input_t *xinp;
     openli_yaml_config_object_t newobj;
     openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
 
-    if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts) < 0) {
+    if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts,
+            &isactive) < 0) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
                     "OpenLI: received invalid X2X3 listener announcement from provisioner.");
@@ -2441,7 +2443,7 @@ static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     snprintf(identifier, 1024, "%s-%s", ipaddr, port);
     add_x2x3_to_sync(sync, identifier, ipaddr, port);
 
-    // we also need to remove this from glob_xinputs so that the config
+    // we also need to add this to glob_xinputs so that the config
     // file will get updated properly
     pthread_rwlock_wrlock(sync->xinput_mutex);
     HASH_FIND(hh, *(sync->glob_xinputs), identifier, strlen(identifier), xinp);
@@ -2479,10 +2481,12 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
 
     char *ipaddr = NULL, *port = NULL;
     uint64_t ts;
+    uint8_t isactive;
     char identifier[1024];
     x_input_t *xinp;
 
-    if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts) < 0) {
+    if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts,
+            &isactive) < 0) {
         if (sync->instruct_log) {
             logger(LOG_INFO,
                     "OpenLI: received invalid X2X3 listener from provisioner for withdrawal.");
@@ -3593,17 +3597,29 @@ int sync_thread_main(collector_sync_t *sync) {
 
             if ((tv.tv_sec % 10) == 0) {
                 x_input_sync_t *xpush, *xtmp;
+                x_input_t *xrun;
+                uint8_t x_running = 0;
                 colsync_udp_sink_t *sink, *sinktmp;
+
                 HASH_ITER(hh, sync->x2x3_queues, xpush, xtmp) {
 
                     if (xpush->listenaddr == NULL ||
                             xpush->listenport == NULL) {
                         continue;
                     }
+                    pthread_rwlock_rdlock(sync->xinput_mutex);
+                    HASH_FIND(hh, *(sync->glob_xinputs), xpush->identifier,
+                            strlen(xpush->identifier), xrun);
+                    if (xrun) {
+                        x_running = __atomic_load_n(&(xrun->is_listening),
+                                __ATOMIC_ACQUIRE);
+                    }
+                    pthread_rwlock_unlock(sync->xinput_mutex);
+
                     if (push_x2x3_listener_details_onto_net_buffer(
                             sync->outgoing,
                             xpush->listenaddr, xpush->listenport,
-                            (uint64_t)tv.tv_sec) < 0) {
+                            (uint64_t)tv.tv_sec, x_running) < 0) {
                         logger(LOG_INFO,"OpenLI: collector is unable to queue X2/X3 listener update message (%s) for provisioner.", xpush->identifier);
                     }
                 }

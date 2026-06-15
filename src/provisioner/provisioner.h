@@ -90,6 +90,7 @@ typedef struct x2x3_listener {
     char *ipaddr;
     char *port;
     time_t lastseen;
+    uint8_t isactive;
 } x2x3_listener_t;
 
 /** Describes a single UDP sink that is available on a collector
@@ -577,7 +578,8 @@ int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
        char *listenaddr, char *listenport, char *identifier,
        uint64_t timestamp);
 int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
-       char *listenaddr, char *listenport, uint64_t timestamp);
+       char *listenaddr, char *listenport, uint64_t timestamp,
+       uint8_t isactive);
 void update_all_client_rows(provision_state_t *state);
 known_client_t *fetch_all_collector_clients(provision_state_t *state,
         size_t *clientcount);

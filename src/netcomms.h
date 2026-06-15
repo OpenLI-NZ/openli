@@ -256,6 +256,7 @@ typedef enum {
     OPENLI_PROTO_FIELD_JSON_CONFIGURATION,
     OPENLI_PROTO_FIELD_OPERATORID,
     OPENLI_PROTO_FIELD_SHORTOPERATORID,
+    OPENLI_PROTO_FIELD_ISACTIVE,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct
  * enums for each "message type" as there is only one byte available for
@@ -341,7 +342,7 @@ int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
 int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink);
 int push_x2x3_listener_details_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, uint64_t ts);
+        char *port, uint64_t ts, uint8_t isactive);
 int push_x2x3_listener_addition_onto_net_buffer(net_buffer_t *nb,
         const char *ipaddr, const char *port);
 int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
@@ -395,7 +396,7 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
 int decode_udp_sink(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, char **identifier, uint64_t *ts);
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
-        char **port, uint64_t *ts);
+        char **port, uint64_t *ts, uint8_t *isactive);
 int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
 int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);

@@ -592,16 +592,18 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         }
         if (x2x3) {
             for (j = 0; j < x2x3count; j++) {
-                json_object *base, *ipaddr, *port, *lastseen;
+                json_object *base, *ipaddr, *port, *lastseen, *isactive;
                 base = json_object_new_object();
 
                 ipaddr = json_object_new_string(x2x3[j].ipaddr);
                 port = json_object_new_string(x2x3[j].port);
                 lastseen = openli_json_object_new_uint64(x2x3[j].lastseen);
+                isactive = json_object_new_int(x2x3[j].isactive);
 
                 json_object_object_add(base, "ipaddress", ipaddr);
                 json_object_object_add(base, "port", port);
                 json_object_object_add(base, "lastseen", lastseen);
+                json_object_object_add(base, "isactive", isactive);
 
                 free(x2x3[j].ipaddr);
                 free(x2x3[j].port);

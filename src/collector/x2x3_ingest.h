@@ -177,6 +177,7 @@ typedef struct uuid_intercept_map {
 typedef struct x_input {
 
     uint8_t running;
+    uint8_t is_listening;
     pthread_t threadid;
 
     char *identifier;
