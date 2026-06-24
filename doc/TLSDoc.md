@@ -51,41 +51,59 @@ hosts, for instance!). You'll need it if you want to create more certificates
 for future components.
 
 ### Putting the certificates in the right place
+Create a directory on your system for storing the certificates and keys, e.g.
 
-For each component, copy the corresponding `X-key.pem` file into `/etc/openli/`
+    sudo mkdir -p /etc/ssl/openli/
+
+If you are intending to use RabbitMQ with SSL for buffering between your
+collectors and mediators, you'll need to make sure that
+both RabbitMQ and OpenLI can access the contents of this directory. Create
+a new group to handle these permissions:
+
+    sudo groupadd openlicerts
+    sudo usermod -aG openlicerts rabbitmq
+    sudo usermod -aG openlicerts openli
+    
+    sudo chown root:openlicerts /etc/ssl/openli
+    sudo chmod 750 /etc/ssl/openli
+
+Note that the `rabbitmq` user probably won't exist on the provisioner, so you can
+skip the `usermod` command for `rabbitmq` on that component. If you've built OpenLI
+from source, you will not have an `openli` user -- either skip that `usermod`
+command in that case or create the `openli` user yourself if desired.
+
+For each component, copy the corresponding `X-key.pem` file into `/etc/ssl/openli/`
 on the host that component will be running on. Copy the `X-crt.pem` file into
-`/etc/openli/`. Also copy the `openli-ca-crt.pem` file into `/etc/openli/`
+`/etc/ssl/openli/`. Also copy the `openli-ca-crt.pem` file into `/etc/ssl/openli/`
 onto each host running an OpenLI component.
 
 For example, on your provisioner host you should now have the following three
 files:
 
-    /etc/openli/openli-provisioner-crt.pem
-    /etc/openli/openli-ca-crt.pem
-    /etc/openli/openli-provisioner-key.pem
+    /etc/ssl/openli/openli-provisioner-crt.pem
+    /etc/ssl/openli/openli-ca-crt.pem
+    /etc/ssl/openli/openli-provisioner-key.pem
 
 Your mediator will have:
 
-    /etc/openli/openli-mediator-crt.pem
-    /etc/openli/openli-ca-crt.pem
-    /etc/openli/openli-mediator-key.pem
+    /etc/ssl/openli/openli-mediator-crt.pem
+    /etc/ssl/openli/openli-ca-crt.pem
+    /etc/ssl/openli/openli-mediator-key.pem
 
 Your collector will have:
 
-    /etc/openli/openli-collector-crt.pem
-    /etc/openli/openli-ca-crt.pem
-    /etc/openli/openli-collector-key.pem
+    /etc/ssl/openli/openli-collector-crt.pem
+    /etc/ssl/openli/openli-ca-crt.pem
+    /etc/ssl/openli/openli-collector-key.pem
 
 
-Make sure your keys and certificates are readable only by the user which
-will be running the OpenLI components on this host. For instance, if you
-have created an `openli` user to run the provisioner component:
+Make sure your keys and certificates are readable only by users in your
+`openlicerts` group. For example, on the provisioner you can do:
 
-    chown openli:openli /etc/openli/*.pem
-    chmod 400 /etc/openli/openli-provisioner-key.pem
-    chmod 400 /etc/openli/openli-ca-crt.pem
-    chmod 400 /etc/openli/openli-provisioner-crt.pem
+    chown root:openlicerts /etc/ssl/openli/*.pem
+    chmod 640 /etc/ssl/openli/*.pem
 
+Repeat the above for your other components.
 
 # Configuring OpenLI components to use the certificates
 
