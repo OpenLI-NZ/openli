@@ -38,6 +38,6 @@ dnf module disable -y mariadb || true
 
 yum install -y rpm-build yum-utils rpmdevtools which
 yum groupinstall -y 'Development Tools'
-yum-builddep -y rpm/openli.spec
+dnf builddep -y --setop=module_hotfixes=true rpm/openli.spec
 
 rpmdev-setuptree
