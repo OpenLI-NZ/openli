@@ -565,27 +565,40 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         provision_state_t *state) {
 
     json_object *jarray, *jobj, *x2x3obj, *sinkobj;
-    known_client_t *cols;
-    size_t colcount, x2x3count, sinkcount, i, j;
+    size_t x2x3count, sinkcount, j;
     x2x3_listener_t *x2x3;
     collector_udp_sink_t *sinks;
+    prov_collector_t *col, *tmp;
+    known_client_t kc;
 
-    cols = fetch_all_collector_clients(state, &colcount);
-    if (!cols || colcount == 0) {
+    if (HASH_CNT(hh, state->collectors) == 0) {
         return NULL;
     }
 
     jarray = json_object_new_array();
-    for (i = 0; i < colcount; i++) {
-        jobj = convert_client_to_json(&(cols[i]));
+
+    HASH_ITER(hh, state->collectors, col, tmp) {
+        kc.type = TARGET_COLLECTOR;
+        kc.colname = col->identifier;
+
+        if (col->client && col->client->ipaddress) {
+            kc.ipaddress = col->client->ipaddress;
+        } else {
+            kc.ipaddress = NULL;
+        }
+        kc.firstseen = col->firstseen;
+        kc.lastseen = col->lastseen;
+        kc.jsonconfig = col->jsonconfig;
+
+        jobj = convert_client_to_json(&kc);
         x2x3obj = json_object_new_array();
         sinkobj = json_object_new_array();
 
-        if (cols[i].colname) {
+        if (kc.colname) {
             x2x3 = fetch_x2x3_listeners_for_collector(state, &x2x3count,
-                    cols[i].colname);
+                    kc.colname);
             sinks = fetch_udp_sinks_for_collector(state, &sinkcount,
-                    cols[i].colname);
+                    kc.colname);
         } else {
             x2x3 = NULL;
             sinks = NULL;
@@ -619,7 +632,7 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
                 ipaddr = json_object_new_string(sinks[j].ipaddr);
                 port = json_object_new_string(sinks[j].port);
                 lastseen = openli_json_object_new_uint64(sinks[j].lastseen);
-                ident = json_object_new_string(cols[i].colname);
+                ident = json_object_new_string(kc.colname);
 
                 json_object_object_add(base, "ipaddress", ipaddr);
                 json_object_object_add(base, "port", port);
@@ -636,15 +649,7 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         json_object_object_add(jobj, "x2x3listeners", x2x3obj);
         json_object_object_add(jobj, "udpsinks", sinkobj);
         json_object_array_add(jarray, jobj);
-        if (cols[i].colname) {
-            free((void *)(cols[i].colname));
-        }
-        if (cols[i].jsonconfig) {
-            free((void *)(cols[i].jsonconfig));
-        }
-        free((void *)(cols[i].ipaddress));
     }
-    free(cols);
 
     return jarray;
 }

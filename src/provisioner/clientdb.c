@@ -70,6 +70,10 @@ const char *update_sql =
 const char *select_sql =
         "SELECT * FROM observed_clients WHERE type = ?;";
 
+const char *select_single_col_sql =
+        "SELECT * FROM observed_clients WHERE type = 'collector' AND "
+        "identifier = ?;";
+
 const char *remove_client_sql =
         "DELETE FROM observed_clients WHERE type = ? AND identifier = ?;";
 
@@ -90,6 +94,24 @@ const char *upsert_sql =
         " VALUES (?, ?, ?, DATETIME('now')) "
         "ON CONFLICT(identifier, type) DO UPDATE SET "
         "last_seen = (DATETIME('now')), ip_address = ?; ";
+
+void free_known_client(known_client_t *kc, uint8_t freeself) {
+    if (!kc) {
+        return;
+    }
+    if (kc->colname) {
+        free((void *)kc->colname);
+    }
+    if (kc->ipaddress) {
+        free((void *)kc->ipaddress);
+    }
+    if (kc->jsonconfig) {
+        free((void *)kc->jsonconfig);
+    }
+    if (freeself) {
+        free(kc);
+    }
+}
 
 int init_clientdb(provision_state_t *state) {
     int rc;
@@ -210,6 +232,7 @@ int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
     if (sqlite3_prepare_v2(state->clientdb, update_udpsink_sql, -1, &upd_stmt,
             0) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: failed to prepare update statement for UDP sink database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
         return -1;
     }
 
@@ -236,6 +259,8 @@ int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
 
     if (rc != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute upsert statement for UDP sink database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
+        sqlite3_finalize(upd_stmt);
         return -1;
     }
 
@@ -273,6 +298,7 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
     if (sqlite3_prepare_v2(state->clientdb, update_x2x3_sql, -1, &upd_stmt,
             0) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: failed to prepare update statement for x2x3 listener database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
         return -1;
     }
 
@@ -299,6 +325,8 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
 
     if (rc != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute upsert statement for x2x3 listener database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
+        sqlite3_finalize(upd_stmt);
         return -1;
     }
 
@@ -330,6 +358,7 @@ int update_collector_client_row(provision_state_t *state,
     if (sqlite3_prepare_v2(state->clientdb, update_sql, -1, &upd_stmt, 0) !=
                 SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: failed to prepare update statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
         return -1;
     }
 
@@ -352,9 +381,10 @@ int update_collector_client_row(provision_state_t *state,
 
     if (rc != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute upsert statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
+        sqlite3_finalize(upd_stmt);
         return -1;
     }
-
     sqlite3_finalize(ins_stmt);
     sqlite3_finalize(upd_stmt);
 #endif
@@ -387,6 +417,7 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
     if (sqlite3_prepare_v2(state->clientdb, update_sql, -1, &upd_stmt, 0) !=
                 SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: failed to prepare update statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
         return -1;
     }
 
@@ -408,6 +439,8 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
 
     if (rc != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute upsert statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(ins_stmt);
+        sqlite3_finalize(upd_stmt);
         return -1;
     }
 
@@ -469,6 +502,7 @@ int remove_x2x3_listener_from_clientdb(provision_state_t *state,
     if ((rc = sqlite3_step(del_x2x3_stmt)) != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE single X2X3 statement for client tracking database: %s",
                 sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_x2x3_stmt);
         return -1;
     }
     sqlite3_finalize(del_x2x3_stmt);
@@ -498,6 +532,7 @@ int remove_udpsink_from_clientdb(provision_state_t *state,
     if ((rc = sqlite3_step(del_udpsink_stmt)) != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE single UDP Sink statement for client tracking database: %s",
                 sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_udpsink_stmt);
         return -1;
     }
     sqlite3_finalize(del_udpsink_stmt);
@@ -536,12 +571,15 @@ int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
     if (sqlite3_prepare_v2(state->clientdb, remove_x2x3_sql, -1,
             &del_x2x3_stmt, 0) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE x2x3 statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_stmt);
         return -1;
     }
 
     if (sqlite3_prepare_v2(state->clientdb, remove_udpsink_sql, -1,
             &del_udpsink_stmt, 0) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: failed to prepare DELETE UDP sink statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_stmt);
+        sqlite3_finalize(del_x2x3_stmt);
         return -1;
     }
 
@@ -550,18 +588,27 @@ int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
 
     if ((rc = sqlite3_step(del_stmt)) != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE collector statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_stmt);
+        sqlite3_finalize(del_x2x3_stmt);
+        sqlite3_finalize(del_udpsink_stmt);
         return -1;
     }
 
     sqlite3_bind_text(del_x2x3_stmt, 1, decoded, -1, SQLITE_STATIC);
     if ((rc = sqlite3_step(del_x2x3_stmt)) != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE x2x3 statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_stmt);
+        sqlite3_finalize(del_x2x3_stmt);
+        sqlite3_finalize(del_udpsink_stmt);
         return -1;
     }
 
     sqlite3_bind_text(del_udpsink_stmt, 1, decoded, -1, SQLITE_STATIC);
     if ((rc = sqlite3_step(del_udpsink_stmt)) != SQLITE_DONE) {
         logger(LOG_INFO, "OpenLI provisioner: failed to execute DELETE UDP sink statement for client tracking database: %s", sqlite3_errmsg(state->clientdb));
+        sqlite3_finalize(del_stmt);
+        sqlite3_finalize(del_x2x3_stmt);
+        sqlite3_finalize(del_udpsink_stmt);
         return -1;
     }
 
@@ -571,6 +618,66 @@ int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
 #endif
 
     return 1;
+}
+
+known_client_t *fetch_single_collector_client(provision_state_t *state,
+        const char *collectorid) {
+
+    known_client_t *kc = NULL;
+
+#ifdef HAVE_SQLCIPHER
+    int rc;
+    sqlite3_stmt *sel_stmt;
+    const char *id_text, *dt_text;
+    struct tm tm;
+
+    if (state->clientdb == NULL) {
+        return NULL;
+    }
+
+    rc = sqlite3_prepare_v2(state->clientdb, select_single_col_sql, -1,
+            &sel_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+    sqlite3_bind_text(sel_stmt, 1, collectorid, -1, SQLITE_STATIC);
+    if (sqlite3_step(sel_stmt) != SQLITE_ROW) {
+        sqlite3_finalize(sel_stmt);
+        return NULL;
+    }
+
+    kc = calloc(1, sizeof(known_client_t));
+
+    id_text = (const char *)sqlite3_column_text(sel_stmt, 0);
+    kc->colname = strdup(id_text);
+    kc->medid = 0xFFFFFFFF;
+
+    kc->type = TARGET_COLLECTOR;
+    kc->ipaddress =
+        strdup((const char *)sqlite3_column_text(sel_stmt, 2));
+
+    dt_text = (const char *)sqlite3_column_text(sel_stmt, 3);
+    memset(&tm, 0, sizeof(struct tm));
+    if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+        kc->firstseen = timegm(&tm);
+    }
+
+    dt_text = (const char *)sqlite3_column_text(sel_stmt, 4);
+    memset(&tm, 0, sizeof(struct tm));
+    if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+        kc->lastseen = timegm(&tm);
+    }
+
+    if (sqlite3_column_text(sel_stmt, 5) != NULL) {
+        kc->jsonconfig =
+            strdup((const char *)sqlite3_column_text(sel_stmt, 5));
+    } else {
+        kc->jsonconfig = NULL;
+    }
+    sqlite3_finalize(sel_stmt);
+#endif
+    return kc;
+
 }
 
 collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
@@ -606,6 +713,10 @@ collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
         return NULL;
     }
     sinks = calloc(rows, sizeof(collector_udp_sink_t));
+    if (sinks == NULL) {
+        sqlite3_finalize(sel_stmt);
+        return NULL;
+    }
     *sinkcount = rows;
     ind = 0;
 
@@ -662,6 +773,10 @@ x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         return NULL;
     }
     x2x3 = calloc(rows, sizeof(x2x3_listener_t));
+    if (x2x3 == NULL) {
+        sqlite3_finalize(sel_stmt);
+        return NULL;
+    }
     *listenercount = rows;
     ind = 0;
 
@@ -718,6 +833,7 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
 
     clients = calloc(rows, sizeof(known_client_t));
     if (clients == NULL) {
+        sqlite3_finalize(sel_stmt);
         return NULL;
     }
 
