@@ -260,6 +260,51 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "xid", &(ipjson->xid));
 }
 
+static char *merge_json_objects(const char *existing, const char *received) {
+
+    struct json_tokener *tknr = json_tokener_new();
+    struct json_object *old = NULL, *newobj = NULL;
+    char *result = NULL;
+
+    if (existing) {
+        old = json_tokener_parse_ex(tknr, existing, strlen(existing));
+        json_tokener_reset(tknr);
+    }
+
+    if (received) {
+        newobj = json_tokener_parse_ex(tknr, received, strlen(received));
+        json_tokener_reset(tknr);
+    }
+
+    if (!old) {
+        if (newobj) {
+            result = strdup(json_object_to_json_string(newobj));
+        }
+    } else if (!newobj) {
+        result = strdup(json_object_to_json_string(old));
+    } else if (json_object_get_type(old) == json_type_object &&
+            json_object_get_type(newobj) == json_type_object) {
+        json_object_object_foreach(newobj, key, val) {
+            json_object_get(val);
+            json_object_object_add(old, key, val);
+        }
+        result = strdup(json_object_to_json_string(old));
+    } else {
+        // hope we never get here...
+        result = strdup(json_object_to_json_string(newobj));
+    }
+
+    if (old) {
+        json_object_put(old);
+    }
+    if (newobj) {
+        json_object_put(newobj);
+    }
+
+    json_tokener_free(tknr);
+    return result;
+}
+
 static inline int compare_intercept_times(intercept_common_t *latest,
         intercept_common_t *current) {
 
@@ -2132,6 +2177,7 @@ int modify_collector_configuration(update_con_info_t *cinfo,
     int ret = 0;
     char *uuid = NULL;
     char *jsonconfig = NULL;
+    char *mergedjson = NULL;
     int parseerr = 0;
 
     tknr = json_tokener_new();
@@ -2181,6 +2227,13 @@ int modify_collector_configuration(update_con_info_t *cinfo,
                 update_failure_page_start, uuid,
                 update_failure_page_end);
         ret = -1;
+    } else {
+        mergedjson = merge_json_objects(thiscol->jsonconfig, jsonconfig);
+        if (thiscol->jsonconfig) {
+            free(thiscol->jsonconfig);
+        }
+        thiscol->jsonconfig = mergedjson;
+        update_collector_client_row(state, thiscol);
     }
 
 endjsonparse:

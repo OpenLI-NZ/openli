@@ -263,6 +263,9 @@ typedef struct prov_collector {
     /** Common "client" state */
     prov_client_t *client;
 
+    time_t firstseen;
+    time_t lastseen;
+
     UT_hash_handle hh;
 } prov_collector_t;
 
@@ -569,6 +572,7 @@ void remove_udp_sink_mapping(provision_state_t *state,
 int add_udp_sink_mapping(provision_state_t *state, char *liid, char *sinkkey);
 
 /* Implemented in clientdb.c */
+void free_known_client(known_client_t *kc, uint8_t freeself);
 int init_clientdb(provision_state_t *state);
 void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
@@ -581,6 +585,8 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
        char *listenaddr, char *listenport, uint64_t timestamp,
        uint8_t isactive);
 void update_all_client_rows(provision_state_t *state);
+known_client_t *fetch_single_collector_client(provision_state_t *state,
+        const char *collectorid);
 known_client_t *fetch_all_collector_clients(provision_state_t *state,
         size_t *clientcount);
 known_client_t *fetch_all_mediator_clients(provision_state_t *state,
