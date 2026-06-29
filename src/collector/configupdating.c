@@ -29,6 +29,85 @@
 #include "logger.h"
 #include "collector.h"
 
+int handle_identity_config_changes(collector_identity_t *ident,
+        openli_yaml_config_pending_updates_t *pending, char *json) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_object *operatorid_json, *intpointid_json, *netelemid_json;
+    int ret = -1;
+    const char *operatorid = NULL;
+    const char *intpointid = NULL;
+    const char *netelemid = NULL;
+
+    operatorid_json = intpointid_json = netelemid_json = NULL;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, json, strlen(json));
+
+    if (parsed == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse JSON configuration received from provisioner: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        goto identfail;
+    }
+    if (json_object_object_get_ex(parsed, "operatorid",
+                &operatorid_json) &&
+            json_object_is_type(operatorid_json, json_type_string)) {
+        operatorid = json_object_get_string(operatorid_json);
+        if (operatorid) {
+            if (ident->operatorid) {
+                free(ident->operatorid);
+            }
+            ident->operatorid = strdup((char *)operatorid);
+            ident->operatorid_len = strlen(ident->operatorid);
+            UPDATE_SCALAR_CONFIG(pending, "operatorid",
+                    ident->operatorid, true, true);
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "networkelementid",
+                &netelemid_json) &&
+            json_object_is_type(netelemid_json, json_type_string)) {
+        netelemid = json_object_get_string(netelemid_json);
+        if (netelemid) {
+            if (ident->networkelemid) {
+                free(ident->networkelemid);
+            }
+            ident->networkelemid = strdup((char *)netelemid);
+            ident->networkelemid_len = strlen(ident->networkelemid);
+
+            UPDATE_SCALAR_CONFIG(pending, "networkelementid",
+                    ident->networkelemid, true, true);
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "interceptpointid",
+                &intpointid_json) &&
+            json_object_is_type(intpointid_json, json_type_string)) {
+        intpointid = json_object_get_string(intpointid_json);
+        if (intpointid) {
+            if (ident->intpointid) {
+                free(ident->intpointid);
+            }
+            ident->intpointid = strdup((char *)intpointid);
+            ident->intpointid_len = strlen(ident->intpointid);
+
+            UPDATE_SCALAR_CONFIG(pending, "interceptpointid",
+                    ident->intpointid, true, true);
+        }
+    }
+
+    ret = 0;
+identfail:
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
+
+}
+
 int handle_sip_config_changes(collector_sip_config_t *sipconfig,
         openli_yaml_config_pending_updates_t *pending, char *json) {
     struct json_tokener *tknr;
@@ -104,7 +183,6 @@ int handle_sip_config_changes(collector_sip_config_t *sipconfig,
             UPDATE_SCALAR_CONFIG(pending, "sipdebugfile",
                     sipconfig->sipdebugfile, true, true);
         }
-        //free((char *)debugfile);
     }
     ret = 0;
 

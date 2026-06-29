@@ -2806,6 +2806,7 @@ static void *start_ip_sync_thread(void *params) {
 
     while (collector_halt == 0) {
         if (__atomic_exchange_n(&config_write_required, 0, __ATOMIC_ACQUIRE)) {
+            char *jsonconfig;
             pthread_mutex_lock(&(glob->configupdate_mutex));
             if (apply_yaml_config_updates(glob->configfile,
                     &(glob->syncip.configupdates)) < 0) {
@@ -2814,6 +2815,20 @@ static void *start_ip_sync_thread(void *params) {
             clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
 
             pthread_mutex_unlock(&(glob->configupdate_mutex));
+
+            jsonconfig = collector_config_to_json(glob);
+            pthread_rwlock_wrlock(&glob->config_mutex);
+            if (glob->sharedinfo.jsonconfig) {
+                free(glob->sharedinfo.jsonconfig);
+            }
+            if (jsonconfig) {
+                glob->sharedinfo.jsonconfig = jsonconfig;
+            } else {
+                glob->sharedinfo.jsonconfig = NULL;
+            }
+            pthread_rwlock_unlock(&glob->config_mutex);
+
+            sync_thread_send_provisioner_auth(sync);
             reload_config = 0;
         }
 

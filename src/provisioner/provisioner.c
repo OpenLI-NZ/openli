@@ -488,6 +488,7 @@ static int add_collector_to_hashmap(provision_state_t *state,
     prov_collector_t *col;
     char *jsonconfig = NULL;
     char *uuidstr = NULL;
+    int ret = 0;
 
     if (decode_component_name(msgbody, msglen, &jsonconfig, &uuidstr) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
@@ -508,6 +509,9 @@ static int add_collector_to_hashmap(provision_state_t *state,
         col->client = client;
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
+        logger(LOG_INFO,
+                "OpenLI provisioner: collector %s is now active",
+                col->identifier);
     } else if (col->client != client) {
         HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
@@ -524,16 +528,16 @@ static int add_collector_to_hashmap(provision_state_t *state,
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
     } else {
-        free(jsonconfig);
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
+        col->jsonconfig = jsonconfig;
         free(uuidstr);
+        ret = 1;
     }
 
     cs->parent = (void *)col;
-    logger(LOG_INFO,
-            "OpenLI provisioner: collector %s is now active",
-            col->identifier);
-
-    return 0;
+    return ret;
 }
 
 static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
@@ -1357,6 +1361,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     uint64_t internalid;
     openli_proto_msgtype_t msgtype;
     uint8_t justauthed = 0;
+    int r;
 
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
@@ -1394,10 +1399,17 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 if (!cs->trusted) {
                     HASH_DELETE(hh, state->pendingclients, pev->client);
                 }
-                cs->trusted = 1;
-                justauthed = 1;
-                add_collector_to_hashmap(state, pev->client, cs, msgbody,
+                r = add_collector_to_hashmap(state, pev->client, cs, msgbody,
                         msglen);
+                if (r < 0) {
+                    return -1;
+                }
+                if (r == 0) {
+                    justauthed = 1;
+                    cs->trusted = 1;
+                }
+                update_collector_client_row(state,
+                        (prov_collector_t *)(cs->parent));
                 break;
             default:
                 if (cs->log_allowed) {
@@ -1417,7 +1429,6 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 cs->ipaddr, pev->fd);
         halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
-        update_collector_client_row(state, (prov_collector_t *)(cs->parent));
         return respond_collector_auth(state, pev, cs->outgoing);
    }
 
