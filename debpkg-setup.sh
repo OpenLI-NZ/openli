@@ -11,7 +11,7 @@ export SOURCENAME=`echo ${GITHUB_REF##*/} | cut -d '-' -f 1`
 apt-get update
 apt-get install -y equivs devscripts dpkg-dev quilt curl apt-transport-https \
     apt-utils ssl-cert ca-certificates gnupg lsb-release debhelper git \
-    pkg-config sed
+    pkg-config sed sudo
 
 DISTRO_CODENAME=$(lsb_release -sc)
 curl -fsSL https://packages.nz/repository-public-key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/packages-nz.gpg
