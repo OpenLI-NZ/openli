@@ -27,6 +27,14 @@ enabled=1
 gpgcheck=1
 repo_gpgcheck=1
 gpgkey=https://packages.nz/repository-public-key.asc
+
+[libtrace]
+name=OpenLI Dependencies Repository from packages.nz
+baseurl=https://libtrace.packages.nz/libtrace/redhat/${DISTRO_SUFFIX}/x86_64/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.nz/repository-public-key.asc
 EOF
 
 sudo mv /tmp/packages-nz-openli.repo /etc/yum.repos.d/
