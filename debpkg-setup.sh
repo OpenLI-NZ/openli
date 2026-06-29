@@ -16,7 +16,7 @@ apt-get install -y equivs devscripts dpkg-dev quilt curl apt-transport-https \
 DISTRO_CODENAME=$(lsb_release -sc)
 curl -fsSL https://packages.nz/repository-public-key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/packages-nz.gpg
 echo "deb [signed-by=/etc/apt/keyrings/packages-nz.gpg] https://openli.packages.nz/openli-dependencies/debian ${DISTRO_CODENAME} main" | sudo tee /etc/apt/sources.list.d/openli-deps-packages-nz.list
-echo "deb [signed-by=/etc/apt/keyrings/packages-nz.gpg] https://openli.packages.nz/openli/debian ${DISTRO_CODENAME} main" | sudo tee /etc/apt/sources.list.d/openli-packages-nz.list
+echo "deb [signed-by=/etc/apt/keyrings/packages-nz.gpg] https://libtrace.packages.nz/debian ${DISTRO_CODENAME} main" | sudo tee /etc/apt/sources.list.d/libtrace-packages-nz.list
 sudo apt update
 
 apt-get update
