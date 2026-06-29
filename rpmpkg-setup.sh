@@ -3,61 +3,41 @@ set -x -e -o pipefail
 
 mkdir -p /run/user/${UID}
 chmod 0700 /run/user/${UID}
-yum install -y wget make gcc
+yum install -y wget make gcc sudo
 
-curl -1sLf \
-  'https://dl.cloudsmith.io/public/wand/libwandio/cfg/setup/bash.rpm.sh' \
-    | bash
+DISTRO_SUFFIX=$(rpm --eval '%{dist}' | tr -d '.')
+DISTRO_VERSION=$(echo "$DISTRO_SUFFIX" | tr -d -c '0-9')
 
-curl -1sLf \
-  'https://dl.cloudsmith.io/public/wand/libwandder/cfg/setup/bash.rpm.sh' \
-    | bash
+sudo -E dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-${DISTRO_VERSION}.noarch.rpm
+sudo /usr/bin/crb enable
 
-curl -1sLf \
-  'https://dl.cloudsmith.io/public/wand/libtrace/cfg/setup/bash.rpm.sh' \
-    | bash
+cat << EOF > /tmp/packages-nz-openli.repo
+[openli]
+name=OpenLI Repository from packages.nz
+baseurl=https://openli.packages.nz/redhat/${DISTRO_SUFFIX}/x86_64/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.nz/repository-public-key.asc
 
-curl -1sLf \
-  'https://dl.cloudsmith.io/public/wand/openli/cfg/setup/bash.rpm.sh' \
-    | bash
+[openlideps]
+name=OpenLI Dependencies Repository from packages.nz
+baseurl=https://openli.packages.nz/openli-dependencies/redhat/${DISTRO_SUFFIX}/x86_64/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://packages.nz/repository-public-key.asc
+EOF
+
+sudo mv /tmp/packages-nz-openli.repo /etc/yum.repos.d/
 
 yum update -y
 
-if [[ "$1" =~ rocky* ]]; then
-        dnf install -y dnf-plugins-core epel-release || true
-        dnf config-manager --set-enabled powertools || true
-        dnf module disable -y mariadb || true
-        /usr/bin/crb enable || true
-fi
+dnf install -y dnf-plugins-core || true
+dnf module disable -y mariadb || true
 
-if [[ "$1" =~ alma* ]]; then
-        dnf install -y dnf-plugins-core epel-release || true
-        dnf config-manager --set-enabled powertools || true
-        dnf module disable -y mariadb || true
-        /usr/bin/crb enable || true
-fi
-
-if [ "$1" = "centos:8" ]; then
-        yum module -y disable mariadb
-        yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm || true
-        dnf install -y 'dnf-command(config-manager)' || true
-        yum config-manager --set-enabled PowerTools || true
-        yum config-manager --set-enabled powertools || true
-
-fi
-
-if [ "$1" = "centos:7" ]; then
-        yum install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest-7.noarch.rpm || true
-fi
-
-if [[ "$1" =~ fedora* ]]; then
-        dnf install -y rpm-build rpmdevtools 'dnf-command(builddep)' which
-        dnf group install -y "C Development Tools and Libraries"
-        dnf builddep -y rpm/openli.spec
-else
-        yum install -y rpm-build yum-utils rpmdevtools which
-        yum groupinstall -y 'Development Tools'
-        yum-builddep -y rpm/openli.spec
-fi
+yum install -y rpm-build yum-utils rpmdevtools which
+yum groupinstall -y 'Development Tools'
+yum-builddep -y rpm/openli.spec
 
 rpmdev-setuptree
