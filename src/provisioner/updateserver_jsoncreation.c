@@ -639,6 +639,9 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
         if (cols[i].colname) {
             free((void *)(cols[i].colname));
         }
+        if (cols[i].jsonconfig) {
+            free((void *)(cols[i].jsonconfig));
+        }
         free((void *)(cols[i].ipaddress));
     }
     free(cols);

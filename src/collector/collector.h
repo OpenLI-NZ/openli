@@ -399,7 +399,6 @@ typedef struct collector_global {
 // to disk
 extern volatile int config_write_required;
 
-
 int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,
         libtrace_thread_t *parent);

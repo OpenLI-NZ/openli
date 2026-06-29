@@ -609,10 +609,19 @@ static int update_collector_global_config(collector_sync_t *sync,
 
     pthread_mutex_lock(sync->glob->configupdate_mutex);
 
+    /* We end up parsing the config JSON multiple times here, which is
+     * maybe a bit wasteful but probably won't have a major impact.
+     */
+
     pthread_rwlock_wrlock(sync->sipconfig_mutex);
     handle_sip_config_changes(sync->sipconfig, &(sync->glob->configupdates),
             newconfig);
     pthread_rwlock_unlock(sync->sipconfig_mutex);
+
+    pthread_rwlock_wrlock(sync->info_mutex);
+    handle_identity_config_changes(sync->info, &(sync->glob->configupdates),
+            newconfig);
+    pthread_rwlock_unlock(sync->info_mutex);
 
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
 
@@ -656,7 +665,7 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 
 }
 
-static int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
+int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
     char uuidstr[1024];
 
     pthread_rwlock_rdlock(sync->info_mutex);
