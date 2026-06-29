@@ -18,6 +18,7 @@ baseurl=https://openli.packages.nz/openli-dependencies/redhat/${DISTRO_SUFFIX}/x
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
+module_hotfixes=1
 gpgkey=https://packages.nz/repository-public-key.asc
 
 [libtrace]
@@ -38,6 +39,6 @@ dnf module disable -y mariadb || true
 
 yum install -y rpm-build yum-utils rpmdevtools which
 yum groupinstall -y 'Development Tools'
-dnf builddep -y --setop=module_hotfixes=true rpm/openli.spec
+dnf builddep -y rpm/openli.spec
 
 rpmdev-setuptree
