@@ -12,14 +12,6 @@ sudo -E dnf install -y https://dl.fedoraproject.org/pub/epel/epel-release-latest
 sudo /usr/bin/crb enable
 
 cat << EOF > /tmp/packages-nz-openli.repo
-[openli]
-name=OpenLI Repository from packages.nz
-baseurl=https://openli.packages.nz/redhat/${DISTRO_SUFFIX}/x86_64/
-enabled=1
-gpgcheck=1
-repo_gpgcheck=1
-gpgkey=https://packages.nz/repository-public-key.asc
-
 [openlideps]
 name=OpenLI Dependencies Repository from packages.nz
 baseurl=https://openli.packages.nz/openli-dependencies/redhat/${DISTRO_SUFFIX}/x86_64/
@@ -30,7 +22,7 @@ gpgkey=https://packages.nz/repository-public-key.asc
 
 [libtrace]
 name=OpenLI Dependencies Repository from packages.nz
-baseurl=https://libtrace.packages.nz/libtrace/redhat/${DISTRO_SUFFIX}/x86_64/
+baseurl=https://libtrace.packages.nz/redhat/${DISTRO_SUFFIX}/x86_64/
 enabled=1
 gpgcheck=1
 repo_gpgcheck=1
