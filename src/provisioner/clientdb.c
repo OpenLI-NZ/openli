@@ -602,6 +602,7 @@ collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
     sqlite3_reset(sel_stmt);
 
     if (rows == 0) {
+        sqlite3_finalize(sel_stmt);
         return NULL;
     }
     sinks = calloc(rows, sizeof(collector_udp_sink_t));
@@ -624,6 +625,7 @@ collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
         }
         ind ++;
     }
+    sqlite3_finalize(sel_stmt);
 #endif
     return sinks;
 }
@@ -656,6 +658,7 @@ x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
     sqlite3_reset(sel_stmt);
 
     if (rows == 0) {
+        sqlite3_finalize(sel_stmt);
         return NULL;
     }
     x2x3 = calloc(rows, sizeof(x2x3_listener_t));
@@ -677,6 +680,7 @@ x2x3_listener_t *fetch_x2x3_listeners_for_collector(provision_state_t *state,
         x2x3[ind].isactive = (uint8_t)sqlite3_column_int(sel_stmt, 4);
         ind ++;
     }
+    sqlite3_finalize(sel_stmt);
 #endif
     return x2x3;
 }
@@ -708,6 +712,7 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
 
     sqlite3_reset(sel_stmt);
     if (rows == 0) {
+        sqlite3_finalize(sel_stmt);
         return NULL;
     }
 
@@ -754,6 +759,7 @@ known_client_t *_fetch_all_clients(provision_state_t *state,
         ind ++;
     }
     *clientcount = rows;
+    sqlite3_finalize(sel_stmt);
 #endif
     return clients;
 
