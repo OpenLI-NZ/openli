@@ -105,6 +105,8 @@ int remove_email_intercept(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr, uint8_t send_deactivate);
 int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
         const char *fullid);
+int remove_collector_udp_sink(update_con_info_t *cinfo,
+        provision_state_t *state, const char *fullid);
 
 int add_new_agency(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_defaultradius(update_con_info_t *cinfo, provision_state_t *state);
@@ -114,6 +116,8 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
         uint8_t srvtype);
 int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state);
+int add_new_collector_udp_sink(update_con_info_t *cinfo,
+        provision_state_t *state);
 
 int modify_agency(update_con_info_t *cinfo, provision_state_t *state);
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state);

@@ -96,14 +96,12 @@ static int parse_udp_sink_config(collector_global_t *glob,
         }
 
         if (snk->identifier == NULL) {
-            logger(LOG_INFO,
-                    "OpenLI: UDP sink must include a 'identifier' parameter");
-            destroy_colsync_udp_sink(snk);
-            continue;
+            snprintf(fullkey, 512, "temporaryidentifier,%s,%s",
+                    snk->listenaddr, snk->listenport);
+        } else {
+            snprintf(fullkey, 512, "%s,%s,%s", snk->identifier,
+                    snk->listenaddr, snk->listenport);
         }
-
-        snprintf(fullkey, 512, "%s,%s,%s", snk->identifier, snk->listenaddr,
-                snk->listenport);
         snk->key = strdup(fullkey);
         snk->running = 0;
 
