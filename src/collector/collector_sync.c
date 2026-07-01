@@ -2455,6 +2455,7 @@ static int withdraw_collector_udp_sink(collector_sync_t *sync, uint8_t *provmsg,
     HASH_FIND(hh, sync->glob->udpsinks, fullid, strlen(fullid), sink);
     if (sink) {
         if (sink->attached_liid) {
+            ipintercept_t *ipint;
             create_unused_udpsink_mapping_from_sink(sync, sink);
             HASH_FIND(hh_liid, sync->ipintercepts, sink->attached_liid,
                     strlen(sink->attached_liid), ipint);
@@ -2468,24 +2469,24 @@ static int withdraw_collector_udp_sink(collector_sync_t *sync, uint8_t *provmsg,
         destroy_colsync_udp_sink(sink);
     }
 
-    pthread_rwlock_unlock(&(sync->glob->mutex));
+    pthread_mutex_unlock(&(sync->glob->mutex));
 
     pthread_mutex_lock(sync->glob->configupdate_mutex);
     prepare_new_openli_yaml_config_update(pending);
     generate_array_remove_object_openli_yaml_config_update(
             &(pending->updates[pending->update_count]),
-            "udpsinks", &remobj, 1, true);
+            "udpsinks", &remobj);
     pending->update_count ++;
 
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
     pthread_mutex_unlock(sync->glob->configupdate_mutex);
     ret = 1;
 
-endudpsink:
+endsinkrem:
     if (ipaddr) free(ipaddr);
     if (port) free(port);
     if (ident) free(ident);
-    destroy_openli_yaml_config_array_object(&newobj);
+    destroy_openli_yaml_config_array_object(&remobj);
     return ret;
 }
 
@@ -2550,7 +2551,7 @@ static int new_collector_udp_sink(collector_sync_t *sync, uint8_t *provmsg,
             }
         }
     }
-    pthread_rwlock_unlock(&(sync->glob->mutex));
+    pthread_mutex_unlock(&(sync->glob->mutex));
 
     pthread_mutex_lock(sync->glob->configupdate_mutex);
     prepare_new_openli_yaml_config_update(pending);
@@ -2693,7 +2694,7 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     prepare_new_openli_yaml_config_update(pending);
     generate_array_remove_object_openli_yaml_config_update(
             &(pending->updates[pending->update_count]),
-            "x2x3inputs", &remobj, 1, true);
+            "x2x3inputs", &remobj);
     pending->update_count ++;
 
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
@@ -2950,6 +2951,18 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 break;
             case OPENLI_PROTO_ANNOUNCE_X2X3LISTENER:
                 ret = new_x2x3_listener(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_ADD_COLLECTOR_UDPSINK:
+                ret = new_collector_udp_sink(sync, provmsg, msglen);
+                if (ret == -1) {
+                    return -1;
+                }
+                break;
+            case OPENLI_PROTO_REMOVE_COLLECTOR_UDPSINK:
+                ret = withdraw_collector_udp_sink(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
@@ -3657,13 +3670,6 @@ endupdate:
     }
 
     return 1;
-}
-
-int add_udpsink_to_sync(collector_sync_t *sync, char *key, char *ident,
-        char *addr, char *port) {
-
-    
-
 }
 
 int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,

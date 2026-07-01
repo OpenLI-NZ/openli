@@ -306,8 +306,8 @@ int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype, char *jsonconfig, char *uuidstr);
-int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, char *identifier, uint64_t ts,
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
+        const char *port, const char *identifier, uint64_t ts,
         openli_proto_msgtype_t msgtype);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,

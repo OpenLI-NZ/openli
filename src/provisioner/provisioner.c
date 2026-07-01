@@ -1322,8 +1322,7 @@ static int process_udp_sink_announcement(provision_state_t *state,
     if (listenport != NULL && listenaddr != NULL && ts != 0 &&
             identifier != NULL) {
 
-        if (update_udp_sink_row(state, col, listenaddr, listenport, identifier,
-                ts) < 0) {
+        if (update_udp_sink_row(state, col, listenaddr, listenport, ts) < 0) {
             logger(LOG_INFO, "OpenLI provisioner: error while updating UDP sink information for collector %s in client DB -- ignoring", col->identifier);
             return -1;
         }
@@ -1405,7 +1404,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 process_x2x3_listener_details(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
-            case OPENLI_PROTO_ADD_UDPSINK:
+            case OPENLI_PROTO_ADD_COLLECTOR_UDPSINK:
                 process_udp_sink_announcement(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
