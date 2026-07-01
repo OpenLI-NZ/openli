@@ -293,8 +293,9 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
     (strlen(addr) + strlen(port) + strlen(identifier) + sizeof(uint64_t) + \
     (4 * 4))
 
-int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
-        char *identifier, uint64_t ts, openli_proto_msgtype_t msgtype) {
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
+        const char *port, const char *identifier, uint64_t ts,
+        openli_proto_msgtype_t msgtype) {
 
 
     ii_header_t hdr;

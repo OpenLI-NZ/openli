@@ -896,7 +896,7 @@ int remove_collector_udp_sink(update_con_info_t *cinfo,
 
     HASH_FIND(hh, state->collectors, uuid, strlen(uuid), col);
     if (!col) {
-        goto endremx2x3;
+        goto endremudp;
     }
     if (announce_udpsink_removal_to_collector(state, col, ipaddr,
             port) < 0) {
