@@ -179,7 +179,7 @@ int init_clientdb(provision_state_t *state) {
             goto endofinit;
         }
     }
-    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS udp_sinks (collector text not null, ip_address text not null, port text not null, identifier text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address));", NULL, NULL,
+    if (sqlite3_exec(state->clientdb, "CREATE TABLE IF NOT EXISTS udp_sinks (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address));", NULL, NULL,
                 NULL) != SQLITE_OK) {
         logger(LOG_INFO, "OpenLI provisioner: error while validating UDP sink table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
         rc = -1;
@@ -187,10 +187,13 @@ int init_clientdb(provision_state_t *state) {
     }
     if (sqlite3_exec(state->clientdb, "ALTER TABLE udp_sinks DROP COLUMN identifier", NULL, NULL, &errmsg) != SQLITE_OK) {
         if (errmsg) {
-            logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
-            rc = -1;
+            if (strstr(errmsg, "no such column") == NULL) {
+                logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
+                rc = -1;
+                sqlite3_free(errmsg);
+                goto endofinit;
+            }
             sqlite3_free(errmsg);
-            goto endofinit;
         }
     }
 
