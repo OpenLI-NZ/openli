@@ -455,6 +455,7 @@ int update_collector_client_row(provision_state_t *state,
         sqlite3_finalize(upd_stmt);
         return -1;
     }
+    col->lastseen = time(NULL);
     sqlite3_finalize(ins_stmt);
     sqlite3_finalize(upd_stmt);
 #endif
