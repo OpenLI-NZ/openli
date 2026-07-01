@@ -115,6 +115,8 @@ void free_known_client(known_client_t *kc, uint8_t freeself) {
 int init_clientdb(provision_state_t *state) {
     int rc;
     char *errmsg = NULL;
+    sqlite3_stmt *chk_stmt;
+    uint8_t has_ident = 0;
 
     if (state == NULL) {
         return 0;
@@ -185,15 +187,76 @@ int init_clientdb(provision_state_t *state) {
         rc = -1;
         goto endofinit;
     }
-    if (sqlite3_exec(state->clientdb, "ALTER TABLE udp_sinks DROP COLUMN identifier", NULL, NULL, &errmsg) != SQLITE_OK) {
-        if (errmsg) {
-            if (strstr(errmsg, "no such column") == NULL) {
-                logger(LOG_INFO, "OpenLI provisioner: error while validating client table in client tracking database: %s", sqlite3_errmsg(state->clientdb));
-                rc = -1;
+
+    /* If udp_sinks exists and is using the old schema, replace it with the
+     * new one (which does not have the "identifier" column).
+     */
+    if (sqlite3_prepare_v2(state->clientdb, "SELECT identifier FROM udp_sinks LIMIT 1;", -1, &chk_stmt, NULL) == SQLITE_OK) {
+        has_ident = 1;
+    }
+    sqlite3_finalize(chk_stmt);
+
+    if (has_ident) {
+        /* Migrate to new udp_sinks table schema */
+        if (sqlite3_exec(state->clientdb, "BEGIN TRANSACTION;", NULL, NULL,
+                NULL) != SQLITE_OK) {
+            rc = -1;
+            goto endofinit;
+        }
+
+        if (sqlite3_exec(state->clientdb,
+                "ALTER TABLE udp_sinks RENAME TO old_udp_sinks;",
+                NULL, NULL, &errmsg) != SQLITE_OK) {
+            sqlite3_exec(state->clientdb, "ROLLBACK;",  NULL, NULL, NULL);
+            if (errmsg) {
+                logger(LOG_INFO, "OpenLI provisioner: failed to rename old udp_sinks table: %s", errmsg);
                 sqlite3_free(errmsg);
-                goto endofinit;
             }
-            sqlite3_free(errmsg);
+            rc = -1;
+            goto endofinit;
+        }
+
+        if (sqlite3_exec(state->clientdb,
+                "CREATE TABLE IF NOT EXISTS udp_sinks (collector text not null, ip_address text not null, port text not null, last_seen text default (DATETIME('now')), primary key (collector, port, ip_address));",
+                NULL, NULL, &errmsg) != SQLITE_OK) {
+            sqlite3_exec(state->clientdb, "ROLLBACK;",  NULL, NULL, NULL);
+            if (errmsg) {
+                logger(LOG_INFO, "OpenLI provisioner: failed to create new udp_sinks table: %s", errmsg);
+                sqlite3_free(errmsg);
+            }
+            rc = -1;
+            goto endofinit;
+        }
+
+        if (sqlite3_exec(state->clientdb,
+                "INSERT INTO udp_sinks (collector, ip_address, port, last_seen) SELECT collector, ip_address, port, last_seen FROM old_udp_sinks;",
+                NULL, NULL, &errmsg) != SQLITE_OK) {
+
+            sqlite3_exec(state->clientdb, "ROLLBACK;",  NULL, NULL, NULL);
+            if (errmsg) {
+                logger(LOG_INFO, "OpenLI provisioner: failed to import data into udp_sinks table: %s", errmsg);
+                sqlite3_free(errmsg);
+            }
+            rc = -1;
+            goto endofinit;
+        }
+
+        if (sqlite3_exec(state->clientdb, "DROP TABLE old_udp_sinks;",
+                NULL, NULL, &errmsg) != SQLITE_OK) {
+
+            sqlite3_exec(state->clientdb, "ROLLBACK;",  NULL, NULL, NULL);
+            if (errmsg) {
+                logger(LOG_INFO, "OpenLI provisioner: failed to drop old udp_sinks table: %s", errmsg);
+                sqlite3_free(errmsg);
+            }
+            rc = -1;
+            goto endofinit;
+        }
+
+        if (sqlite3_exec(state->clientdb, "COMMIT;", NULL, NULL, NULL)
+                != SQLITE_OK) {
+            rc = -1;
+            goto endofinit;
         }
     }
 
