@@ -301,6 +301,38 @@ int announce_x2x3_listener_to_collector(provision_state_t *state,
 
 }
 
+int announce_udpsink_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port) {
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_udp_sink_onto_net_buffer(sock->outgoing, ipaddr,
+            port, col->identifier, OPENLI_PROTO_ADD_COLLECTOR_UDPSINK) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send X2X3 listener addition to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+}
+
+int announce_udpsink_removal_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port) {
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_udp_sink_onto_net_buffer(sock->outgoing, ipaddr,
+            port, col->identifier, OPENLI_PROTO_REMOVE_COLLECTOR_UDPSINK) < 0) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send X2X3 listener addition to collector '%s'",
+                col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+}
+
 int announce_configuration_update_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *newconfig) {
 

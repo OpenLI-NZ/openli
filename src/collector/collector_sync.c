@@ -2416,6 +2416,161 @@ void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
     destroy_openli_yaml_config_array_object(&remobj);
 }
 
+static int withdraw_collector_udp_sink(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    char *ipaddr = NULL, *port = NULL, *ident = NULL;
+    openli_yaml_config_object_t remobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
+    uint64_t ts;
+    int ret = 0;
+    colsync_udp_sink_t *sink;
+    char fullid[2048];
+
+    if (decode_udp_sink(provmsg, msglen, &ipaddr, &port, &ident, &ts) < 0) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid UDP sink from provisioner for withdrawal.");
+        }
+        ret = -1;
+        goto endsinkrem;
+    }
+
+    if (ipaddr == NULL || port == NULL || ident == NULL) {
+        ret = 0;
+        goto endsinkrem;
+    }
+
+    remobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    remobj.fields[0].key = strdup("listenaddr");
+    remobj.fields[0].value = strdup(ipaddr);
+    remobj.fields[0].is_string = false;
+    remobj.fields[1].key = strdup("listenport");
+    remobj.fields[1].value = strdup(port);
+    remobj.fields[1].is_string = false;
+    remobj.field_count = 2;
+    snprintf(fullid, 2048, "%s,%s,%s", ident, ipaddr, port);
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_FIND(hh, sync->glob->udpsinks, fullid, strlen(fullid), sink);
+    if (sink) {
+        if (sink->attached_liid) {
+            create_unused_udpsink_mapping_from_sink(sync, sink);
+            HASH_FIND(hh_liid, sync->ipintercepts, sink->attached_liid,
+                    strlen(sink->attached_liid), ipint);
+            if (ipint) {
+                create_ipiri_job_from_vendor(sync, ipint, sink->cin,
+                        OPENLI_IPIRI_ENDWHILEACTIVE);
+            }
+            halt_udp_sink_thread(sink);
+        }
+        HASH_DELETE(hh, sync->glob->udpsinks, sink);
+        destroy_colsync_udp_sink(sink);
+    }
+
+    pthread_rwlock_unlock(&(sync->glob->mutex));
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_remove_object_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "udpsinks", &remobj, 1, true);
+    pending->update_count ++;
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
+    ret = 1;
+
+endudpsink:
+    if (ipaddr) free(ipaddr);
+    if (port) free(port);
+    if (ident) free(ident);
+    destroy_openli_yaml_config_array_object(&newobj);
+    return ret;
+}
+
+static int new_collector_udp_sink(collector_sync_t *sync, uint8_t *provmsg,
+        uint16_t msglen) {
+
+    char *ipaddr = NULL, *port = NULL, *ident = NULL;
+    uint64_t ts;
+    int ret = 0;
+    colsync_udp_sink_t *sink;
+    char fullid[2048];
+    saved_udpsink_mapping_t *map;
+
+    openli_yaml_config_object_t newobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
+
+    if (decode_udp_sink(provmsg, msglen, &ipaddr, &port, &ident, &ts) < 0) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO,
+                    "OpenLI: received invalid UDP sink announcement from provisioner.");
+        }
+        ret = -1;
+        goto endudpsink;
+    }
+
+    if (ipaddr == NULL || port == NULL || ident == NULL) {
+        ret = 0;
+        goto endudpsink;
+    }
+
+    newobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    newobj.fields[0].key = strdup("listenaddr");
+    newobj.fields[0].value = strdup(ipaddr);
+    newobj.fields[0].is_string = false;
+    newobj.fields[1].key = strdup("listenport");
+    newobj.fields[1].value = strdup(port);
+    newobj.fields[1].is_string = false;
+    newobj.field_count = 2;
+
+    snprintf(fullid, 2048, "%s,%s,%s", ident, ipaddr, port);
+
+    pthread_mutex_lock(&(sync->glob->mutex));
+    HASH_FIND(hh, sync->glob->udpsinks, fullid, strlen(fullid), sink);
+    if (!sink) {
+        sink = calloc(1, sizeof(colsync_udp_sink_t));
+        sink->listenport = strdup(port);
+        sink->listenaddr = strdup(ipaddr);
+        sink->identifier = strdup(ident);
+        sink->key = strdup(fullid);
+
+        HASH_ADD_KEYPTR(hh, sync->glob->udpsinks, sink->key,
+                strlen(sink->key), sink);
+        HASH_FIND(hh, sync->unavailable_udpsinks, sink->key, strlen(sink->key),
+                map);
+        if (map) {
+            if (create_udp_sink_thread(sync, sink, map->config) >= 0) {
+                HASH_DELETE(hh, sync->unavailable_udpsinks, map);
+                clean_intercept_udp_sink(map->config);
+                free(map->config);
+                free(map->key);
+                free(map);
+            }
+        }
+    }
+    pthread_rwlock_unlock(&(sync->glob->mutex));
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_object_append_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "udpsinks", &newobj, 1, true);
+    pending->update_count ++;
+
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
+    ret = 1;
+
+endudpsink:
+    if (ipaddr) free(ipaddr);
+    if (port) free(port);
+    if (ident) free(ident);
+    destroy_openli_yaml_config_array_object(&newobj);
+    return ret;
+}
+
 static int new_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
@@ -2493,6 +2648,8 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     uint8_t isactive;
     char identifier[1024];
     x_input_t *xinp;
+    openli_yaml_config_object_t remobj;
+    openli_yaml_config_pending_updates_t *pending=&(sync->glob->configupdates);
 
     if (decode_x2x3_listener(provmsg, msglen, &ipaddr, &port, &ts,
             &isactive) < 0) {
@@ -2507,6 +2664,14 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
         return 0;
     }
     snprintf(identifier, 1024, "%s-%s", ipaddr, port);
+    remobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    remobj.fields[0].key = strdup("listenaddr");
+    remobj.fields[0].value = strdup(ipaddr);
+    remobj.fields[0].is_string = false;
+    remobj.fields[1].key = strdup("listenport");
+    remobj.fields[1].value = strdup(port);
+    remobj.fields[1].is_string = false;
+    remobj.field_count = 2;
     free(ipaddr);
     free(port);
     remove_x2x3_from_sync(sync, identifier, 0);
@@ -2523,7 +2688,16 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
         destroy_x_input(xinp);
     }
     pthread_rwlock_unlock(sync->xinput_mutex);
+
+    pthread_mutex_lock(sync->glob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+    generate_array_remove_object_openli_yaml_config_update(
+            &(pending->updates[pending->update_count]),
+            "x2x3inputs", &remobj, 1, true);
+    pending->update_count ++;
+
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(sync->glob->configupdate_mutex);
     return 1;
 }
 
@@ -2675,19 +2849,19 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                     return -1;
                 }
                 break;
-            case OPENLI_PROTO_ADD_UDPSINK:
+            case OPENLI_PROTO_ADD_INTERCEPT_UDPSINK:
                 ret = sync_new_intercept_udpsink(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
                 break;
-            case OPENLI_PROTO_REMOVE_UDPSINK:
+            case OPENLI_PROTO_REMOVE_INTERCEPT_UDPSINK:
                 ret = sync_remove_intercept_udpsink(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
                 }
                 break;
-            case OPENLI_PROTO_MODIFY_UDPSINK:
+            case OPENLI_PROTO_MODIFY_INTERCEPT_UDPSINK:
                 ret = sync_modify_intercept_udpsink(sync, provmsg, msglen);
                 if (ret == -1) {
                     return -1;
@@ -3485,6 +3659,13 @@ endupdate:
     return 1;
 }
 
+int add_udpsink_to_sync(collector_sync_t *sync, char *key, char *ident,
+        char *addr, char *port) {
+
+    
+
+}
+
 int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,
         char *port) {
     x_input_sync_t *found;
@@ -3640,7 +3821,8 @@ int sync_thread_main(collector_sync_t *sync) {
                     }
                     if (push_udp_sink_onto_net_buffer(sync->outgoing,
                             sink->listenaddr, sink->listenport,
-                            sink->identifier, (uint64_t)tv.tv_sec) < 0) {
+                            sink->identifier, (uint64_t)tv.tv_sec,
+                            OPENLI_PROTO_ADD_COLLECTOR_UDPSINK) < 0) {
                         logger(LOG_INFO,"OpenLI: collector is unable to queue UDP sink update message (%s) for provisioner.", sink->key);
                     }
                 }
