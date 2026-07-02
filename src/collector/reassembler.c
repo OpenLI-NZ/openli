@@ -511,7 +511,7 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
         uint8_t hold_packet) {
 
     libtrace_ip_t *ipheader;
-    uint16_t ethertype, iprem;
+    uint16_t ethertype, iprem, caprem;
     uint32_t rem;
     void *transport;
     ip_reass_fragment_t *newfrag;
@@ -533,18 +533,27 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
         return 1;
     }
 
-    /* This is a fragment, add it to our fragment list */
     if (rem <= 4 * ipheader->ip_hl) {
         return -1;
     }
 
+    /* This is a fragment, add it to our fragment list */
     transport = ((char *)ipheader) + (4 * ipheader->ip_hl);
+    caprem = rem - (4 * ipheader->ip_hl);
 
     if (ipheader->ip_len == 0) {
         /* XXX can we tell if there is a FCS present and remove that? */
-        iprem = rem - (4 * ipheader->ip_hl);
+        iprem = caprem;
     } else {
+        if (ntohs(ipheader->ip_len) < (4 * ipheader->ip_hl)) {
+            return -1;
+        }
         iprem = ntohs(ipheader->ip_len) - 4 * (ipheader->ip_hl);
+    }
+
+    if (iprem > caprem) {
+        // truncated payload, so we can't safely reassemble */
+        return -1;
     }
 
     HASH_FIND(hh, stream->fragments, &(fragoff), sizeof(fragoff), newfrag);
@@ -707,6 +716,10 @@ int get_ipfrag_ports(ip_reassemble_stream_t *stream, uint16_t *src,
         return -1;
     }
 
+    if (stream->fragments == NULL) {
+        return 0;
+    }
+
     if (!stream->sorted) {
         HASH_SORT(stream->fragments, ipfrag_sort);
         stream->sorted = 1;
@@ -746,12 +759,13 @@ int is_ip_reassembled(ip_reassemble_stream_t *stream) {
     }
 
     HASH_ITER(hh, stream->fragments, iter, tmp) {
-        assert(iter->fragoff >= expfrag);
-        if (iter->fragoff != expfrag) {
+        if (iter->fragoff > expfrag) {
             return 0;
         }
 
-        expfrag += iter->length;
+        if (iter->fragoff + iter->length > expfrag) {
+            expfrag = iter->fragoff + iter->length;
+        }
     }
 
     if (expfrag != stream->endfrag || stream->endfrag == 0) {
@@ -767,7 +781,6 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
 
     ip_reass_fragment_t *iter, *tmp;
     uint16_t expfrag = 0;
-    uint16_t contalloced = 0;
 
     if (stream == NULL) {
         return 0;
@@ -781,25 +794,15 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
     *proto = 0;
     *len = 0;
     HASH_ITER(hh, stream->fragments, iter, tmp) {
-        assert(iter->fragoff >= expfrag);
-        if (iter->fragoff != expfrag) {
+        if (iter->fragoff > expfrag) {
             *len = 0;
             return 0;
         }
 
-        if (*content == NULL || contalloced < expfrag + iter->length) {
-            *content = realloc(*content, expfrag + (iter->length * 2));
-            contalloced = expfrag + (iter->length * 2);
-
-            if (*content == NULL) {
-                logger(LOG_INFO, "OpenLI: OOM while allocating %u bytes to store reassembled IP fragments.", contalloced);
-                return -1;
-            }
+        if (iter->fragoff + iter->length > *len) {
+            *len = (iter->fragoff + iter->length);
+            expfrag = iter->fragoff + iter->length;
         }
-
-        memcpy((*content) + expfrag, iter->content, iter->length);
-        *len += iter->length;
-        expfrag += iter->length;
     }
 
     if (expfrag != stream->endfrag || stream->endfrag == 0) {
@@ -807,6 +810,17 @@ int get_next_ip_reassembled(ip_reassemble_stream_t *stream, char **content,
         *len = 0;
         return 0;
     }
+
+    *content = calloc(*len, sizeof(char));
+    if (*content == NULL) {
+        logger(LOG_INFO, "OpenLI: OOM while allocating space to reassemble IP fragments");
+        *len = 0;
+        return -1;
+    }
+    HASH_ITER(hh, stream->fragments, iter, tmp) {
+        memcpy((*content) + iter->fragoff, iter->content, iter->length);
+    }
+
 
     /* give all of the packets thus far back to the caller, so
      * they can decide if they need to "intercept" them -- the
