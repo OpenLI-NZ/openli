@@ -166,13 +166,15 @@ typedef enum {
     OPENLI_PROTO_X2X3_LISTENER_DETAILS,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_KEY,
     OPENLI_PROTO_INTEGRITY_SIGNATURE_RESPONSE,  // no longer used
-    OPENLI_PROTO_ADD_UDPSINK,
-    OPENLI_PROTO_MODIFY_UDPSINK,
-    OPENLI_PROTO_REMOVE_UDPSINK,
+    OPENLI_PROTO_ADD_INTERCEPT_UDPSINK,
+    OPENLI_PROTO_MODIFY_INTERCEPT_UDPSINK,
+    OPENLI_PROTO_REMOVE_INTERCEPT_UDPSINK,
     OPENLI_PROTO_UPDATE_COMPONENT_CONFIG,
     OPENLI_PROTO_WITHDRAW_X2X3LISTENER,
     OPENLI_PROTO_ANNOUNCE_X2X3LISTENER,
     OPENLI_PROTO_ANNOUNCE_LEA_DIGEST,
+    OPENLI_PROTO_ADD_COLLECTOR_UDPSINK,
+    OPENLI_PROTO_REMOVE_COLLECTOR_UDPSINK,
 } openli_proto_msgtype_t;
 
 typedef struct net_buffer {
@@ -304,8 +306,9 @@ int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
         authtype, char *jsonconfig, char *uuidstr);
-int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr,
-        char *port, char *identifier, uint64_t ts);
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
+        const char *port, const char *identifier, uint64_t ts,
+        openli_proto_msgtype_t msgtype);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
         char *liid, uint8_t *encryptkey, size_t encryptlen,
         payload_encryption_method_t method, openli_liid_format_t liidformat);

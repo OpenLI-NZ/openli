@@ -2318,6 +2318,9 @@ static collector_global_t *parse_global_config(char *configfile) {
     char *jsonconfig;
     char *cinstatekey_file = NULL;
     void *dbptr = NULL;
+    colsync_udp_sink_t *sink, *tmp;
+    char uuidstr[64];
+    char fullkey[2048];
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2342,11 +2345,12 @@ static collector_global_t *parse_global_config(char *configfile) {
     }
 
     if (uuid_is_null(glob->sharedinfo.uuid)) {
-        char uuidstr[64];
+
         openli_yaml_config_pending_updates_t *pending;
 
         uuid_generate(glob->sharedinfo.uuid);
         uuid_unparse(glob->sharedinfo.uuid, uuidstr);
+
         /* rewrite config file to contain new UUID */
         //emit_collector_config(configfile, glob);
         pthread_mutex_lock(&(glob->configupdate_mutex));
@@ -2357,8 +2361,29 @@ static collector_global_t *parse_global_config(char *configfile) {
             logger(LOG_INFO, "Failed to write updated YAML configuration to local config file: %s", configfile);
         }
         clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
+
+
         pthread_mutex_unlock(&(glob->configupdate_mutex));
+    } else {
+        uuid_unparse(glob->sharedinfo.uuid, uuidstr);
     }
+
+    HASH_ITER(hh, glob->syncip.udpsinks, sink, tmp) {
+        if (sink->identifier == NULL) {
+            HASH_DELETE(hh, glob->syncip.udpsinks, sink);
+            free(sink->key);
+
+            snprintf(fullkey, 2048, "%s,%s,%s", uuidstr, sink->listenaddr,
+                    sink->listenport);
+
+            sink->key = strdup(fullkey);
+            sink->identifier = strdup(uuidstr);
+
+            HASH_ADD_KEYPTR(hh, glob->syncip.udpsinks, sink->key,
+                    strlen(sink->key), sink);
+        }
+    }
+
     jsonconfig = collector_config_to_json(glob);
     pthread_rwlock_wrlock(&glob->config_mutex);
     glob->sharedinfo.jsonconfig = jsonconfig;

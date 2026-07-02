@@ -856,6 +856,63 @@ int remove_defaultradius(update_con_info_t *cinfo UNUSED,
     return 0;
 }
 
+int remove_collector_udp_sink(update_con_info_t *cinfo,
+        provision_state_t *state, const char *fullid) {
+
+    char *copy, *tok;
+    char *uuid, *ipaddr, *port;
+    prov_collector_t *col;
+    int ret = 0;
+
+    copy = strdup(fullid);
+    tok = strtok(copy, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove UDP sink '%s' via update socket.",
+                fullid);
+        goto endremudp;
+    }
+    uuid = tok;
+
+    tok = strtok(NULL, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove UDP sink '%s' via update socket.",
+                fullid);
+        goto endremudp;
+    }
+    ipaddr = tok;
+
+    tok = strtok(NULL, ",");
+    if (!tok) {
+        logger(LOG_INFO,
+                "OpenLI: unable to remove UDP sink '%s' via update socket.",
+                fullid);
+        goto endremudp;
+    }
+    port = tok;
+
+    remove_udpsink_from_clientdb(state, uuid, ipaddr, port);
+
+    HASH_FIND(hh, state->collectors, uuid, strlen(uuid), col);
+    if (!col) {
+        goto endremudp;
+    }
+    if (announce_udpsink_removal_to_collector(state, col, ipaddr,
+            port) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to remove UDP sink from collector: %s (%s:%s). %s",
+                update_failure_page_start, uuid, ipaddr, port,
+                update_failure_page_end);
+        ret = -1;
+        goto endremudp;
+    }
+    ret = 1;
+endremudp:
+    free(copy);
+    return ret;
+}
+
 int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
         const char *fullid) {
 
@@ -1064,6 +1121,77 @@ defraderr:
     }
     json_tokener_free(tknr);
     return -1;
+}
+
+int add_new_collector_udp_sink(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    struct json_object *parsed = NULL;
+    struct json_tokener *tknr;
+    prov_collector_t *thiscol;
+
+    struct json_object *ipaddr;
+    struct json_object *port;
+    struct json_object *uuid;
+
+    char *ipaddr_str = NULL;
+    char *port_str = NULL;
+    char *uuid_str = NULL;
+
+    int parseerr = 0;
+    int ret = -1;
+
+    tknr = json_tokener_new();
+
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto x2x3err;
+    }
+
+    json_object_object_get_ex(parsed, "uuid", &(uuid));
+    json_object_object_get_ex(parsed, "ipaddress", &(ipaddr));
+    json_object_object_get_ex(parsed, "port", &(port));
+
+    EXTRACT_JSON_STRING_PARAM("ipaddress", "UDP Sink", ipaddr,
+            ipaddr_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("port", "UDP Sink", port,
+            port_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("uuid", "UDP Sink", uuid,
+            uuid_str, &parseerr, true);
+
+    if (parseerr) {
+        goto x2x3err;
+    }
+
+    HASH_FIND(hh, state->collectors, uuid_str, strlen(uuid_str), thiscol);
+    if (thiscol) {
+        if (announce_udpsink_to_collector(state, thiscol, ipaddr_str,
+                port_str) < 0) {
+            goto x2x3err;
+        }
+        update_udp_sink_row(state, thiscol, ipaddr_str, port_str, 0);
+    }
+
+    ret = 0;
+
+x2x3err:
+    if (ipaddr_str) free(ipaddr_str);
+    if (port_str) free(port_str);
+    if (uuid_str) free(uuid_str);
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
 }
 
 int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state) {

@@ -293,8 +293,9 @@ int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb) {
     (strlen(addr) + strlen(port) + strlen(identifier) + sizeof(uint64_t) + \
     (4 * 4))
 
-int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
-        char *identifier, uint64_t ts) {
+int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
+        const char *port, const char *identifier, uint64_t ts,
+        openli_proto_msgtype_t msgtype) {
 
 
     ii_header_t hdr;
@@ -302,7 +303,7 @@ int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
 
     totallen = UDP_SINK_BODY_LEN(addr, port, identifier);
     // another sneaky re-use of an existing message type...
-    populate_header(&hdr, OPENLI_PROTO_ADD_UDPSINK, totallen, 0);
+    populate_header(&hdr, msgtype, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
             sizeof(ii_header_t)) == -1) {
@@ -320,6 +321,7 @@ int push_udp_sink_onto_net_buffer(net_buffer_t *nb, char *addr, char *port,
         return -1;
     }
 
+    /* in practice, this is the collector UUID */
     if (push_tlv(nb, OPENLI_PROTO_FIELD_UDP_SINK_IDENTIFIER,
             (uint8_t *)identifier, strlen(identifier)) == -1) {
         return -1;
@@ -1313,19 +1315,19 @@ pushudpsinkfail:
 int push_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink) {
     return push_intercept_udpsink_generic(nb, common, sink,
-            OPENLI_PROTO_ADD_UDPSINK);
+            OPENLI_PROTO_ADD_INTERCEPT_UDPSINK);
 }
 
 int push_modify_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink) {
     return push_intercept_udpsink_generic(nb, common, sink,
-            OPENLI_PROTO_MODIFY_UDPSINK);
+            OPENLI_PROTO_MODIFY_INTERCEPT_UDPSINK);
 }
 
 int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
         intercept_common_t *common, intercept_udp_sink_t *sink) {
     return push_intercept_udpsink_generic(nb, common, sink,
-            OPENLI_PROTO_REMOVE_UDPSINK);
+            OPENLI_PROTO_REMOVE_INTERCEPT_UDPSINK);
 }
 
 #define STATICIP_RANGE_BODY_LEN(ipint, ipr) \
