@@ -480,7 +480,9 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
      * null-terminated and can be parsed using strtoul to get the number
      * as an integer.
      */
-    assert(clengthend - clengthstart < 12);
+    if (clengthend - clengthstart >= 12) {
+        return NULL;
+    }
     memset(clenstr, 0, 12);
     memcpy(clenstr, (char *)clengthstart, clengthend - clengthstart);
     clenval = strtoul(clenstr, NULL, 10);
