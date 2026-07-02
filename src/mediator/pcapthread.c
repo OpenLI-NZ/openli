@@ -386,7 +386,6 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
     bufrem -= liidlen;
     if (pdulen - liidlen > 65535) {
         logger(LOG_INFO, "OpenLI Mediator: raw IP packet is too large to write as a pcap packet, possibly corrupt");
-        assert(0);
         return pdulen + sizeof(uint32_t);
     }
     HASH_FIND(hh, pstate->active, liidspace,
@@ -577,8 +576,15 @@ static int write_pcap_from_buffered_rmq(handover_t *ho,
                 return -1;
             }
         } else if (ho->handover_type == HANDOVER_HI2) {
-            /* TODO */
-            assert(0);
+            if (pstate->decoder == NULL) {
+                pstate->decoder = wandder_create_etsili_decoder();
+            }
+            wandder_attach_etsili_buffer(pstate->decoder, nextrec, bufrem, 0);
+            advance = wandder_etsili_get_pdu_length(pstate->decoder);
+            if (advance == 0 || advance > bufrem) {
+                logger(LOG_INFO, "OpenLI Mediator: incomplete or corrupt HI2 record received by pcap thread");
+                return -1;
+            }
         } else if (ho->handover_type == HANDOVER_RAWIP) {
             if ((advance = write_rawip_to_pcap(nextrec, bufrem, pstate))
                     == 0) {
