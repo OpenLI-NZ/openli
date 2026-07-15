@@ -668,6 +668,10 @@ static int forward_provmsg_to_workers(void **zmq_socks, int sockcount,
 int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
     char uuidstr[1024];
 
+    if (sync->outgoing == NULL) {
+        return 0;
+    }
+
     pthread_rwlock_rdlock(sync->info_mutex);
     /* Put our auth message onto the outgoing buffer */
     uuid_unparse(sync->info->uuid, uuidstr);
