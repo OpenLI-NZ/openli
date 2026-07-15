@@ -161,6 +161,10 @@ int create_ssl_context(openli_ssl_config_t *sslconf) {
 
     if (sslconf->certfile && sslconf->keyfile && sslconf->cacertfile) {
         sslconf->ctx = ssl_init(sslconf);
+        if (sslconf->ctx == NULL) {
+            logger(LOG_INFO, "OpenLI: TLS was requested but the SSL context could not be created -- refusing to continue unencrypted.");
+            return -1;
+        }
         logger(LOG_INFO, "OpenLI: creating new SSL context for TLS sessions");
         return 0;
     }
