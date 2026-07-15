@@ -95,6 +95,18 @@ static SSL_CTX * ssl_init(openli_ssl_config_t *sslconf) {
     /* Enforce use of TLSv1_3 */
     SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
 
+    if (sslconf->tlsgroups) {
+        if (SSL_CTX_set1_groups_list(ctx, sslconf->tlsgroups) != 1) {
+            logger(LOG_INFO, "OpenLI: unable to set TLS key exchange groups to {%s}",
+                    sslconf->tlsgroups);
+            logger(LOG_INFO, "OpenLI: check that your OpenSSL version supports every group in that list (post-quantum groups require OpenSSL 3.5 or later)");
+            SSL_CTX_free(ctx);
+            return NULL;
+        }
+        logger(LOG_DEBUG, "OpenLI: TLS key exchange groups restricted to %s",
+                sslconf->tlsgroups);
+    }
+
     if (SSL_CTX_load_verify_locations(ctx, sslconf->cacertfile,
                 "./") != 1){ //TODO this might want to be changed
         logger(LOG_INFO, "OpenLI: SSL CA cert loading {%s} failed",
@@ -197,6 +209,11 @@ void free_ssl_config(openli_ssl_config_t *sslconf) {
     if (sslconf->cacertfile) {
         free(sslconf->cacertfile);
         sslconf->cacertfile = NULL;
+    }
+
+    if (sslconf->tlsgroups) {
+        free(sslconf->tlsgroups);
+        sslconf->tlsgroups = NULL;
     }
 
     if (sslconf->ctx) {
@@ -312,6 +329,23 @@ int reload_ssl_config(openli_ssl_config_t *current,
         }
     }
 
+    if (current->tlsgroups == NULL && newconf->tlsgroups != NULL) {
+        current->tlsgroups = newconf->tlsgroups;
+        newconf->tlsgroups = NULL;
+        changestate = 1;
+    } else if (current->tlsgroups != NULL && newconf->tlsgroups == NULL) {
+        free(current->tlsgroups);
+        current->tlsgroups = NULL;
+        changestate = 1;
+    } else if (current->tlsgroups && newconf->tlsgroups) {
+        if (strcmp(current->tlsgroups, newconf->tlsgroups) != 0) {
+            free(current->tlsgroups);
+            current->tlsgroups = newconf->tlsgroups;
+            newconf->tlsgroups = NULL;
+            changestate = 1;
+        }
+    }
+
     if (!changestate) {
         logger(LOG_INFO, "OpenLI: TLS configuration is unchanged.");
         return 0;
@@ -327,7 +361,7 @@ int reload_ssl_config(openli_ssl_config_t *current,
     return 1;
 }
 
-#define PEM_READ_SIZE 1024
+#define PEM_READ_SIZE 16384
 
 int load_pem_into_memory(char *pemfile, char **memspace) {
 

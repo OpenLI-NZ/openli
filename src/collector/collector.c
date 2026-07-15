@@ -2321,6 +2321,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sslconf.keyfile = NULL;
     glob->sslconf.cacertfile = NULL;
     glob->sslconf.logkeyfile = NULL;
+    glob->sslconf.tlsgroups = NULL;
     glob->sslconf.ctx = NULL;
 
     glob->RMQ_conf.name = NULL;

@@ -87,6 +87,91 @@ have created an `openli` user to run the provisioner component:
     chmod 400 /etc/openli/openli-provisioner-crt.pem
 
 
+## Post-quantum cryptography
+
+OpenSSL 3.5 (an LTS release, supported until 2030) added support for the
+NIST post-quantum standards to its default provider: ML-KEM (FIPS 203) for
+key exchange and ML-DSA (FIPS 204) for signatures. If you are running
+OpenSSL 3.5 or later, you can use these to protect OpenLI's internal
+communications against "harvest now, decrypt later" attacks, where an
+adversary records your traffic today and decrypts it once a
+cryptographically relevant quantum computer exists.
+
+You do not need liboqs, the OQS provider, or any special build of OpenLI to
+do this -- everything below uses stock OpenSSL. Check what you have with:
+
+    openssl version
+
+### Post-quantum key exchange
+
+This is the part that matters most for harvest-now-decrypt-later, and on
+OpenSSL 3.5 or later you get it for free: `X25519MLKEM768` is in OpenSSL's
+default group list, so an OpenLI deployment where both ends run OpenSSL 3.5+
+will already negotiate a post-quantum hybrid key exchange without any
+configuration at all.
+
+The default list also still includes classical groups, though, so a peer
+that does not offer ML-KEM will quietly fall back to X25519. If you would
+rather refuse such a connection than downgrade it, use the `tlsgroups`
+option to name the only groups you are willing to accept:
+
+    tlsgroups: X25519MLKEM768:SecP384r1MLKEM1024
+
+`tlsgroups` takes an OpenSSL group list -- a `:` separated list of group
+names in order of preference. Useful post-quantum names are
+`X25519MLKEM768`, `SecP256r1MLKEM768` and `SecP384r1MLKEM1024` (each a
+hybrid of ML-KEM with a classical curve, so the result is no weaker than
+the classical curve alone even if ML-KEM is later broken), plus the pure
+`MLKEM512`, `MLKEM768` and `MLKEM1024`. Hybrids are the conservative choice
+and are what we would suggest.
+
+Although it is described here in post-quantum terms, `tlsgroups` is a
+general option: it accepts any group list your OpenSSL release
+understands, including classical-only lists such as `X25519:P-384`, and
+the option itself works on OpenSSL releases much older than 3.5 -- it is
+only the post-quantum group names that need 3.5.
+
+A handshake succeeds as long as both ends have at least one group in
+common, so you do not have to roll this out everywhere at once. A
+component restricted to `X25519MLKEM768` will still talk to a peer that
+has no `tlsgroups` set at all, because OpenSSL 3.5's defaults include that
+group -- so you can enable it one component at a time.
+
+What will fail is a peer that offers no group you accept: one restricted
+to a classical-only list, or one running an OpenSSL older than 3.5, which
+has no ML-KEM to offer. That is the point of the option -- such a peer is
+refused rather than silently downgraded -- but it does mean you should
+upgrade every component to OpenSSL 3.5 before you start restricting
+groups anywhere.
+
+If OpenSSL does not recognise a name in the list -- most likely because
+you are on a release older than 3.5 -- OpenLI will log an error and fail
+to build an SSL context, so check the logs after changing this option.
+Leaving `tlsgroups` unset keeps OpenSSL's defaults, which is the right
+choice for most people.
+
+### Post-quantum certificates
+
+Key exchange protects the confidentiality of traffic recorded today.
+Certificates are a separate question: they authenticate the components to
+each other at the time of the handshake, so a quantum attacker cannot use a
+future capability to retrospectively forge a signature on a handshake that
+has already happened. Migrating them is therefore much less urgent than
+migrating key exchange, and you may reasonably choose to leave your RSA
+certificates alone for now.
+
+If you do want ML-DSA certificates, `./createCertsPQC` in the source tree
+generates a self-signed test set in the same way `createCerts` does, but
+using ML-DSA-87 instead of RSA. It requires OpenSSL 3.5 or later. The
+resulting certificates are used exactly like the RSA ones -- point
+`tlscert`, `tlskey` and `tlsca` at them as normal.
+
+Be aware that ML-DSA certificates are considerably larger than their RSA
+equivalents (roughly 10KB against roughly 2KB), which makes the handshake
+correspondingly bigger. Every component in the deployment needs to be
+running OpenSSL 3.5+ before you switch, since older versions cannot verify
+an ML-DSA signature at all.
+
 # Configuring OpenLI components to use the certificates
 
 You can enable internal TLS encryption by adding the following three options
@@ -96,6 +181,8 @@ to your configuration file for each component:
  * `tlskey`:  the location of the component's key file
  * `tlsca`: the location of the certificate file for the CA that signed the
           certificates (i.e. openli-ca-crt.pem).
+ * `tlsgroups`: optional -- restricts TLS key exchange to a specific list of
+          groups. See the post-quantum cryptography section above.
 
 If these config options are present and the certificates are successfully
 read on start-up, OpenLI will use TLS to encrypt all inter-component

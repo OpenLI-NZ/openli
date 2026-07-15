@@ -207,6 +207,7 @@ static int init_mediator_config(mediator_state_t *state,
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
     state->sslconf.logkeyfile = NULL;
+    state->sslconf.tlsgroups = NULL;
     state->sslconf.ctx = NULL;
 
     state->RMQ_conf.name = NULL;

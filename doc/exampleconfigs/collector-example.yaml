@@ -105,6 +105,11 @@ logstatfrequency: 5
 #tlskey: /etc/openli/openli-collector-key.pem
 #tlsca: /etc/openli/openli-ca-crt.pem
 
+# Restricts TLS key exchange to the groups listed here, in order of
+# preference. Peers must have at least one group in common to connect.
+# Leave commented out to use OpenSSL's defaults. See doc/TLSDoc.md.
+#tlsgroups: X25519MLKEM768:SecP384r1MLKEM1024
+
 # If set to 'no', intercepted packets streamed by this collector to the
 # mediator will not be encrypted -- this may be desirable for performance
 # reasons. Make sure you set the corresponding option on the mediator as

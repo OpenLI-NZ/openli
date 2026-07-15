@@ -294,6 +294,7 @@ static int emit_basic_collector_options(collector_global_t *conf,
     YAML_EMIT_STRING(event, "tlscert", conf->sslconf.certfile);
     YAML_EMIT_STRING(event, "tlskey", conf->sslconf.keyfile);
     YAML_EMIT_STRING(event, "tlsca", conf->sslconf.cacertfile);
+    YAML_EMIT_STRING(event, "tlsgroups", conf->sslconf.tlsgroups);
     YAML_EMIT_STRING(event, "tlskeylogfile", conf->sslconf.logkeyfile);
 
     YAML_EMIT_BOOLEAN(event, "sipignoresdpo",

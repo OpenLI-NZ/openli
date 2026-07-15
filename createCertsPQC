@@ -1,0 +1,51 @@
+#!/bin/bash
+
+# Copyright (C) 2025  Telefónica Innovación Digital (laura.dominguez.cespedes@telefonica.com)
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+# Creates a set of self-signed test certificates that use ML-DSA-87 (FIPS 204)
+# for signatures, as an alternative to the RSA certificates produced by
+# ./createCerts. Requires OpenSSL 3.5 or later.
+#
+# These are for testing only -- see doc/TLSDoc.md before using post-quantum
+# certificates in a real deployment.
+
+set -e
+
+if ! openssl list -signature-algorithms | grep -qi 'ML-DSA-87'; then
+    echo "error: this OpenSSL build does not provide ML-DSA-87." >&2
+    echo "ML-DSA requires OpenSSL 3.5 or later; you have:" >&2
+    openssl version >&2
+    exit 1
+fi
+
+# ML-DSA is a "pure" signature algorithm -- it does its own hashing, so unlike
+# createCerts we must not pass a -sha256 style digest option to any of these.
+
+openssl req -x509 -new -newkey ML-DSA-87 -noenc --subj /CN=OpenLItestCA -days 3650 -keyout ca-key.pem -out ca-crt.pem
+
+openssl genpkey -algorithm ML-DSA-87 -out provisioner-key.pem
+openssl req -new -subj /CN=provisioner -key provisioner-key.pem -out provisioner-csr.pem
+openssl x509 -req -days 365 -in provisioner-csr.pem -CA ca-crt.pem -CAkey ca-key.pem -CAcreateserial -out provisioner-crt.pem
+
+openssl genpkey -algorithm ML-DSA-87 -out mediator-key.pem
+openssl req -new -subj /CN=mediator -key mediator-key.pem -out mediator-csr.pem
+openssl x509 -req -days 365 -in mediator-csr.pem -CA ca-crt.pem -CAkey ca-key.pem -CAcreateserial -out mediator-crt.pem
+
+openssl genpkey -algorithm ML-DSA-87 -out collector-key.pem
+openssl req -new -subj /CN=collector -key collector-key.pem -out collector-csr.pem
+openssl x509 -req -days 365 -in collector-csr.pem -CA ca-crt.pem -CAkey ca-key.pem -CAcreateserial -out collector-crt.pem
+
+#creates mediator-crt.pem  mediator-csr.pem  mediator-key.pem  provisioner-crt.pem  provisioner-csr.pem  provisioner-key.pem  ca-crt.pem  ca-key.pem
