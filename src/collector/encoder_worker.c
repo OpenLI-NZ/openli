@@ -44,6 +44,73 @@
 #include "intercept.h"
 #include "collector_integrity_check.h"
 
+/*
+ * Forwarder assignment is shared by all encoder threads.  A LIID is pinned to
+ * one forwarder for its entire lifetime, but new LIIDs are assigned to the
+ * forwarder with the fewest active LIIDs.  The rotating hint prevents a
+ * permanent bias towards the lowest-numbered forwarder when counts are tied.
+ */
+static pthread_mutex_t forwarder_assignment_mutex = PTHREAD_MUTEX_INITIALIZER;
+static size_t *forwarder_liid_counts = NULL;
+static size_t forwarder_liid_count = 0;
+static size_t next_forwarder_hint = 0;
+
+static int ensure_forwarder_assignment_state(size_t forwarders) {
+    size_t *counts;
+
+    if (forwarders == 0) {
+        return -1;
+    }
+
+    pthread_mutex_lock(&forwarder_assignment_mutex);
+    if (forwarder_liid_counts == NULL) {
+        counts = calloc(forwarders, sizeof(*counts));
+        if (counts == NULL) {
+            pthread_mutex_unlock(&forwarder_assignment_mutex);
+            return -1;
+        }
+        forwarder_liid_counts = counts;
+        forwarder_liid_count = forwarders;
+        next_forwarder_hint = 0;
+    } else if (forwarder_liid_count != forwarders) {
+        pthread_mutex_unlock(&forwarder_assignment_mutex);
+        logger(LOG_INFO,
+                "OpenLI: forwarding thread count changed while encoders are active");
+        return -1;
+    }
+    pthread_mutex_unlock(&forwarder_assignment_mutex);
+    return 0;
+}
+
+static size_t assign_forwarder_to_liid(size_t forwarders) {
+    size_t selected, candidate, offset;
+
+    pthread_mutex_lock(&forwarder_assignment_mutex);
+    selected = next_forwarder_hint % forwarders;
+
+    for (offset = 1; offset < forwarders; offset++) {
+        candidate = (next_forwarder_hint + offset) % forwarders;
+        if (forwarder_liid_counts[candidate] <
+                forwarder_liid_counts[selected]) {
+            selected = candidate;
+        }
+    }
+
+    forwarder_liid_counts[selected] ++;
+    next_forwarder_hint = (selected + 1) % forwarders;
+    pthread_mutex_unlock(&forwarder_assignment_mutex);
+    return selected;
+}
+
+static void release_forwarder_from_liid(size_t forwarder) {
+    pthread_mutex_lock(&forwarder_assignment_mutex);
+    if (forwarder < forwarder_liid_count &&
+            forwarder_liid_counts[forwarder] > 0) {
+        forwarder_liid_counts[forwarder] --;
+    }
+    pthread_mutex_unlock(&forwarder_assignment_mutex);
+}
+
 static void destroy_known_liid(encoder_liid_state_t *known) {
 
     if (known->liid_key) {
@@ -101,6 +168,12 @@ static int init_worker(openli_encoder_t *enc) {
     int i, zmq_fd;
     char sockname[128];
     size_t fdlen;
+
+    if (ensure_forwarder_assignment_state((size_t)enc->forwarders) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: unable to initialise forwarder assignment state");
+        return -1;
+    }
 
     enc->epoll_fd = epoll_create1(0);
 
@@ -202,6 +275,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
     HASH_ITER(hh, enc->known_liids, known, tmp) {
         HASH_DELETE(hh, enc->known_liids, known);
+        release_forwarder_from_liid(known->fwd_index);
         destroy_known_liid(known);
     }
 
@@ -519,7 +593,10 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
         found->operatorid = strdup(operatorid);
     }
 
-    found->fwd_index = hash_liid(liid) % enc->forwarders;
+    found->fwd_index = assign_forwarder_to_liid((size_t)enc->forwarders);
+    logger(LOG_INFO,
+            "OpenLI: encoder worker %d assigned LIID %s to forwarding thread %zu",
+            enc->workerid, liid, found->fwd_index);
 
     HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
             strlen(found->liid_key), found);
@@ -1304,6 +1381,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             if (found) {
                 integrity_check_state_t *ics, *tmp;
                 HASH_DELETE(hh, enc->known_liids, found);
+                release_forwarder_from_liid(found->fwd_index);
                 // remove all integrity state chains for this LIID
                 HASH_ITER(hh, enc->integrity_state, ics, tmp) {
                     if (strcmp(job.liid, ics->liid_key) != 0) {
