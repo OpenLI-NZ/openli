@@ -216,6 +216,8 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->filterstring = NULL;
         inp->filter = NULL;
     	inp->coremap = NULL;
+        inp->vxlan_strip = 0;
+        inp->vxlan_port = 0;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -276,6 +278,22 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     inp->hasher_apply = OPENLI_HASHER_RADIUS;
                 } else {
                     logger(LOG_INFO, "OpenLI: unexpected hasher type '%s' in config, ignoring.", (char *)value->data.scalar.value);
+                }
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "stripvxlan") == 0) {
+                uint64_t port;
+                inp->vxlan_strip = 1;
+                port = strtoul((char *)value->data.scalar.value, NULL, 10);
+
+                if (port > 65535) {
+                    logger(LOG_INFO, "OpenLI: invalid VXLAN port number in input configuration, ignoring request to strip VXLAN headers");
+                    inp->vxlan_strip = 0;
+                } else {
+                    inp->vxlan_port = port;
                 }
             }
         }

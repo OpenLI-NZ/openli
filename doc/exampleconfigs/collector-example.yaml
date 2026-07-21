@@ -206,6 +206,12 @@ inputs:
    threads: 2           # use 2 processing threads for this input
    hasher: radius       # hash packets based on RADIUS session
 
+ - uri: ethvxlan        # capture on interface ethvxlan
+   threads: 2           # use 2 processing threads for this input
+   stripvxlan: 4789     # treat any packets on this interface using UDP port
+                        # 4789 as VXLAN, and strip the outer encapsulation
+                        # automatically
+
 # - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
 #   threads: 4                 # use 4 processing threads for this input
 #   hasher: bidirectional      # hash based on bidirectional flow 5-tuple
