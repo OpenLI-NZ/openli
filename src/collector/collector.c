@@ -430,7 +430,8 @@ static void check_for_messages(colthread_local_t *loc,
 static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
         void *global, void *local, uint64_t tick) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)local;
     libtrace_stat_t *stats;
     struct timeval tv;
@@ -601,7 +602,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 static void *start_processing_thread(libtrace_t *trace,
         libtrace_thread_t *t, void *global) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = NULL;
     int i, zero=0;
     sync_sendq_t *syncq, *sendq_hash;
@@ -721,7 +723,8 @@ static void free_staticcache(static_ipcache_t *cache) {
 static void stop_processing_thread(libtrace_t *trace UNUSED,
         libtrace_thread_t *t, void *global, void *tls) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
@@ -980,7 +983,6 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
     } else {
         pinfo->payload_len = rem;
     }
-
 }
 
 static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
@@ -1169,11 +1171,49 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
     return 1;
 }
 
+static int apply_vxlan_stripping(libtrace_packet_t *pkt, colinput_t *inp) {
+
+    libtrace_udp_t *udp;
+    uint32_t rem;
+    uint8_t proto;
+    uint16_t caplen, removed = 0;
+    uint8_t *neweth;
+
+    udp = (libtrace_udp_t *)trace_get_transport(pkt, &proto, &rem);
+    if (udp == NULL || rem <= sizeof(libtrace_udp_t) + 8 ||
+            proto != TRACE_IPPROTO_UDP) {
+        return 0;
+    }
+
+    if (inp->vxlan_port != 0) {
+        // really, we probably only need to check dest here...
+        if (ntohs(udp->dest) != inp->vxlan_port &&
+                ntohs(udp->source) != inp->vxlan_port) {
+            return 0;
+        }
+    }
+
+    caplen = trace_get_capture_length(pkt);
+    removed = (((uint8_t *)udp) - (uint8_t *)pkt->payload) + sizeof(libtrace_udp_t) + 8;
+
+    neweth = ((uint8_t *)udp) + sizeof(libtrace_udp_t) + 8;
+
+    pkt->payload = neweth;
+    trace_set_capture_length(pkt, caplen - removed);
+    pkt->cached.l2_header = NULL;
+    pkt->cached.l3_header = NULL;
+    pkt->cached.l4_header = NULL;
+    pkt->cached.payload_length = -1;
+    pkt->unsafe_payload = 1;
+    return 1;
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)tls;
     void *l3;
     uint16_t ethertype;
@@ -1186,12 +1226,21 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     packet_info_t pinfo;
 
-	//check_for_messages(loc, glob);
-
-    //loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
+    }
+
+    if (inp->vxlan_strip) {
+        if (apply_vxlan_stripping(pkt, inp) != 0) {
+            /* Don't allow libtrace optimizations that assume the original
+             * packet is intact
+             */
+            l3 = trace_get_layer3(pkt, &ethertype, &rem);
+            if (l3 == NULL || rem == 0) {
+                return pkt;
+            }
+        }
     }
 
     //trace_increment_packet_refcount(pkt);
@@ -1555,6 +1604,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     libtrace_info_t *info;
     struct timeval tv;
 
+    inp->global = glob;
     if (inp->running == 1) {
         /* Trace is already running */
         if (inp->trace && trace_is_err(inp->trace)) {
@@ -1632,13 +1682,13 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     }
 
     if (inp->coremap) {
-	char opt[256];
+        char opt[256];
 
-	snprintf(opt, 256, "coremap=%s", inp->coremap);
-	if (trace_set_configuration(inp->trace, opt) < 0) {
-	    logger(LOG_INFO, "OpenLI: unable to set coremap (%s) for %s",
-			    inp->coremap, inp->uri);
-	}
+        snprintf(opt, 256, "coremap=%s", inp->coremap);
+        if (trace_set_configuration(inp->trace, opt) < 0) {
+            logger(LOG_INFO, "OpenLI: unable to set coremap (%s) for %s",
+                    inp->coremap, inp->uri);
+        }
     }
 
     if (inp->filterstring) {
@@ -1660,7 +1710,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     trace_set_tick_interval(inp->trace, 10);
 
-    if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
+    if (trace_pstart(inp->trace, inp, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
         logger(LOG_INFO, "OpenLI: Failed to start trace for input %s: %s",
                 inp->uri, lterr.problem);
@@ -1770,7 +1820,7 @@ static void reload_inputs(collector_global_t *glob,
         collector_global_t *newstate) {
 
     colinput_t *oldinp, *newinp, *tmp;
-    int filterchanged = 0, i, coremapchanged = 0;
+    int filterchanged = 0, i, coremapchanged = 0, vxlanchanged = 0;
     char locname[1024];
     colthread_local_t *loc;
 
@@ -1807,11 +1857,21 @@ static void reload_inputs(collector_global_t *glob,
                     filterchanged = 1;
                 }
             }
+
+            if (oldinp->vxlan_strip) {
+                if (newinp->vxlan_strip == 0) {
+                    vxlanchanged = 1;
+                } else if (oldinp->vxlan_port != newinp->vxlan_port) {
+                    vxlanchanged = 1;
+                }
+            } else if (newinp->vxlan_strip) {
+                vxlanchanged = 1;
+            }
         }
 
         if (!newinp || newinp->threadcount != oldinp->threadcount ||
                 newinp->hasher_apply != oldinp->hasher_apply ||
-                filterchanged || coremapchanged) {
+                filterchanged || coremapchanged || vxlanchanged) {
             /* This input is either no longer wanted at all or has
 	     * changed configuration
 	     */
