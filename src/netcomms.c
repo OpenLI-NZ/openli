@@ -138,6 +138,9 @@ static int push_generic_onto_net_buffer(net_buffer_t *nb,
     if (len == 0) {
         return len;
     }
+    if (data == NULL) {
+        return 0;
+    }
 
     while (NETBUF_SPACE_REM(nb) < len) {
         if (extend_net_buffer(nb, len) == -1) {
