@@ -30,6 +30,19 @@
 #include "lea_send_thread.h"
 #include "util.h"
 #include "pcapthread.h"
+
+/*
+ * Performance tuning for the local PCAP output path.
+ *
+ * Previously the thread consumed at most 512 messages after every 50 ms
+ * timer tick, imposing an effective ceiling of about 10,240 packets/s.
+ * Drain several larger batches while keeping a time budget so control,
+ * rotation and shutdown events cannot be starved by a busy RAWIP queue.
+ */
+#define PCAP_RMQ_BATCH_SIZE 4096
+#define PCAP_DRAIN_BUDGET_NS (UINT64_C(20) * 1000 * 1000)
+#define PCAP_IDLE_POLL_MS 50
+
 #include "mediator_rmq.h"
 #include <libtrace.h>
 #include <assert.h>
@@ -565,31 +578,43 @@ static int write_pcap_from_buffered_rmq(handover_t *ho,
     uint32_t advance = 0;
     static int tally = 0;
 
-    bufrem = get_buffered_amount(&(ho->ho_state->buf));
-    while ((nextrec = get_buffered_head(&(ho->ho_state->buf), &bufrem))) {
-        /* TODO consider limiting the number of records written, so we
-         * don't get stuck in here for a long time?
-         */
+    uint64_t total_advance = 0;
+
+    nextrec = get_buffered_head(&(ho->ho_state->buf), &bufrem);
+    while (nextrec != NULL && bufrem > 0) {
         tally ++;
         if (ho->handover_type == HANDOVER_HI3) {
-            if ((advance = write_etsicc_to_pcap(nextrec, bufrem, pstate))
-                    == 0) {
-                return -1;
-            }
+            advance = write_etsicc_to_pcap(nextrec, bufrem, pstate);
         } else if (ho->handover_type == HANDOVER_HI2) {
             /* TODO */
             assert(0);
+            advance = 0;
         } else if (ho->handover_type == HANDOVER_RAWIP) {
-            if ((advance = write_rawip_to_pcap(nextrec, bufrem, pstate))
-                    == 0) {
-                return -1;
-            }
+            advance = write_rawip_to_pcap(nextrec, bufrem, pstate);
         } else {
             logger(LOG_INFO, "OpenLI Mediator: handover is corrupted in pcap thread");
+            advance = 0;
+        }
+
+        if (advance == 0 || advance > bufrem) {
+            /* Preserve progress already made in this batch. Otherwise a
+             * later retry would write those packets to the PCAP twice. */
+            if (total_advance > 0) {
+                advance_export_buffer_head(&(ho->ho_state->buf),
+                        total_advance);
+            }
             return -1;
         }
 
-        advance_export_buffer_head(&(ho->ho_state->buf), advance);
+        nextrec += advance;
+        bufrem -= advance;
+        total_advance += advance;
+    }
+
+    /* Updating the export buffer once per batch avoids running
+     * post_transmit() for every individual packet. */
+    if (total_advance > 0) {
+        advance_export_buffer_head(&(ho->ho_state->buf), total_advance);
     }
 
     if (!ho->ho_state->valid_rmq_ack) {
@@ -642,7 +667,8 @@ static int consume_pcap_packets(handover_t *ho, pcap_thread_state_t *pstate) {
                 &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
     } else if (ho->handover_type == HANDOVER_RAWIP) {
         r = consume_mediator_rawip_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 512, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), PCAP_RMQ_BATCH_SIZE,
+                &(ho->ho_state->next_rmq_ack));
     } else if (ho->handover_type == HANDOVER_HI2) {
         r = consume_mediator_iri_messages(ho->rmq_consumer,
                 &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
@@ -664,8 +690,12 @@ static int consume_pcap_packets(handover_t *ho, pcap_thread_state_t *pstate) {
         return 0;
     } else if (r == -1) {
         /* pcap writing error */
+        return -1;
     }
-    return r;
+
+    /* Signal that a batch was consumed. The caller may drain another batch
+     * immediately if its fairness budget has not expired. */
+    return 1;
 
 }
 
@@ -985,6 +1015,16 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
  *
  *  @return NULL when the thread exits (via pthread_join())
  */
+static inline uint64_t monotonic_now_ns(void) {
+    struct timespec ts;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) {
+        return 0;
+    }
+    return ((uint64_t)ts.tv_sec * UINT64_C(1000000000)) +
+            (uint64_t)ts.tv_nsec;
+}
+
 static void *run_pcap_thread(void *params) {
     lea_thread_state_t *state = (lea_thread_state_t *)params;
     openli_epoll_ev_t *flushtimer = NULL;
@@ -994,6 +1034,9 @@ static void *run_pcap_thread(void *params) {
     pcap_thread_state_t pstate;
     uint32_t firstflush;
     struct timeval tv;
+    uint64_t drain_started;
+    uint64_t drain_now;
+    int drain_result;
 
     // defined in lea_send_thread.c
     read_parent_config(state);
@@ -1042,7 +1085,7 @@ static void *run_pcap_thread(void *params) {
         }
 
         /* epoll */
-        if (start_openli_ms_timer(state->timerev, 50) < 0) {
+        if (start_openli_ms_timer(state->timerev, PCAP_IDLE_POLL_MS) < 0) {
             logger(LOG_INFO,"OpenLI Mediator: failed to add timer to epoll in agency thread for %s", state->agencyid);
             break;
         }
@@ -1075,8 +1118,22 @@ static void *run_pcap_thread(void *params) {
         /* Consume available packets and write them to their corresponding
          * pcap files */
 
-        /* TODO error handling? */
-        consume_pcap_packets(pstate.rawip_handover, &pstate);
+        /* Drain multiple batches after one wake-up. A monotonic time budget
+         * keeps the thread responsive to control, rotation and halt events. */
+        drain_started = monotonic_now_ns();
+        do {
+            drain_result = consume_pcap_packets(pstate.rawip_handover,
+                    &pstate);
+            if (drain_result <= 0) {
+                break;
+            }
+
+            drain_now = monotonic_now_ns();
+            if (drain_started != 0 && drain_now != 0 &&
+                    drain_now - drain_started >= PCAP_DRAIN_BUDGET_NS) {
+                break;
+            }
+        } while (1);
 
         halt_openli_timer(state->timerev);
     }

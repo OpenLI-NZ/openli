@@ -237,25 +237,30 @@ int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
             return -1;
         }
         sav = &(col->saved_cc_msgs[col->saved_cc_msg_cnt]);
-        nexttag = &(col->ccs_published);
+        nexttag = NULL;
         col->saved_cc_msg_cnt ++;
     } else {
         if (col->saved_raw_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
             return -1;
         }
         sav = &(col->saved_raw_msgs[col->saved_raw_msg_cnt]);
-        nexttag = &(col->raw_published);
+        nexttag = NULL;
         col->saved_raw_msg_cnt ++;
     }
 
     /* TODO replace constant calloc/free with "retained" buffers that get
      * expanded if necessary but otherwise recycled
      */
-    (*nexttag)++;
     sav->liid = strdup((const char *)liid);
     sav->msglen = msglen;
     sav->msgtype = msgtype;
-    sav->delivtag = *nexttag;
+    if (nexttag) {
+        (*nexttag)++;
+        sav->delivtag = *nexttag;
+    } else {
+        /* CC and RAWIP get a delivery tag when their batch is published. */
+        sav->delivtag = 0;
+    }
     sav->msgbody = calloc(sav->msglen, sizeof(uint8_t));
 
     memcpy(sav->msgbody, msgbody, msglen);
@@ -569,18 +574,12 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
     found->lastseen = tv.tv_sec;
 
     /* Hand off to publishing methods defined in mediator_rmq.c */
+    /* CC is published in batches at the end of this receive pass.
+     * collrecv_save_message() has already retained this record.
+     */
     if (msgtype == OPENLI_PROTO_ETSI_CC) {
         if (found->declared_int_rmq) {
-            r = publish_cc_on_mediator_liid_RMQ_queue(col->amqp_producer_state,
-                    msgbody, msglen,
-                    found->liid, found->queuenames[1], &(col->rmq_blocked));
-            if (r < 0) {
-                logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish a CC", col->ipaddr);
-                amqp_destroy_connection(col->amqp_producer_state);
-                col->amqp_producer_state = NULL;
-                r = 0;
-
-            }
+            r = 1;
         } else {
             increment_col_drop_counter(col);
             r = 0;
@@ -618,17 +617,11 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
                 found->declared_raw_rmq = 1;
             }
         }
-        /* publish to raw IP queue */
+        /* RAWIP is published in batches at the end of this receive pass.
+         * collrecv_save_message() has already retained this record.
+         */
         if (found->declared_raw_rmq) {
-            r = publish_rawip_on_mediator_liid_RMQ_queue(
-                    col->amqp_producer_state, msgbody, msglen, found->liid,
-                    found->queuenames[2], &(col->rmq_blocked));
-            if (r < 0) {
-                logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish raw data", col->ipaddr);
-                amqp_destroy_connection(col->amqp_producer_state);
-                col->amqp_producer_state = NULL;
-                r = 0;
-            }
+            r = 1;
         } else {
             increment_col_drop_counter(col);
             r = 0;
@@ -637,6 +630,134 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     return r;
 
+}
+
+static int publish_pending_cc_batches(coll_recv_t *col) {
+    openli_cc_batch_record_t records[OPENLI_CC_BATCH_MAX_RECORDS];
+    size_t indexes[OPENLI_CC_BATCH_MAX_RECORDS];
+    size_t i;
+
+    for (i = 0; i < col->saved_cc_msg_cnt; i++) {
+        saved_received_data_t *first = &(col->saved_cc_msgs[i]);
+        col_known_liid_t *known = NULL;
+        size_t bodylen = 8;
+        uint16_t count = 0;
+        size_t j;
+        int r;
+
+        if (first->msgbody == NULL || first->delivtag != 0) {
+            continue;
+        }
+
+        HASH_FIND(hh, col->known_liids, first->liid, strlen(first->liid),
+                known);
+        if (known == NULL || !known->declared_int_rmq) {
+            return 0;
+        }
+
+        for (j = i; j < col->saved_cc_msg_cnt &&
+                count < OPENLI_CC_BATCH_MAX_RECORDS; j++) {
+            saved_received_data_t *candidate = &(col->saved_cc_msgs[j]);
+
+            if (candidate->msgbody == NULL || candidate->delivtag != 0 ||
+                    strcmp(candidate->liid, first->liid) != 0) {
+                continue;
+            }
+            if (bodylen > OPENLI_CC_BATCH_MAX_BYTES - 2U -
+                    candidate->msglen) {
+                break;
+            }
+
+            records[count].body = candidate->msgbody;
+            records[count].len = candidate->msglen;
+            indexes[count] = j;
+            bodylen += 2U + candidate->msglen;
+            count++;
+        }
+
+        if (count == 0) {
+            return 0;
+        }
+
+        r = publish_cc_batch_on_mediator_liid_RMQ_queue(
+                col->amqp_producer_state, records, count, first->liid,
+                known->queuenames[1], &(col->rmq_blocked));
+        if (r <= 0) {
+            return r;
+        }
+
+
+        col->ccs_published++;
+        for (j = 0; j < count; j++) {
+            col->saved_cc_msgs[indexes[j]].delivtag = col->ccs_published;
+        }
+    }
+
+    return 1;
+}
+
+static int publish_pending_raw_batches(coll_recv_t *col) {
+    openli_rawip_batch_record_t records[OPENLI_RAWIP_BATCH_MAX_RECORDS];
+    size_t indexes[OPENLI_RAWIP_BATCH_MAX_RECORDS];
+    size_t i;
+
+    for (i = 0; i < col->saved_raw_msg_cnt; i++) {
+        saved_received_data_t *first = &(col->saved_raw_msgs[i]);
+        col_known_liid_t *known = NULL;
+        size_t bodylen = 8;
+        uint16_t count = 0;
+        size_t j;
+        int r;
+
+        if (first->msgbody == NULL || first->delivtag != 0) {
+            continue;
+        }
+
+        HASH_FIND(hh, col->known_liids, first->liid, strlen(first->liid),
+                known);
+        if (known == NULL || !known->declared_raw_rmq) {
+            return 0;
+        }
+
+        for (j = i; j < col->saved_raw_msg_cnt &&
+                count < OPENLI_RAWIP_BATCH_MAX_RECORDS; j++) {
+            saved_received_data_t *candidate = &(col->saved_raw_msgs[j]);
+
+            if (candidate->msgbody == NULL || candidate->delivtag != 0 ||
+                    strcmp(candidate->liid, first->liid) != 0) {
+                continue;
+            }
+            if (bodylen > OPENLI_RAWIP_BATCH_MAX_BYTES - 2U -
+                    candidate->msglen) {
+                break;
+            }
+
+            records[count].body = candidate->msgbody;
+            records[count].len = candidate->msglen;
+            indexes[count] = j;
+            bodylen += 2U + candidate->msglen;
+            count++;
+        }
+
+        if (count == 0) {
+            return 0;
+        }
+
+        r = publish_rawip_batch_on_mediator_liid_RMQ_queue(
+                col->amqp_producer_state, records, count, first->liid,
+                known->queuenames[2], &(col->rmq_blocked));
+        if (r <= 0) {
+            return r;
+        }
+
+
+        col->raw_published++;
+        for (j = 0; j < count; j++) {
+            col->saved_raw_msgs[indexes[j]].delivtag = col->raw_published;
+        }
+    }
+
+    return 1;
 }
 
 static int process_saved_messages(coll_recv_t *col,
@@ -680,15 +801,27 @@ static int process_all_saved_messages(coll_recv_t *col) {
     }
 
     if (col->saved_cc_msg_cnt > 0) {
-        if ((r = process_saved_messages(col, col->saved_cc_msgs,
-                &(col->saved_cc_msg_cnt), &(col->ccs_published))) <= 0) {
+        size_t i;
+        for (i = 0; i < col->saved_cc_msg_cnt; i++) {
+            if (col->saved_cc_msgs[i].msgbody) {
+                col->saved_cc_msgs[i].delivtag = 0;
+            }
+        }
+        col->ccs_published = 0;
+        if ((r = publish_pending_cc_batches(col)) <= 0) {
             return r;
         }
     }
 
     if (col->saved_raw_msg_cnt > 0) {
-        if ((r = process_saved_messages(col, col->saved_raw_msgs,
-                &(col->saved_raw_msg_cnt), &(col->raw_published))) <= 0) {
+        size_t i;
+        for (i = 0; i < col->saved_raw_msg_cnt; i++) {
+            if (col->saved_raw_msgs[i].msgbody) {
+                col->saved_raw_msgs[i].delivtag = 0;
+            }
+        }
+        col->raw_published = 0;
+        if ((r = publish_pending_raw_batches(col)) <= 0) {
             return r;
         }
     }
@@ -847,8 +980,20 @@ static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
 
 
 processacks:
+    if (col->amqp_producer_state && col->saved_cc_msg_cnt > 0 &&
+            publish_pending_cc_batches(col) <= 0) {
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
+
+    if (col->amqp_producer_state && col->saved_raw_msg_cnt > 0 &&
+            publish_pending_raw_batches(col) <= 0) {
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
+
     if (col->amqp_producer_state &&
-            COLL_OUTSTANDING_PUB_CONFIRMS(col) && 
+            COLL_OUTSTANDING_PUB_CONFIRMS(col) &&
             consume_mediator_RMQ_producer_acks(col) == 0) {
         /* RMQ failed to acknowledge everything we published, have to
          * reconnect and re-publish
