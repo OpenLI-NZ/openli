@@ -552,6 +552,9 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
     }
 
     found->fwd_index = assign_liid_to_forwarder(enc->fwd_assigner);
+        logger(LOG_INFO,
+            "OpenLI: encoder worker %d assigned LIID %s to forwarding thread %zu",
+            enc->workerid, liid, found->fwd_index);
 
     HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
             strlen(found->liid_key), found);
