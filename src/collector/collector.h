@@ -361,6 +361,8 @@ struct collector_global {
     pthread_rwlock_t liid_agency_mutex;
     shared_liid_to_agency_mapping_t liid_to_agency;
 
+    forwarder_assignment_t fwdassigner;
+
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;

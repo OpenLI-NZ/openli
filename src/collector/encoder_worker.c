@@ -95,6 +95,37 @@ static void destroy_encoding_job(openli_encoding_job_t *job,
     }
 }
 
+static size_t assign_liid_to_forwarder(forwarder_assignment_t *assign) {
+
+    size_t selected, candidate, offset;
+
+    pthread_mutex_lock(&(assign->mutex));
+    selected = assign->next_hint % assign->slots;
+
+    for (offset = 1; offset < assign->slots; offset++) {
+        candidate = (assign->next_hint + offset) % assign->slots;
+        if (assign->liid_counts[candidate] < assign->liid_counts[selected]) {
+            selected = candidate;
+        }
+    }
+
+    assign->liid_counts[selected] ++;
+    assign->next_hint = (selected + 1) % assign->slots;
+    pthread_mutex_unlock(&(assign->mutex));
+    return selected;
+}
+
+static void release_liid_from_forwarder(forwarder_assignment_t *assign,
+        size_t forwarder) {
+    pthread_mutex_lock(&(assign->mutex));
+
+    if (forwarder < assign->slots && assign->liid_counts[forwarder] > 0) {
+        assign->liid_counts[forwarder] --;
+    }
+
+    pthread_mutex_unlock(&(assign->mutex));
+}
+
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0, rto = 10;
     int hwm = 1000;
@@ -202,6 +233,7 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
 
     HASH_ITER(hh, enc->known_liids, known, tmp) {
         HASH_DELETE(hh, enc->known_liids, known);
+        release_liid_from_forwarder(enc->fwd_assigner, known->fwd_index);
         destroy_known_liid(known);
     }
 
@@ -519,7 +551,7 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
         found->operatorid = strdup(operatorid);
     }
 
-    found->fwd_index = hash_liid(liid) % enc->forwarders;
+    found->fwd_index = assign_liid_to_forwarder(enc->fwd_assigner);
 
     HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
             strlen(found->liid_key), found);
@@ -1315,6 +1347,8 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                     send_integrity_check_sign_pdu(enc, ics);
                     free_integrity_check_state(ics);
                 }
+                release_liid_from_forwarder(enc->fwd_assigner,
+                        found->fwd_index);
                 destroy_known_liid(found);
             }
             destroy_encoding_job(&job, 0);

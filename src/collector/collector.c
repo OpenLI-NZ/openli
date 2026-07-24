@@ -2073,11 +2073,15 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(loc);
     }
 
+    if (glob->fwdassigner.liid_counts) {
+        free(glob->fwdassigner.liid_counts);
+    }
 
     destroy_sip_call_state(&glob->sip_call_state, &glob->sip_call_state_mutex);
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));
+    pthread_mutex_destroy(&(glob->fwdassigner.mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
     pthread_rwlock_destroy(&glob->sip_call_state_mutex);
@@ -2388,6 +2392,7 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     pthread_mutex_init(&(glob->stats_mutex), NULL);
     pthread_mutex_init(&(glob->configupdate_mutex), NULL);
+    pthread_mutex_init(&(glob->fwdassigner.mutex), NULL);
     pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
@@ -2399,10 +2404,16 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     glob->digest_config.map = NULL;
     glob->liid_to_agency.map = NULL;
+
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
     }
+
+    glob->fwdassigner.liid_counts = calloc(glob->forwarding_threads,
+            sizeof(size_t));
+    glob->fwdassigner.slots = glob->forwarding_threads;
+    glob->fwdassigner.next_hint = 0;
 
     if (uuid_is_null(glob->sharedinfo.uuid)) {
 
@@ -3280,6 +3291,8 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;
         glob->encoders[i].saved_global_templates = NULL;
+
+        glob->encoders[i].fwd_assigner = &(glob->fwdassigner);
 
         glob->encoders[i].forwarders = glob->forwarding_threads;
 

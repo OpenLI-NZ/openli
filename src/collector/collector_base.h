@@ -434,6 +434,13 @@ struct integrity_check_state {
     UT_hash_handle hh;
 };
 
+typedef struct forwarder_assign {
+    pthread_mutex_t mutex;
+    size_t *liid_counts;
+    size_t slots;
+    size_t next_hint;
+} forwarder_assignment_t;
+
 typedef struct encoder_state {
     void *zmq_ctxt;
     void **zmq_recvjob;
@@ -475,6 +482,8 @@ typedef struct encoder_state {
      *  provided.
      */
     integrity_check_state_t *integrity_state;
+
+    forwarder_assignment_t *fwd_assigner;
 
     EVP_CIPHER_CTX *evp_ctx;
 
