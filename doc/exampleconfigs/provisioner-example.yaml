@@ -19,9 +19,9 @@ updateport: 9009
 #
 # Leave these commented out for unencrypted inter-component communications.
 
-#tlscert: /etc/openli/openli-provisioner-crt.pem
-#tlskey: /etc/openli/openli-provisioner-key.pem
-#tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/ssl/openli/openli-provisioner-crt.pem
+#tlskey: /etc/ssl/openli/openli-provisioner-key.pem
+#tlsca: /etc/ssl/openli/openli-ca-crt.pem
 
 # Current intercept configuration will be stored in the following file.
 # Make sure that this file is writable by the OpenLI provisioner!

@@ -101,9 +101,9 @@ logstatfrequency: 5
 # one OpenLI component, that you also do so on all of the others.
 #
 # Leave these commented out for unencrypted inter-component communications.
-#tlscert: /etc/openli/openli-collector-crt.pem
-#tlskey: /etc/openli/openli-collector-key.pem
-#tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/ssl/openli/openli-collector-crt.pem
+#tlskey: /etc/ssl/openli/openli-collector-key.pem
+#tlsca: /etc/ssl/openli/openli-ca-crt.pem
 
 # If set to 'no', intercepted packets streamed by this collector to the
 # mediator will not be encrypted -- this may be desirable for performance

@@ -27,15 +27,24 @@
 #include <string.h>
 #include <errno.h>
 #include <assert.h>
+#include <stdint.h>
 #include <libwandder_etsili.h>
 
 #include "logger.h"
 #include "export_buffer.h"
 #include "netcomms.h"
 
-#define BUFFER_ALLOC_SIZE (1024 * 1024 * 50)
-#define BUFFER_WARNING_THRESH (1024 * 1024 * 1024)
-#define BUF_OFFSET_FREQUENCY (1024 * 256)
+#define BUFFER_ALLOC_SIZE (UINT64_C(1024) * 1024 * 50)
+#define BUFFER_WARNING_THRESH (UINT64_C(1024) * 1024 * 1024)
+#define BUF_OFFSET_FREQUENCY (UINT64_C(1024) * 256)
+
+
+static inline uint64_t get_tail_offset(const export_buffer_t *buf) {
+    if (buf->bufhead == NULL) {
+        return 0;
+    }
+    return (uint64_t)(buf->buftail - buf->bufhead);
+}
 
 void init_export_buffer(export_buffer_t *buf) {
     buf->bufhead = NULL;
@@ -51,7 +60,7 @@ void init_export_buffer(export_buffer_t *buf) {
     buf->deadwindow = 0;
 }
 
-void set_export_buffer_ack_window(export_buffer_t *buf, uint32_t window) {
+void set_export_buffer_ack_window(export_buffer_t *buf, uint64_t window) {
     buf->deadwindow = window;
 }
 
@@ -62,7 +71,12 @@ void release_export_buffer(export_buffer_t *buf) {
 }
 
 uint64_t get_buffered_amount(export_buffer_t *buf) {
-    return (buf->buftail - (buf->bufhead + buf->writeoffset));
+    uint64_t tail = get_tail_offset(buf);
+
+    assert(buf->deadfront <= buf->writeoffset);
+    assert(buf->writeoffset <= tail);
+    assert(tail <= buf->alloced);
+    return tail - buf->writeoffset;
 }
 
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
@@ -122,14 +136,20 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
 
     /* Add some space to the buffer */
     uint8_t *space = NULL;
-    uint64_t bufused = buf->buftail - (buf->bufhead + buf->deadfront);
-    uint32_t writeroffset = buf->writeoffset - buf->deadfront;
+    uint64_t bufused = get_tail_offset(buf) - buf->deadfront;
+    uint64_t writeroffset = buf->writeoffset - buf->deadfront;
 
     if (buf->deadfront > 0) {
         slide_buffer(buf, buf->bufhead + buf->deadfront, bufused);
     }
 
-    space = (uint8_t *)realloc(buf->bufhead, buf->alloced + BUFFER_ALLOC_SIZE);
+    if (buf->alloced > SIZE_MAX - BUFFER_ALLOC_SIZE) {
+        logger(LOG_INFO, "OpenLI: export buffer size overflow");
+        return 0;
+    }
+
+    space = (uint8_t *)realloc(buf->bufhead,
+            (size_t)(buf->alloced + BUFFER_ALLOC_SIZE));
 
     if (space == NULL) {
         /* OOM -- bad! */
@@ -157,9 +177,9 @@ static inline uint64_t extend_buffer(export_buffer_t *buf) {
 }
 
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
-        uint8_t *pdustart, uint32_t pdulen, uint32_t beensent) {
+        uint8_t *pdustart, uint32_t pdulen, uint64_t beensent) {
 
-    uint64_t bufused = buf->buftail - (buf->bufhead);
+    uint64_t bufused = get_tail_offset(buf);
     uint64_t spaceleft = buf->alloced - bufused;
     int rcint;
 
@@ -188,12 +208,12 @@ uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
 }
 
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_encoded_result_t *res, uint32_t beensent) {
+        openli_encoded_result_t *res, uint64_t beensent) {
 
     uint32_t enclen = res->msgbody->len - res->ipclen;
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = get_tail_offset(buf);
     uint64_t spaceleft = buf->alloced - bufused;
-    uint32_t added = 0;
+    uint64_t added = 0;
     int rcint;
 
     if (bufused == 0) {
@@ -234,9 +254,9 @@ uint64_t append_message_to_buffer(export_buffer_t *buf,
 uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
     ii_header_t hbeat;
 
-    uint64_t bufused = buf->buftail - buf->bufhead;
+    uint64_t bufused = get_tail_offset(buf);
     uint64_t spaceleft = buf->alloced - bufused;
-    uint32_t added = 0;
+    uint64_t added = 0;
     int rcint;
 
     hbeat.magic = htonl(OPENLI_PROTO_MAGIC);
@@ -273,9 +293,13 @@ static inline void post_transmit(export_buffer_t *buf) {
     uint64_t rem = 0;
     uint8_t *newbuf = NULL;
     uint64_t resize = 0;
-    uint32_t writeoff = buf->writeoffset - buf->deadfront;
+    uint64_t writeoff = buf->writeoffset - buf->deadfront;
+    uint64_t tail = get_tail_offset(buf);
 
-    assert(buf->buftail >= buf->bufhead + buf->deadfront);
+    assert(buf->deadfront <= buf->writeoffset);
+    assert(buf->writeoffset <= tail);
+    assert(tail <= buf->alloced);
+    assert(buf->deadfront <= tail);
     rem = (buf->buftail - (buf->bufhead + buf->deadfront));
 
     /* Consider shrinking buffer if it is now way too large */
@@ -284,10 +308,14 @@ static inline void post_transmit(export_buffer_t *buf) {
         resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
         slide_buffer(buf, buf->bufhead + buf->deadfront,
                 rem);
-        newbuf = (uint8_t *)realloc(buf->bufhead, resize);
-        buf->buftail = newbuf + rem;
-        buf->bufhead = newbuf;
-        buf->alloced = resize;
+        newbuf = (uint8_t *)realloc(buf->bufhead, (size_t)resize);
+        if (newbuf != NULL) {
+            buf->bufhead = newbuf;
+            buf->alloced = resize;
+        }
+        /* slide_buffer() already moved the live data to offset zero.  If the
+         * shrink realloc failed, the old allocation is still valid. */
+        buf->buftail = buf->bufhead + rem;
         buf->writeoffset = writeoff;
         buf->deadfront = 0;
     } else if (buf->alloced - (buf->buftail - buf->bufhead) <
@@ -358,17 +386,17 @@ int transmit_buffered_records(export_buffer_t *buf, int fd,
             return 0;
         } else if ((uint64_t)ret < sent) {
             /* Partial send, move partialfront ahead by whatever we did send. */
-            buf->partialfront += (uint32_t)ret;
-            buf->partialrem -= (uint32_t)ret;
+            buf->partialfront += (uint64_t)ret;
+            buf->partialrem -= (uint64_t)ret;
             return ret;
         }
-        buf->writeoffset += ((uint32_t)ret + buf->partialfront);
+        buf->writeoffset += ((uint64_t)ret + buf->partialfront);
         if (buf->deadwindow != 0 && buf->writeoffset > buf->deadwindow) {
             int rcint;
             Word_t index = buf->writeoffset - buf->deadwindow;
             J1P(rcint, buf->record_offsets, index);
 
-            buf->deadfront = (uint32_t)index;
+            buf->deadfront = (uint64_t)index;
         } else if (buf->deadwindow == 0) {
             buf->deadfront = buf->writeoffset;
         }
@@ -553,7 +581,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
      * broker (or we got no feedback from the broker and have to assume
      * a successful publication...)
      */
-    buf->writeoffset += ((uint32_t)sent);
+    buf->writeoffset += sent;
     if (buf->writeoffset > buf->deadwindow) {
         buf->deadfront = buf->writeoffset - buf->deadwindow;
     }

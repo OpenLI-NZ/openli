@@ -60,9 +60,9 @@ pcapcompress: 1
 # then you will need to provide these options regardless (and therefore will
 # have to accept encrypted inter-component communication).
 #
-#tlscert: /etc/openli/openli-mediator-crt.pem
-#tlskey: /etc/openli/openli-mediator-key.pem
-#tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/ssl/openli/openli-mediator-crt.pem
+#tlskey: /etc/ssl/openli/openli-mediator-key.pem
+#tlsca: /etc/ssl/openli/openli-ca-crt.pem
 
 # To receive records from collectors that are using RabbitMQ to persist
 # unacknowledged data, you will need to provide the credentials necessary
