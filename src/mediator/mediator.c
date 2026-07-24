@@ -1314,6 +1314,11 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     /* Check if our TLS configuration has changed. If so, we'll need to
      * drop all connections to other OpenLI components and create them anew.
      */
+    if (create_ssl_context(&(newstate.sslconf)) < 0) {
+        clear_med_config(&newstate);
+        return -1;
+    }
+
     lock_med_collector_config(&(currstate->collector_threads.config));
     tlschanged = reload_ssl_config(&(currstate->sslconf), &(newstate.sslconf));
     unlock_med_collector_config(&(currstate->collector_threads.config));

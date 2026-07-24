@@ -2632,6 +2632,11 @@ static int reload_collector_config(collector_global_t *glob,
         goto endreload;
     }
 
+    if (create_ssl_context(&(newstate.sslconf)) < 0) {
+        ret = -1;
+        goto endreload;
+    }
+
     tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate.sslconf));
 
     if (tlschanged == -1) {
