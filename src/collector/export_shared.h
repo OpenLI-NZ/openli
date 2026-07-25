@@ -37,6 +37,8 @@
 typedef struct exporter_intercept_msg {
     char *liid;
     int liid_len;
+    char *liid_key;
+    int liid_key_len;
     char *authcc;
     int authcc_len;
     char *delivcc;

@@ -40,6 +40,9 @@ typedef struct active_pcap_output {
     /** The LIID for the intercept that is being written as pcap */
     char *liid;
 
+    /** The authCC-qualified intercept key that this output was created for */
+    char *liid_key;
+
     /** The URI for the output file (i.e. the file format and path) */
     char *uri;
 

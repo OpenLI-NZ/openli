@@ -175,6 +175,10 @@ typedef struct liid_hash {
     char *agency;
     /** The LIID for the intercept */
     char *liid;
+    /** The authorising country code for the intercept */
+    char *authcc;
+    /** The authCC-qualified intercept key ("<authcc>-<liid>") */
+    char *liid_key;
 
     /** Whether the LIID is ascii-text or binary octets */
     openli_liid_format_t liid_format;
@@ -525,7 +529,7 @@ int modify_existing_intercept_options(provision_state_t *state,
         void *cept, openli_proto_msgtype_t modtype);
 int disconnect_mediators_from_collectors(provision_state_t *state);
 int remove_liid_mapping(provision_state_t *state,
-        char *liid, int liid_len, int droppedmeds);
+        intercept_common_t *common, int droppedmeds);
 int announce_liidmapping_to_mediators(provision_state_t *state,
         liid_hash_t *liidmap);
 int announce_coreserver_change(provision_state_t *state,

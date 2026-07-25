@@ -278,6 +278,9 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.cininfo.liid) {
             free(msg->data.cininfo.liid);
         }
+        if (msg->data.cininfo.authcc) {
+            free(msg->data.cininfo.authcc);
+        }
     }
 
     free(msg);

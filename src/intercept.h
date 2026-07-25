@@ -141,6 +141,7 @@ typedef enum {
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
+    char *authcc;
     uint32_t cin;
     uint8_t awaitingconfirm;
     UT_hash_handle hh;
@@ -154,12 +155,6 @@ typedef struct intercept_common {
     int liid_len;
     int authcc_len;
     int delivcc_len;
-
-    /** LIIDs are only required to be unique within an authorising country,
-     *  so every internal lookup, queue name and routing decision must key on
-     *  this instead of the LIID alone. Never sent to an agency -- the LIID
-     *  that appears in the ETSI PSHeader is still 'liid' above.
-     */
     char *liid_key;
     int liid_key_len;
     uint32_t destid;
@@ -224,6 +219,7 @@ typedef struct intercept_udp_sink {
 
     char *key;
     char *liid;
+    char *authcc;
     UT_hash_handle hh;
 
 } intercept_udp_sink_t;

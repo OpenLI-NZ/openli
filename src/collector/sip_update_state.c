@@ -478,6 +478,7 @@ void purge_expired_registrations(openli_sip_worker_t *sipworker) {
             msg = calloc(1, sizeof(openli_export_recv_t));
             msg->type = OPENLI_EXPORT_CIN_CLOSE;
             msg->data.cininfo.liid = strdup(reg->common.liid);
+            msg->data.cininfo.authcc = strdup(reg->common.authcc);
             msg->data.cininfo.cin = reg->cin;
             publish_openli_msg(
                     sipworker->zmq_pubsocks[reg->common.seqtrackerid], msg);
@@ -715,7 +716,7 @@ static rtpstreaminf_t *match_call_to_intercept(openli_sip_worker_t *sipworker,
 
     primary = get_primary_callid_using_callid(sipworker->call_state,
             sipworker->call_state_mutex, callid);
-    snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, *cin,
+    snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid_key, *cin,
             primary ? primary : callid);
     HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
 
@@ -1077,7 +1078,7 @@ static int process_sip_other(openli_sip_worker_t *sipworker, char *callid,
             continue;
         }
 
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin,
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid_key, cin,
                 primary ? primary : callid);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {

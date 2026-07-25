@@ -723,8 +723,8 @@ static void start_email_intercept(openli_email_worker_t *state,
         em->common.seqtrackerid = hash_liid(em->common.liid) % state->tracker_threads;
     }
 
-    HASH_ADD_KEYPTR(hh_liid, state->allintercepts, em->common.liid,
-            em->common.liid_len, em);
+    HASH_ADD_KEYPTR(hh_liid, state->allintercepts, em->common.liid_key,
+            em->common.liid_key_len, em);
 
     if (addtargets) {
         HASH_ITER(hh, em->targets, tgt, tmp) {
@@ -905,8 +905,8 @@ static int add_new_email_intercept(openli_email_worker_t *state,
         return -1;
     }
 
-    HASH_FIND(hh_liid, state->allintercepts, em->common.liid,
-            em->common.liid_len, found);
+    HASH_FIND(hh_liid, state->allintercepts, em->common.liid_key,
+            em->common.liid_key_len, found);
 
     if (found) {
         email_target_t *tgt, *tmp;
@@ -949,8 +949,8 @@ static int modify_email_intercept(openli_email_worker_t *state,
         return -1;
     }
 
-    HASH_FIND(hh_liid, state->allintercepts, decode->common.liid,
-            decode->common.liid_len, found);
+    HASH_FIND(hh_liid, state->allintercepts, decode->common.liid_key,
+            decode->common.liid_key_len, found);
     if (!found) {
         start_email_intercept(state, decode, 0);
         return 0;
@@ -972,8 +972,8 @@ static int halt_email_intercept(openli_email_worker_t *state,
         return -1;
     }
 
-    HASH_FIND(hh_liid, state->allintercepts, decode->common.liid,
-            decode->common.liid_len, found);
+    HASH_FIND(hh_liid, state->allintercepts, decode->common.liid_key,
+            decode->common.liid_key_len, found);
     if (!found && state->emailid == 0) {
         logger(LOG_INFO, "OpenLI: tried to halt email intercept %s but this was not in the intercept map?", decode->common.liid);
         free_single_emailintercept(decode);

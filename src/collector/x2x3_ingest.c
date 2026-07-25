@@ -296,6 +296,15 @@ static inline void populate_intercept_common(published_intercept_msg_t *src,
     /* already NULLed by move; just ensure len is 0 */
     src->encryptkey = NULL;
     src->encryptkey_len = 0;
+
+    if (dst->liid && dst->authcc) {
+        char errbuf[256];
+        if (set_intercept_liid_key(dst, errbuf, sizeof(errbuf)) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to derive intercept key for X2/X3 intercept %s: %s",
+                    dst->liid, errbuf);
+        }
+    }
 }
 
 static inline uint8_t x2x3dir_to_etsidir(uint16_t xdir) {
@@ -1106,13 +1115,16 @@ static void withdraw_xid_ipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
     ipintercept_t *found;
+    char liid_key[2048];
 
-    if (msg->data.cept.liid == NULL) {
+    if (msg->data.cept.liid == NULL || msg->data.cept.authcc == NULL) {
         return;
     }
 
-    HASH_FIND(hh_liid, xinp->ipintercepts, msg->data.cept.liid,
-            strlen(msg->data.cept.liid), found);
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->data.cept.authcc,
+            msg->data.cept.liid);
+    HASH_FIND(hh_liid, xinp->ipintercepts, liid_key,
+            strlen(liid_key), found);
     if (!found) {
         return;
     }
@@ -1127,13 +1139,16 @@ static void withdraw_xid_voipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
     voipintercept_t *found;
+    char liid_key[2048];
 
-    if (msg->data.cept.liid == NULL) {
+    if (msg->data.cept.liid == NULL || msg->data.cept.authcc == NULL) {
         return;
     }
 
-    HASH_FIND(hh_liid, xinp->voipintercepts, msg->data.cept.liid,
-            strlen(msg->data.cept.liid), found);
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->data.cept.authcc,
+            msg->data.cept.liid);
+    HASH_FIND(hh_liid, xinp->voipintercepts, liid_key,
+            strlen(liid_key), found);
     if (!found) {
         return;
     }
@@ -1148,13 +1163,16 @@ static void add_or_update_xid_voipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
     voipintercept_t *found;
+    char liid_key[2048];
 
-    if (msg->data.cept.liid == NULL) {
+    if (msg->data.cept.liid == NULL || msg->data.cept.authcc == NULL) {
         return;
     }
 
-    HASH_FIND(hh_liid, xinp->voipintercepts, msg->data.cept.liid,
-            strlen(msg->data.cept.liid), found);
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->data.cept.authcc,
+            msg->data.cept.liid);
+    HASH_FIND(hh_liid, xinp->voipintercepts, liid_key,
+            strlen(liid_key), found);
     if (found) {
         remove_existing_from_uuid_map(&(xinp->voipxids), &(found->common));
         update_intercept_common(&(msg->data.cept), &(found->common),
@@ -1163,8 +1181,8 @@ static void add_or_update_xid_voipintercept(x_input_t *xinp,
         found = calloc(1, sizeof(voipintercept_t));
         populate_intercept_common(&(msg->data.cept), &(found->common),
                 msg->destid);
-        HASH_ADD_KEYPTR(hh_liid, xinp->voipintercepts, found->common.liid,
-                found->common.liid_len, found);
+        HASH_ADD_KEYPTR(hh_liid, xinp->voipintercepts, found->common.liid_key,
+                found->common.liid_key_len, found);
 
     }
     update_uuid_map(&(xinp->voipxids), &(found->common),
@@ -1175,13 +1193,16 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
         openli_export_recv_t *msg) {
 
     ipintercept_t *found;
+    char liid_key[2048];
 
-    if (msg->data.cept.liid == NULL) {
+    if (msg->data.cept.liid == NULL || msg->data.cept.authcc == NULL) {
         return;
     }
 
-    HASH_FIND(hh_liid, xinp->ipintercepts, msg->data.cept.liid,
-            strlen(msg->data.cept.liid), found);
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->data.cept.authcc,
+            msg->data.cept.liid);
+    HASH_FIND(hh_liid, xinp->ipintercepts, liid_key,
+            strlen(liid_key), found);
     if (found) {
         remove_existing_from_uuid_map(&(xinp->ipxids), &(found->common));
         update_intercept_common(&(msg->data.cept), &(found->common),
@@ -1203,8 +1224,8 @@ static void add_or_update_xid_ipintercept(x_input_t *xinp,
         if (found->username) {
             found->username_len = strlen(found->username);
         }
-        HASH_ADD_KEYPTR(hh_liid, xinp->ipintercepts, found->common.liid,
-                found->common.liid_len, found);
+        HASH_ADD_KEYPTR(hh_liid, xinp->ipintercepts, found->common.liid_key,
+                found->common.liid_key_len, found);
     }
     update_uuid_map(&(xinp->ipxids), &(found->common),
             OPENLI_INTERCEPT_TYPE_IP, found);

@@ -220,6 +220,7 @@ typedef struct openli_rawip_job {
 
 typedef struct openli_cin_info_job {
     char *liid;
+    char *authcc;
     uint32_t cin;
 } openli_cin_info_job_t;
 

@@ -947,7 +947,7 @@ static void post_disable_unconfirmed_voip_target(openli_sip_identity_t *sipid,
     HASH_ITER(hh, ref->tgtcalls, cinptr, cintmp) {
         HASH_DELETE(hh, ref->tgtcalls, cinptr);
 
-        snprintf(rtpkey, 512, "%s-%u-%s", v->common.liid, cinptr->cin,
+        snprintf(rtpkey, 512, "%s-%u-%s", v->common.liid_key, cinptr->cin,
                 cinptr->callid);
         HASH_FIND(hh, v->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp) {
@@ -979,8 +979,8 @@ static void sip_worker_init_voip_intercept(openli_sip_worker_t *sipworker,
                 sipworker->tracker_threads;
     }
 
-    HASH_ADD_KEYPTR(hh_liid, sipworker->voipintercepts, vint->common.liid,
-            vint->common.liid_len, vint);
+    HASH_ADD_KEYPTR(hh_liid, sipworker->voipintercepts, vint->common.liid_key,
+            vint->common.liid_key_len, vint);
     vint->awaitingconfirm = 0;
 
     sip_worker_send_intercept_update_to_seqtracker(sipworker, vint,
@@ -1001,8 +1001,8 @@ static int sip_worker_add_new_voip_intercept(openli_sip_worker_t *sipworker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sipworker->voipintercepts, vint->common.liid,
-            vint->common.liid_len, found);
+    HASH_FIND(hh_liid, sipworker->voipintercepts, vint->common.liid_key,
+            vint->common.liid_key_len, found);
     if (found) {
         openli_sip_identity_t *tgt;
         libtrace_list_node_t *n;
@@ -1057,8 +1057,8 @@ static int sip_worker_halt_voip_intercept(openli_sip_worker_t *sipworker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sipworker->voipintercepts, decode->common.liid,
-            decode->common.liid_len, found);
+    HASH_FIND(hh_liid, sipworker->voipintercepts, decode->common.liid_key,
+            decode->common.liid_key_len, found);
     if (!found) {
         if (sipworker->workerid == 0) {
             logger(LOG_INFO,
@@ -1096,8 +1096,8 @@ static int sip_worker_modify_voip_intercept(openli_sip_worker_t *sipworker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sipworker->voipintercepts, vint->common.liid,
-            vint->common.liid_len, found);
+    HASH_FIND(hh_liid, sipworker->voipintercepts, vint->common.liid_key,
+            vint->common.liid_key_len, found);
     if (!found) {
         sip_worker_init_voip_intercept(sipworker, vint);
     } else {

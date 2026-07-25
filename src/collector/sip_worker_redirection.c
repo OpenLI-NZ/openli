@@ -264,7 +264,7 @@ int handle_sip_redirection_packet(openli_sip_worker_t *sipworker,
             sipworker->call_state_mutex, msg->callid);
 
     HASH_ITER(hh_liid, sipworker->voipintercepts, vint, tmp) {
-        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid, cin,
+        snprintf(rtpkey, 256, "%s-%u-%s", vint->common.liid_key, cin,
                 callid ? callid : msg->callid);
         HASH_FIND(hh, vint->active_cins, rtpkey, strlen(rtpkey), thisrtp);
         if (thisrtp == NULL) {
