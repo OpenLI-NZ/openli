@@ -154,6 +154,14 @@ typedef struct intercept_common {
     int liid_len;
     int authcc_len;
     int delivcc_len;
+
+    /** LIIDs are only required to be unique within an authorising country,
+     *  so every internal lookup, queue name and routing decision must key on
+     *  this instead of the LIID alone. Never sent to an agency -- the LIID
+     *  that appears in the ETSI PSHeader is still 'liid' above.
+     */
+    char *liid_key;
+    int liid_key_len;
     uint32_t destid;
     char *targetagency;
     int seqtrackerid;
@@ -777,6 +785,8 @@ int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
         size_t *keylen, char *errorstring, size_t errorstringsize);
 int openli_parse_liid_string(char *liidstr, char **storage,
         openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize);
+int set_intercept_liid_key(intercept_common_t *common, char *errorstring,
+        size_t errorstringsize);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

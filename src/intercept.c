@@ -122,6 +122,43 @@ int openli_parse_liid_string(char *liidstr, char **storage,
     return 1;
 }
 
+int set_intercept_liid_key(intercept_common_t *common, char *errorstring,
+        size_t errorstringsize) {
+
+    if (common->liid == NULL || common->authcc == NULL) {
+        snprintf(errorstring, errorstringsize,
+                "both 'liid' and 'authcc' must be set before deriving a key");
+        return -1;
+    }
+
+    /* A separator inside the authCC would make the key ambiguous, e.g.
+     * ("AB-C", "D") and ("AB", "C-D") would both derive "AB-C-D". ETSI
+     * TS 102 232-1 requires an ISO-3166-1 alpha-2 code here, so this rejects
+     * nothing that was ever valid.
+     */
+    if (strchr(common->authcc, '-') != NULL) {
+        snprintf(errorstring, errorstringsize,
+                "'authcc' must not contain a '-' character");
+        return -1;
+    }
+
+    /* Derived from strlen() rather than the _len members so that callers do
+     * not have to populate those first.
+     */
+    free(common->liid_key);
+    common->liid_key_len = strlen(common->authcc) + strlen(common->liid) + 1;
+    common->liid_key = calloc(common->liid_key_len + 1, sizeof(char));
+    if (common->liid_key == NULL) {
+        common->liid_key_len = 0;
+        snprintf(errorstring, errorstringsize,
+                "out of memory while deriving an intercept key");
+        return -1;
+    }
+    snprintf(common->liid_key, common->liid_key_len + 1, "%s-%s",
+            common->authcc, common->liid);
+    return 1;
+}
+
 int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
         size_t *keylen, char *errorstring, size_t errorstringsize) {
 
@@ -163,6 +200,8 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->liid_format = src->liid_format;
     dest->authcc = strdup(src->authcc);
     dest->delivcc = strdup(src->delivcc);
+    dest->liid_key = src->liid_key ? strdup(src->liid_key) : NULL;
+    dest->liid_key_len = src->liid_key_len;
 
     if (src->targetagency) {
         dest->targetagency = strdup(src->targetagency);
@@ -543,6 +582,10 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 
     if (cept->liid) {
         free(cept->liid);
+    }
+
+    if (cept->liid_key) {
+        free(cept->liid_key);
     }
 
     if (cept->authcc) {
