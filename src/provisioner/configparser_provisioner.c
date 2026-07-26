@@ -1578,6 +1578,12 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "tlsgroups") == 0) {
+        SET_CONFIG_STRING_OPTION(state->sslconf.tlsgroups, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "restauthdb") == 0) {
         SET_CONFIG_STRING_OPTION(state->restauthdbfile, value);
     }

@@ -157,6 +157,12 @@ static int mediator_parser(void *arg, yaml_document_t *doc UNUSED,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp(keyname, "tlsgroups") == 0) {
+        SET_CONFIG_STRING_OPTION(state->sslconf.tlsgroups, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcasecmp(keyname, "etsitls") == 0) {
             state->etsitls = config_check_onoff((char *)value->data.scalar.value);
     }
