@@ -63,27 +63,27 @@ typedef struct export_buffer {
     uint64_t alloced;
 
     /* all data prior to this offset can be considered "successfully written" */
-    uint32_t deadfront;
+    uint64_t deadfront;
 
     /* offset pointing to the first record that has not been sent */
-    uint32_t writeoffset;
+    uint64_t writeoffset;
 
     /* offset pointing to where a previous partial write ended */
-    uint32_t partialfront;
+    uint64_t partialfront;
 
     /* number of bytes remaining to be written following a previous partial
      * write */
-    uint32_t partialrem;
+    uint64_t partialrem;
 
     uint64_t nextwarn;
 
     /* number of subsequent bytes that must be sent before data in the buffer
      * can be considered "sent"
      */
-    uint32_t deadwindow;
+    uint64_t deadwindow;
 
     Pvoid_t record_offsets;
-    uint32_t since_last_saved_offset;
+    uint64_t since_last_saved_offset;
 } export_buffer_t;
 
 
@@ -92,10 +92,10 @@ void reset_export_buffer(export_buffer_t *buf);
 void release_export_buffer(export_buffer_t *buf);
 uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_encoded_result_t *msg, uint32_t beensent);
+        openli_encoded_result_t *msg, uint64_t beensent);
 uint64_t append_heartbeat_to_buffer(export_buffer_t *buf);
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
-        uint8_t *pdustart, uint32_t pdulen, uint32_t beensent);
+        uint8_t *pdustart, uint32_t pdulen, uint64_t beensent);
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl);
 int transmit_buffered_records_RMQ(export_buffer_t *buf, 
@@ -106,7 +106,7 @@ int check_rmq_connection_block_status(amqp_connection_state_t amqp_state,
         uint8_t *is_blocked);
 int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount);
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem);
-void set_export_buffer_ack_window(export_buffer_t *buf, uint32_t window);
+void set_export_buffer_ack_window(export_buffer_t *buf, uint64_t window);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

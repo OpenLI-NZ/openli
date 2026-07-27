@@ -101,9 +101,14 @@ logstatfrequency: 5
 # one OpenLI component, that you also do so on all of the others.
 #
 # Leave these commented out for unencrypted inter-component communications.
-#tlscert: /etc/openli/openli-collector-crt.pem
-#tlskey: /etc/openli/openli-collector-key.pem
-#tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/ssl/openli/openli-collector-crt.pem
+#tlskey: /etc/ssl/openli/openli-collector-key.pem
+#tlsca: /etc/ssl/openli/openli-ca-crt.pem
+
+# Restricts TLS key exchange to the groups listed here, in order of
+# preference. Peers must have at least one group in common to connect.
+# Leave commented out to use OpenSSL's defaults. See doc/TLSDoc.md.
+#tlsgroups: X25519MLKEM768:SecP384r1MLKEM1024
 
 # If set to 'no', intercepted packets streamed by this collector to the
 # mediator will not be encrypted -- this may be desirable for performance
@@ -205,6 +210,12 @@ inputs:
  - uri: eth2            # capture on interface eth2
    threads: 2           # use 2 processing threads for this input
    hasher: radius       # hash packets based on RADIUS session
+
+ - uri: ethvxlan        # capture on interface ethvxlan
+   threads: 2           # use 2 processing threads for this input
+   stripvxlan: 4789     # treat any packets on this interface using UDP port
+                        # 4789 as VXLAN, and strip the outer encapsulation
+                        # automatically
 
 # - uri: dpdk:0000:42:00.0     # capture on DPDK interface with this PCI address
 #   threads: 4                 # use 4 processing threads for this input

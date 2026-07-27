@@ -90,6 +90,7 @@ typedef struct x2x3_listener {
     char *ipaddr;
     char *port;
     time_t lastseen;
+    uint8_t isactive;
 } x2x3_listener_t;
 
 /** Describes a single UDP sink that is available on a collector
@@ -261,6 +262,9 @@ typedef struct prov_collector {
 
     /** Common "client" state */
     prov_client_t *client;
+
+    time_t firstseen;
+    time_t lastseen;
 
     UT_hash_handle hh;
 } prov_collector_t;
@@ -551,6 +555,10 @@ void update_intercept_timeformats(provision_state_t *state,
         char *operatorid);
 int announce_configuration_update_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *newconfig);
+int announce_udpsink_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port);
+int announce_udpsink_removal_to_collector(provision_state_t *state,
+        prov_collector_t *col, const char *ipaddr, const char *port);
 int announce_x2x3_listener_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
 int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
@@ -568,17 +576,20 @@ void remove_udp_sink_mapping(provision_state_t *state,
 int add_udp_sink_mapping(provision_state_t *state, char *liid, char *sinkkey);
 
 /* Implemented in clientdb.c */
+void free_known_client(known_client_t *kc, uint8_t freeself);
 int init_clientdb(provision_state_t *state);
 void close_clientdb(provision_state_t *state);
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med);
 int update_collector_client_row(provision_state_t *state,
         prov_collector_t *col);
 int update_udp_sink_row(provision_state_t *state, prov_collector_t *col,
-       char *listenaddr, char *listenport, char *identifier,
-       uint64_t timestamp);
-int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
        char *listenaddr, char *listenport, uint64_t timestamp);
+int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
+       char *listenaddr, char *listenport, uint64_t timestamp,
+       uint8_t isactive);
 void update_all_client_rows(provision_state_t *state);
+known_client_t *fetch_single_collector_client(provision_state_t *state,
+        const char *collectorid);
 known_client_t *fetch_all_collector_clients(provision_state_t *state,
         size_t *clientcount);
 known_client_t *fetch_all_mediator_clients(provision_state_t *state,
@@ -589,8 +600,7 @@ collector_udp_sink_t *fetch_udp_sinks_for_collector(provision_state_t *state,
         size_t *sinkcount, const char *collectorid);
 int remove_collector_from_clientdb(provision_state_t *state, const char *idstr);
 int remove_udpsink_from_clientdb(provision_state_t *state,
-        const char *uuid, const char *ipaddr, const char *port,
-        const char *identifier);
+        const char *uuid, const char *ipaddr, const char *port);
 int remove_x2x3_listener_from_clientdb(provision_state_t *state,
         const char *uuid, const char *ipaddr, const char *port);
 #endif

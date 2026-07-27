@@ -137,7 +137,10 @@ enum {
     OPENLI_HASHER_RADIUS,
 };
 
+typedef struct collector_global collector_global_t;
+
 typedef struct colinput {
+    collector_global_t *global;
     char *uri;
     char *filterstring;
     char *coremap;
@@ -145,6 +148,9 @@ typedef struct colinput {
     libtrace_t *trace;
     libtrace_filter_t *filter;
     libtrace_callback_set_t *pktcbs;
+
+    uint8_t vxlan_strip;
+    uint16_t vxlan_port;
 
     time_t start_at;
     uint8_t no_restart;
@@ -307,7 +313,7 @@ typedef struct colthread_local {
 
 } colthread_local_t;
 
-typedef struct collector_global {
+struct collector_global {
 
     uuid_t uuid;
 
@@ -355,6 +361,8 @@ typedef struct collector_global {
     pthread_rwlock_t liid_agency_mutex;
     shared_liid_to_agency_mapping_t liid_to_agency;
 
+    forwarder_assignment_t fwdassigner;
+
     libtrace_list_t *expired_inputs;
 
     coreserver_t *alumirrors;
@@ -392,13 +400,12 @@ typedef struct collector_global {
 
     
 
-} collector_global_t;
+};
 
 // "dirty" flag that is used to signal when the sync thread has received
 // updated collector config from the provisioner that needs to be written
 // to disk
 extern volatile int config_write_required;
-
 
 int register_sync_queues(sync_thread_global_t *glob,
         void *recvq, libtrace_message_queue_t *sendq,

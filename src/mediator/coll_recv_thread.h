@@ -52,7 +52,7 @@
  *
  */
 
-#define MAX_SAVED_RECEIVED_DATA 256
+#define MAX_SAVED_RECEIVED_DATA 1024
 
 /** Types of messages that can be sent between the main mediator thread and a
  *  collector receive thread.

@@ -42,6 +42,37 @@
 #include "coll_recv_thread.h"
 #include "lea_send_thread.h"
 
+/* Stage 2 RAWIP batch wire format. Multi-byte fields are network byte order. */
+#define OPENLI_RAWIP_BATCH_MAGIC 0x4f4c5242U /* "OLRB" */
+#define OPENLI_RAWIP_BATCH_VERSION 1U
+#define OPENLI_RAWIP_BATCH_MAX_RECORDS 1024U
+#define OPENLI_RAWIP_BATCH_MAX_BYTES (2U * 1024U * 1024U)
+
+typedef struct openli_rawip_batch_record {
+    const uint8_t *body;
+    uint16_t len;
+} openli_rawip_batch_record_t;
+
+/* Stage 3 CC batch wire format. Multi-byte fields are network byte order. */
+#define OPENLI_CC_BATCH_MAGIC 0x4f4c4342U /* "OLCB" */
+#define OPENLI_CC_BATCH_VERSION 1U
+#define OPENLI_CC_BATCH_MAX_RECORDS 2048U
+#define OPENLI_CC_BATCH_MAX_BYTES (2U * 1024U * 1024U)
+
+/* A batch must always be able to carry at least one maximum-sized record.
+ * Record lengths are uint16_t, and each record has a two-byte length field
+ * after the eight-byte batch header. This also covers an MTU-sized packet
+ * plus ETSI encapsulation overhead with substantial margin. */
+_Static_assert(OPENLI_RAWIP_BATCH_MAX_BYTES >= 8U + 2U + UINT16_MAX,
+        "RAWIP batch byte limit cannot hold one maximum-sized record");
+_Static_assert(OPENLI_CC_BATCH_MAX_BYTES >= 8U + 2U + UINT16_MAX,
+        "CC batch byte limit cannot hold one maximum-sized record");
+
+typedef struct openli_cc_batch_record {
+    const uint8_t *body;
+    uint16_t len;
+} openli_cc_batch_record_t;
+
 /** Creates a connection to the internal RMQ instance for the purposes of
  *  writing intercept records received from a collector
  *
@@ -55,6 +86,24 @@
  *          connection object.
  */
 amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col);
+
+/** Destroys a connection to the internal RMQ instance that is being used
+ *  to publish intercept records.
+ *
+ *  @param col              The state for the collector receive thread that
+ *                          is calling this function
+ */
+void disconnect_mediator_producer_RMQ(coll_recv_t *col);
+
+
+/** Shifts all non-NULL messages to the beginning of the saved messages
+ *  array and updates the available count.
+ *
+ *  @param msgs     The array of saved messages to compact
+ *  @param msgcnt   The current write index of the array, updated with the new
+ *                  write index
+ */
+void compact_saved_messages(saved_received_data_t *msgs, size_t *msgcnt);
 
 /** Connect to the RMQ instance that is running on an OpenLI collector.
  *
@@ -245,6 +294,18 @@ int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
 int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
         uint8_t *msg, uint16_t msglen, char *liid, const char *queuename,
         uint8_t *is_blocked);
+
+/** Publishes multiple raw IP records as one versioned AMQP message. */
+int publish_rawip_batch_on_mediator_liid_RMQ_queue(
+        amqp_connection_state_t state,
+        const openli_rawip_batch_record_t *records, uint16_t record_count,
+        char *liid, const char *queuename, uint8_t *is_blocked);
+
+/** Publishes multiple encoded CC records as one versioned AMQP message. */
+int publish_cc_batch_on_mediator_liid_RMQ_queue(
+        amqp_connection_state_t state,
+        const openli_cc_batch_record_t *records, uint16_t record_count,
+        char *liid, const char *queuename, uint8_t *is_blocked);
 
 /** Consumes CC records using an RMQ connection, writing them into the
  *  provided export buffer.

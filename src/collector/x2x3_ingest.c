@@ -200,6 +200,7 @@ static void tidyup_x2x3_ingest_thread(x_input_t *xinp) {
 
     if (xinp->listener_fd != -1) {
         close(xinp->listener_fd);
+        __atomic_store_n(&(xinp->is_listening), 0, __ATOMIC_RELEASE);
     }
 
     if (xinp->sipparser) {
@@ -1545,6 +1546,9 @@ void x2x3_ingest_main(x_input_t *xinp) {
     if (create_x2x3_listening_socket(xinp) < 0) {
         logger(LOG_INFO, "OpenLI: failed to create listening socket for X2-X3 input %s, unable to accept connections!", xinp->identifier);
         xinp->listener_fd = -1;
+        __atomic_store_n(&(xinp->is_listening), 0, __ATOMIC_RELEASE);
+    } else {
+        __atomic_store_n(&(xinp->is_listening), 1, __ATOMIC_RELEASE);
     }
 
     topoll = calloc(128, sizeof(zmq_pollitem_t));

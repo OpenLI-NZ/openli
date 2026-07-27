@@ -60,9 +60,14 @@ pcapcompress: 1
 # then you will need to provide these options regardless (and therefore will
 # have to accept encrypted inter-component communication).
 #
-#tlscert: /etc/openli/openli-mediator-crt.pem
-#tlskey: /etc/openli/openli-mediator-key.pem
-#tlsca: /etc/openli/openli-ca-crt.pem
+#tlscert: /etc/ssl/openli/openli-mediator-crt.pem
+#tlskey: /etc/ssl/openli/openli-mediator-key.pem
+#tlsca: /etc/ssl/openli/openli-ca-crt.pem
+
+# Restricts TLS key exchange to the groups listed here, in order of
+# preference. Peers must have at least one group in common to connect.
+# Leave commented out to use OpenSSL's defaults. See doc/TLSDoc.md.
+#tlsgroups: X25519MLKEM768:SecP384r1MLKEM1024
 
 # To receive records from collectors that are using RabbitMQ to persist
 # unacknowledged data, you will need to provide the credentials necessary

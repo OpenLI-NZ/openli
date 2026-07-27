@@ -318,7 +318,7 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             ret = remove_x2x3_listener(cinfo, state, target);
             break;
         case TARGET_UDPSINK:
-            /* TODO */
+            ret = remove_collector_udp_sink(cinfo, state, target);
             break;
 
         case TARGET_MEDIATOR:
@@ -496,6 +496,11 @@ static int update_configuration_post(update_con_info_t *cinfo,
         case TARGET_X2X3LISTENER:
             if (strcmp(method, "POST") == 0) {
                 ret = add_new_x2x3_listener(cinfo, state);
+            }
+            break;
+        case TARGET_UDPSINK:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_collector_udp_sink(cinfo, state);
             }
             break;
     }

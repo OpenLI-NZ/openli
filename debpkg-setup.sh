@@ -11,14 +11,13 @@ export SOURCENAME=`echo ${GITHUB_REF##*/} | cut -d '-' -f 1`
 apt-get update
 apt-get install -y equivs devscripts dpkg-dev quilt curl apt-transport-https \
     apt-utils ssl-cert ca-certificates gnupg lsb-release debhelper git \
-    pkg-config sed
+    pkg-config sed sudo
 
-DISTRO=$(lsb_release -sc)
-
-curl -1sLf 'https://dl.cloudsmith.io/public/wand/libwandio/cfg/setup/bash.deb.sh' | bash
-curl -1sLf 'https://dl.cloudsmith.io/public/wand/libwandder/cfg/setup/bash.deb.sh' | bash
-curl -1sLf 'https://dl.cloudsmith.io/public/wand/libtrace/cfg/setup/bash.deb.sh' | bash
-curl -1sLf 'https://dl.cloudsmith.io/public/wand/openli/cfg/setup/bash.deb.sh' | bash
+DISTRO_CODENAME=$(lsb_release -sc)
+curl -fsSL https://packages.nz/repository-public-key.asc | sudo gpg --dearmor -o /etc/apt/keyrings/packages-nz.gpg
+echo "deb [signed-by=/etc/apt/keyrings/packages-nz.gpg] https://openli.packages.nz/openli-dependencies/debian ${DISTRO_CODENAME} main" | sudo tee /etc/apt/sources.list.d/openli-deps-packages-nz.list
+echo "deb [signed-by=/etc/apt/keyrings/packages-nz.gpg] https://libtrace.packages.nz/debian ${DISTRO_CODENAME} main" | sudo tee /etc/apt/sources.list.d/libtrace-packages-nz.list
+sudo apt update
 
 apt-get update
 apt-get upgrade -y

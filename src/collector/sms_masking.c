@@ -157,7 +157,9 @@ int mask_sms_message_content(uint8_t *sipstart, uint16_t siplen) {
     if (bodystart == NULL) {
         return 0;
     }
-    assert(bodystart > sipstart);
+    if (bodystart <= sipstart) {
+        return 0;
+    }
 
     bodylen = siplen - (bodystart - sipstart);
     if (bodylen <= 4 || bodylen > siplen) {

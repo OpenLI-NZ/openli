@@ -803,6 +803,7 @@ int openli_deepcopy_packet(libtrace_packet_t *src, libtrace_packet_t *dest) {
     dest->refcount = 0;
     dest->internalid = 0;
     dest->which_trace_start = src->which_trace_start;
+    dest->unsafe_payload = src->unsafe_payload;
     memset(&(dest->cached), 0, sizeof(libtrace_packet_cache_t));
     dest->cached.capture_length = caplen;
     dest->cached.framing_length = framelen;
@@ -844,6 +845,7 @@ libtrace_packet_t *openli_copy_packet(libtrace_packet_t *pkt) {
     copy->refcount = 0;
     copy->internalid = 0;
     copy->which_trace_start = pkt->which_trace_start;
+    copy->unsafe_payload = pkt->unsafe_payload;
     memset(&(copy->cached), 0, sizeof(libtrace_packet_cache_t));
     copy->cached.capture_length = caplen;
     copy->cached.framing_length = framelen;

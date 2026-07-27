@@ -96,14 +96,12 @@ static int parse_udp_sink_config(collector_global_t *glob,
         }
 
         if (snk->identifier == NULL) {
-            logger(LOG_INFO,
-                    "OpenLI: UDP sink must include a 'identifier' parameter");
-            destroy_colsync_udp_sink(snk);
-            continue;
+            snprintf(fullkey, 512, "temporaryidentifier,%s,%s",
+                    snk->listenaddr, snk->listenport);
+        } else {
+            snprintf(fullkey, 512, "%s,%s,%s", snk->identifier,
+                    snk->listenaddr, snk->listenport);
         }
-
-        snprintf(fullkey, 512, "%s,%s,%s", snk->identifier, snk->listenaddr,
-                snk->listenport);
         snk->key = strdup(fullkey);
         snk->running = 0;
 
@@ -218,6 +216,8 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->filterstring = NULL;
         inp->filter = NULL;
     	inp->coremap = NULL;
+        inp->vxlan_strip = 0;
+        inp->vxlan_port = 0;
 
         /* Mappings describe the parameters for each input */
         for (pair = node->data.mapping.pairs.start;
@@ -278,6 +278,22 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
                     inp->hasher_apply = OPENLI_HASHER_RADIUS;
                 } else {
                     logger(LOG_INFO, "OpenLI: unexpected hasher type '%s' in config, ignoring.", (char *)value->data.scalar.value);
+                }
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "stripvxlan") == 0) {
+                uint64_t port;
+                inp->vxlan_strip = 1;
+                port = strtoul((char *)value->data.scalar.value, NULL, 10);
+
+                if (port > 65535) {
+                    logger(LOG_INFO, "OpenLI: invalid VXLAN port number in input configuration, ignoring request to strip VXLAN headers");
+                    inp->vxlan_strip = 0;
+                } else {
+                    inp->vxlan_port = port;
                 }
             }
         }
@@ -625,6 +641,13 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "tlsca") == 0) {
         SET_CONFIG_STRING_OPTION(glob->sslconf.cacertfile, value);
+        return 0;
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "tlsgroups") == 0) {
+        SET_CONFIG_STRING_OPTION(glob->sslconf.tlsgroups, value);
         return 0;
     }
 

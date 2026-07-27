@@ -28,6 +28,12 @@
 #include <assert.h>
 #include "logger.h"
 #include "lea_send_thread.h"
+
+/* Consume more records per RMQ round-trip. The socket send path already
+ * applies a 16 MiB fairness cap, so this raises throughput without allowing
+ * one handover to monopolise the agency thread indefinitely. */
+#define LEA_RMQ_BATCH_SIZE 1024
+
 #include "mediator_rmq.h"
 #include "handover.h"
 #include "agency.h"
@@ -413,7 +419,8 @@ static int consume_available_rmq_records(handover_t *ho,
     /* Otherwise, read some new messages from RMQ and try to send those */
     if (ho->handover_type == HANDOVER_HI3) {
         r = consume_mediator_cc_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 100, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), LEA_RMQ_BATCH_SIZE,
+                &(ho->ho_state->next_rmq_ack));
         if (r < 0) {
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming CC messages from internal queue by agency %s", state->agencyid);
@@ -423,7 +430,8 @@ static int consume_available_rmq_records(handover_t *ho,
         }
     } else if (ho->handover_type == HANDOVER_HI2) {
         r = consume_mediator_iri_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 100, &(ho->ho_state->next_rmq_ack));
+                &(ho->ho_state->buf), LEA_RMQ_BATCH_SIZE,
+                &(ho->ho_state->next_rmq_ack));
         if (r < 0) {
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming IRI messages from internal queue by agency %s", state->agencyid);

@@ -35,6 +35,21 @@
  *  the RabbitMQ API.
  */
 
+void compact_saved_messages(saved_received_data_t *msgs, size_t *msgcnt) {
+    size_t write_idx = 0, i = 0;
+
+    for (i = 0; i < *msgcnt; i++) {
+        if (msgs[i].msgbody != NULL) {
+            if (write_idx != i) {
+                msgs[write_idx] = msgs[i];
+                memset(&(msgs[i]), 0, sizeof(saved_received_data_t));
+            }
+            write_idx ++;
+        }
+    }
+    *msgcnt = write_idx;
+}
+
 /** Declares a RabbitMQ queue on a specified channel
  *
  *  @param state        The RMQ connection to use to declare the queue
@@ -241,7 +256,7 @@ int declare_mediator_rawip_RMQ_queue(amqp_connection_state_t state,
  *  @return 0 if an error occurs, 1 if the message is published successfully
  */
 static int produce_mediator_RMQ(amqp_connection_state_t state,
-        uint8_t *msg, uint16_t msglen, char *liid, int channel,
+        uint8_t *msg, size_t msglen, char *liid, int channel,
         const char *queuename, uint32_t expiry, uint8_t *is_blocked) {
     amqp_bytes_t message_bytes;
     amqp_basic_properties_t props;
@@ -291,6 +306,67 @@ int publish_rawip_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
             is_blocked);
 }
 
+
+/*
+ * Stage 2 RAWIP batch body:
+ *   uint32_t magic (OPENLI_RAWIP_BATCH_MAGIC)
+ *   uint8_t  version
+ *   uint8_t  reserved
+ *   uint16_t record_count
+ *   repeated { uint16_t record_length; uint8_t record[record_length]; }
+ * All integer fields are network byte order.
+ */
+int publish_rawip_batch_on_mediator_liid_RMQ_queue(
+        amqp_connection_state_t state,
+        const openli_rawip_batch_record_t *records, uint16_t record_count,
+        char *liid, const char *queuename, uint8_t *is_blocked) {
+    uint8_t *body;
+    uint8_t *cursor;
+    uint32_t magic;
+    uint16_t count_be;
+    size_t bodylen = 8;
+    uint16_t i;
+    int ret;
+
+    if (records == NULL || record_count == 0 ||
+            record_count > OPENLI_RAWIP_BATCH_MAX_RECORDS) {
+        return -1;
+    }
+
+    for (i = 0; i < record_count; i++) {
+        if (records[i].body == NULL || records[i].len == 0 ||
+                bodylen > OPENLI_RAWIP_BATCH_MAX_BYTES - 2U - records[i].len) {
+            return -1;
+        }
+        bodylen += 2U + records[i].len;
+    }
+
+    body = malloc(bodylen);
+    if (body == NULL) {
+        return -1;
+    }
+
+    cursor = body;
+    magic = htonl(OPENLI_RAWIP_BATCH_MAGIC);
+    memcpy(cursor, &magic, sizeof(magic)); cursor += sizeof(magic);
+    *cursor++ = OPENLI_RAWIP_BATCH_VERSION;
+    *cursor++ = 0;
+    count_be = htons(record_count);
+    memcpy(cursor, &count_be, sizeof(count_be)); cursor += sizeof(count_be);
+
+    for (i = 0; i < record_count; i++) {
+        uint16_t len_be = htons(records[i].len);
+        memcpy(cursor, &len_be, sizeof(len_be)); cursor += sizeof(len_be);
+        memcpy(cursor, records[i].body, records[i].len);
+        cursor += records[i].len;
+    }
+
+    ret = produce_mediator_RMQ(state, body, bodylen, liid, 4, queuename, 0,
+            is_blocked);
+    free(body);
+    return ret;
+}
+
 /** Publishes an encoded IRI onto a mediator RMQ queue.
  *
  *  @param state            The RMQ connection to use to publish the message
@@ -327,6 +403,66 @@ int publish_cc_on_mediator_liid_RMQ_queue(amqp_connection_state_t state,
 
     return produce_mediator_RMQ(state, msg, msglen, liid, 3, queuename, 0,
             is_blocked);
+}
+
+/*
+ * Stage 3 CC batch body:
+ *   uint32_t magic (OPENLI_CC_BATCH_MAGIC)
+ *   uint8_t  version
+ *   uint8_t  reserved
+ *   uint16_t record_count
+ *   repeated { uint16_t record_length; uint8_t record[record_length]; }
+ * All integer fields are network byte order.
+ */
+int publish_cc_batch_on_mediator_liid_RMQ_queue(
+        amqp_connection_state_t state,
+        const openli_cc_batch_record_t *records, uint16_t record_count,
+        char *liid, const char *queuename, uint8_t *is_blocked) {
+    uint8_t *body;
+    uint8_t *cursor;
+    uint32_t magic;
+    uint16_t count_be;
+    size_t bodylen = 8;
+    uint16_t i;
+    int ret;
+
+    if (records == NULL || record_count == 0 ||
+            record_count > OPENLI_CC_BATCH_MAX_RECORDS) {
+        return -1;
+    }
+
+    for (i = 0; i < record_count; i++) {
+        if (records[i].body == NULL || records[i].len == 0 ||
+                bodylen > OPENLI_CC_BATCH_MAX_BYTES - 2U - records[i].len) {
+            return -1;
+        }
+        bodylen += 2U + records[i].len;
+    }
+
+    body = malloc(bodylen);
+    if (body == NULL) {
+        return -1;
+    }
+
+    cursor = body;
+    magic = htonl(OPENLI_CC_BATCH_MAGIC);
+    memcpy(cursor, &magic, sizeof(magic)); cursor += sizeof(magic);
+    *cursor++ = OPENLI_CC_BATCH_VERSION;
+    *cursor++ = 0;
+    count_be = htons(record_count);
+    memcpy(cursor, &count_be, sizeof(count_be)); cursor += sizeof(count_be);
+
+    for (i = 0; i < record_count; i++) {
+        uint16_t len_be = htons(records[i].len);
+        memcpy(cursor, &len_be, sizeof(len_be)); cursor += sizeof(len_be);
+        memcpy(cursor, records[i].body, records[i].len);
+        cursor += records[i].len;
+    }
+
+    ret = produce_mediator_RMQ(state, body, bodylen, liid, 3, queuename, 0,
+            is_blocked);
+    free(body);
+    return ret;
 }
 
 void remove_mediator_liid_RMQ_queue(amqp_connection_state_t state,
@@ -444,6 +580,27 @@ consfailed:
     }
     return NULL;
 }
+
+/** Destroys a connection to the internal RMQ instance that is being used
+ *  to publish intercept records.
+ *
+ *  @param col              The state for the collector receive thread that
+ *                          is calling this function
+ */
+void disconnect_mediator_producer_RMQ(coll_recv_t *col) {
+    col_known_liid_t *known, *tmp;
+
+    if (col->amqp_producer_state) {
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
+
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        known->declared_int_rmq = 0;
+        known->declared_raw_rmq = 0;
+    }
+}
+
 
 /** Creates a connection to the internal RMQ instance for the purposes of
  *  writing intercept records received from a collector
@@ -569,10 +726,7 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
     return col->amqp_producer_state;
 
 prodfailed:
-    if (col->amqp_producer_state) {
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
-    }
+    disconnect_mediator_producer_RMQ(col);
     return NULL;
 }
 
@@ -912,67 +1066,76 @@ static int consume_other_frame(amqp_connection_state_t state) {
     return -1;
 }
 
-int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
-
+static int count_saved_messages(saved_received_data_t *msgs, size_t msgcnt) {
     size_t i;
+    int awaiting = 0;
+
+    for (i = 0; i < msgcnt; i++) {
+        if (msgs[i].msgbody != NULL && msgs[i].msglen > 0) {
+            awaiting++;
+        }
+    }
+    return awaiting;
+}
+
+static int release_confirmed_messages(saved_received_data_t *msgs,
+        size_t msgcnt, uint64_t delivery_tag, uint8_t multiple) {
+    size_t i;
+    int released = 0;
+
+    for (i = 0; i < msgcnt; i++) {
+        saved_received_data_t *next = &(msgs[i]);
+        int confirmed;
+
+        if (next->msgbody == NULL || next->msglen == 0 ||
+                next->delivtag == 0) {
+            continue;
+        }
+        confirmed = multiple ? next->delivtag <= delivery_tag :
+                next->delivtag == delivery_tag;
+        if (!confirmed) {
+            continue;
+        }
+        free(next->msgbody);
+        free(next->liid);
+        next->msgbody = NULL;
+        next->liid = NULL;
+        next->msglen = 0;
+        next->delivtag = 0;
+        released++;
+    }
+    return released;
+}
+
+int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
     int r;
     amqp_frame_t frame;
-    saved_received_data_t *sav;
     struct timeval tv;
-
     int cc_await = 0, iri_await = 0, raw_await = 0;
-    int iri_start = -1, cc_start = -1, raw_start = -1;
 
-    for (i = 0; i < col->saved_iri_msg_cnt; i++) {
-        if (col->saved_iri_msgs[i].msglen > 0) {
-            iri_await ++;
-            if (iri_start < 0) {
-                iri_start = i;
-            }
-        }
-    }
-
-    for (i = 0; i < col->saved_cc_msg_cnt; i++) {
-        if (col->saved_cc_msgs[i].msglen > 0) {
-            cc_await ++;
-            if (cc_start < 0) {
-                cc_start = i;
-            }
-        }
-    }
-
-    for (i = 0; i < col->saved_raw_msg_cnt; i++) {
-        if (col->saved_raw_msgs[i].msglen > 0) {
-            raw_await ++;
-            if (raw_start < 0) {
-                raw_start = i;
-            }
-        }
-    }
+    iri_await = count_saved_messages(col->saved_iri_msgs,
+            col->saved_iri_msg_cnt);
+    cc_await = count_saved_messages(col->saved_cc_msgs,
+            col->saved_cc_msg_cnt);
+    raw_await = count_saved_messages(col->saved_raw_msgs,
+            col->saved_raw_msg_cnt);
 
     while (cc_await > 0 || iri_await > 0 || raw_await > 0) {
-        /* keep consuming until we get an ACK or a NACK -- everything else
-         * can just be ignored (note that this will block until we get what
-         * we are looking for, or the connection fails).
-         */
-        tv.tv_sec = 1; tv.tv_usec = 0;
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
         r = amqp_simple_wait_frame_noblock(col->amqp_producer_state, &frame,
                 &tv);
-
         if (r == AMQP_STATUS_TIMEOUT) {
-            /* No acknowledgements this second, we need to move on instead so
-             * that we're not blocking and hope that something turns up
-             * next time we check for acks.
-             */
-            if (cc_await == 0) {
-                col->saved_cc_msg_cnt = 0;
-            }
-            if (iri_await == 0) {
-                col->saved_iri_msg_cnt = 0;
-            }
-            if (raw_await == 0) {
-                col->saved_raw_msg_cnt = 0;
-            }
+            if (cc_await == 0) col->saved_cc_msg_cnt = 0;
+            if (iri_await == 0) col->saved_iri_msg_cnt = 0;
+            if (raw_await == 0) col->saved_raw_msg_cnt = 0;
+            compact_saved_messages(col->saved_iri_msgs,
+                    &(col->saved_iri_msg_cnt));
+            compact_saved_messages(col->saved_cc_msgs,
+                    &(col->saved_cc_msg_cnt));
+            compact_saved_messages(col->saved_raw_msgs,
+                    &(col->saved_raw_msg_cnt));
+
             if (col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
                     col->saved_iri_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
                     col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA) {
@@ -980,96 +1143,70 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
             }
             return 1;
         } else if (r != AMQP_STATUS_OK) {
-            /* broker failure, must retry */
             return 0;
         }
 
         if (frame.frame_type == AMQP_FRAME_METHOD) {
             amqp_basic_ack_t *ack;
-
             switch(frame.payload.method.id) {
                 case AMQP_CONNECTION_CLOSE_METHOD:
-                    logger(LOG_INFO,
-                            "OpenLI mediator: 'close' exception occurred on an internal RMQ connection -- must restart connection");
+                    logger(LOG_INFO, "OpenLI mediator: 'close' exception occurred on an internal RMQ connection -- must restart connection");
                     return 0;
                 case AMQP_CHANNEL_CLOSE_METHOD:
-                    logger(LOG_INFO,
-                            "OpenLI mediator: channel exception occurred on an internal RMQ connection -- must reset connection");
+                    logger(LOG_INFO, "OpenLI mediator: channel exception occurred on an internal RMQ connection -- must reset connection");
                     return 0;
-                case AMQP_BASIC_ACK_METHOD:
-                    ack = (amqp_basic_ack_t *)frame.payload.method.decoded;
-                    int *start, *await;
+                case AMQP_BASIC_ACK_METHOD: {
+                    saved_received_data_t *msgs;
+                    size_t msgcnt;
+                    int *await;
+                    int released;
 
+                    ack = (amqp_basic_ack_t *)frame.payload.method.decoded;
                     if (frame.channel == 2) {
-                        sav = col->saved_iri_msgs;
-                        start = &(iri_start);
+                        msgs = col->saved_iri_msgs;
+                        msgcnt = col->saved_iri_msg_cnt;
                         await = &(iri_await);
                     } else if (frame.channel == 3) {
-                        sav = col->saved_cc_msgs;
-                        start = &(cc_start);
+                        msgs = col->saved_cc_msgs;
+                        msgcnt = col->saved_cc_msg_cnt;
                         await = &(cc_await);
-
                     } else if (frame.channel == 4) {
-                        sav = col->saved_raw_msgs;
-                        start = &(raw_start);
+                        msgs = col->saved_raw_msgs;
+                        msgcnt = col->saved_raw_msg_cnt;
                         await = &(raw_await);
-
                     } else {
                         break;
                     }
-                    while (*start < MAX_SAVED_RECEIVED_DATA && *await > 0) {
-                        saved_received_data_t *next = &(sav[*start]);
-
-                        if (next->delivtag > ack->delivery_tag) {
-                            break;
-                        }
-                        if (next->msgbody) {
-                            free(next->msgbody);
-                            next->msgbody = NULL;
-                        }
-                        if (next->liid) {
-                            free(next->liid);
-                            next->liid = NULL;
-                        }
-                        next->msglen = 0;
-                        next->delivtag = 0;
-                        (*start)++;
-                        (*await)--;
-                    }
-
+                    released = release_confirmed_messages(msgs, msgcnt,
+                            ack->delivery_tag, ack->multiple);
+                    assert(released <= *await);
+                    *await -= released;
                     break;
-
+                }
                 case AMQP_BASIC_NACK_METHOD:
                     return 0;
                 case AMQP_CONNECTION_BLOCKED_METHOD:
-                    if ((col->rmq_blocked) == 0) {
-                        logger(LOG_INFO,
-                                "OpenLI mediator: RMQ is unable to handle any more published ETSI records!");
-                        logger(LOG_INFO,
-                                "OpenLI mediator: this is a SERIOUS problem -- received ETSI records are going to be dropped!");
+                    if (col->rmq_blocked == 0) {
+                        logger(LOG_INFO, "OpenLI mediator: RMQ is unable to handle any more published ETSI records!");
+                        logger(LOG_INFO, "OpenLI mediator: this is a SERIOUS problem -- received ETSI records are going to be dropped!");
                     }
                     col->rmq_blocked = 1;
                     break;
                 case AMQP_CONNECTION_UNBLOCKED_METHOD:
-                    if ((col->rmq_blocked) == 1) {
-                        logger(LOG_INFO,
-                                "OpenLI mediator: RMQ has become unblocked and will resume publishing ETSI records.");
+                    if (col->rmq_blocked == 1) {
+                        logger(LOG_INFO, "OpenLI mediator: RMQ has become unblocked and will resume publishing ETSI records.");
                     }
                     col->rmq_blocked = 0;
                     break;
             }
         }
     }
-
-    /* all messages were acknowledged */
-    col->saved_iri_msg_cnt = 0;
-    col->saved_raw_msg_cnt = 0;
-    col->saved_cc_msg_cnt = 0;
+    compact_saved_messages(col->saved_iri_msgs, &(col->saved_iri_msg_cnt));
+    compact_saved_messages(col->saved_cc_msgs, &(col->saved_cc_msg_cnt));
+    compact_saved_messages(col->saved_raw_msgs, &(col->saved_raw_msg_cnt));
     col->queue_full = 0;
     return 1;
-
 }
-
 
 #define MAX_CONSUMER_REJECTIONS 10
 
@@ -1172,10 +1309,87 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
 
         msgread += 1;
 
-        /* Raw IP messages need to be prepended with their length as we have
-         * no other reliable indicator of their length in the message
-         * itself.
+        /* RAWIP and CC accept both their legacy one-record bodies and their
+         * versioned batch bodies. IRI remains unchanged.
          */
+        if (envelope.message.body.len >= 8) {
+            uint8_t *cursor = envelope.message.body.bytes;
+            uint8_t *end = cursor + envelope.message.body.len;
+            uint32_t magic_be;
+            uint32_t magic;
+            uint16_t count_be;
+            uint16_t count;
+            uint16_t recno;
+            uint16_t max_records = 0;
+            uint8_t batch_version = 0;
+            uint8_t is_rawip_batch = 0;
+            uint8_t is_cc_batch = 0;
+
+            memcpy(&magic_be, cursor, sizeof(magic_be));
+            magic = ntohl(magic_be);
+            if (prependlength && magic == OPENLI_RAWIP_BATCH_MAGIC) {
+                batch_version = OPENLI_RAWIP_BATCH_VERSION;
+                max_records = OPENLI_RAWIP_BATCH_MAX_RECORDS;
+                is_rawip_batch = 1;
+            } else if (!prependlength && channel == 3 &&
+                    magic == OPENLI_CC_BATCH_MAGIC) {
+                batch_version = OPENLI_CC_BATCH_VERSION;
+                max_records = OPENLI_CC_BATCH_MAX_RECORDS;
+                is_cc_batch = 1;
+            }
+
+            if ((is_rawip_batch || is_cc_batch) &&
+                    cursor[4] == batch_version) {
+                memcpy(&count_be, cursor + 6, sizeof(count_be));
+                count = ntohs(count_be);
+                cursor += 8;
+
+                if (count == 0 || count > max_records) {
+                    amqp_destroy_envelope(&envelope);
+                    return -1;
+                }
+
+                for (recno = 0; recno < count; recno++) {
+                    uint16_t rec_len_be;
+                    uint16_t rec_len;
+
+                    if ((size_t)(end - cursor) < sizeof(rec_len_be)) {
+                        amqp_destroy_envelope(&envelope);
+                        return -1;
+                    }
+                    memcpy(&rec_len_be, cursor, sizeof(rec_len_be));
+                    cursor += sizeof(rec_len_be);
+                    rec_len = ntohs(rec_len_be);
+                    if (rec_len == 0 || (size_t)(end - cursor) < rec_len) {
+                        amqp_destroy_envelope(&envelope);
+                        return -1;
+                    }
+
+                    if (is_rawip_batch) {
+                        len = rec_len;
+                        if (append_etsipdu_to_buffer(buf, (uint8_t *)&len,
+                                sizeof(len), 0) == 0) {
+                            amqp_destroy_envelope(&envelope);
+                            return -1;
+                        }
+                    }
+                    if (append_etsipdu_to_buffer(buf, cursor, rec_len, 0) == 0) {
+                        amqp_destroy_envelope(&envelope);
+                        return -1;
+                    }
+                    cursor += rec_len;
+                }
+
+                if (cursor != end) {
+                    amqp_destroy_envelope(&envelope);
+                    return -1;
+                }
+                *last_deliv = envelope.delivery_tag;
+                amqp_destroy_envelope(&envelope);
+                continue;
+            }
+        }
+
         if (prependlength) {
             len = envelope.message.body.len;
             if (append_etsipdu_to_buffer(buf, (uint8_t *)(&len),

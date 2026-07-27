@@ -312,6 +312,7 @@ int init_prov_state(provision_state_t *state, char *configfile,
     state->sslconf.keyfile = NULL;
     state->sslconf.cacertfile = NULL;
     state->sslconf.logkeyfile = NULL;
+    state->sslconf.tlsgroups = NULL;
     state->sslconf.ctx = NULL;
 
     state->key_pem = NULL;
@@ -393,6 +394,7 @@ static int announce_mediator(provision_state_t *state,
 
     prov_collector_t *col, *coltmp;
 
+    pthread_mutex_lock(&state->interceptconf.safelock);
     HASH_ITER(hh, state->collectors, col, coltmp) {
         prov_sock_state_t *cs = (prov_sock_state_t *)(col->client->state);
 
@@ -420,6 +422,7 @@ static int announce_mediator(provision_state_t *state,
                     med->details->ipstr, med->details->portstr,
                     col->identifier);
             }
+            pthread_mutex_unlock(&state->interceptconf.safelock);
             return -1;
         }
         if (enable_epoll_write(state, col->client->commev) == -1) {
@@ -428,9 +431,11 @@ static int announce_mediator(provision_state_t *state,
                     "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector %s -- %s.",
                     col->identifier, strerror(errno));
             }
+            pthread_mutex_unlock(&state->interceptconf.safelock);
             return -1;
         }
     }
+    pthread_mutex_unlock(&state->interceptconf.safelock);
     return 0;
 }
 
@@ -439,6 +444,7 @@ static int announce_mediator_withdraw(provision_state_t *state,
 
     prov_collector_t *col, *coltmp;
 
+    pthread_mutex_lock(&state->interceptconf.safelock);
     HASH_ITER(hh, state->collectors, col, coltmp) {
         prov_sock_state_t *cs = (prov_sock_state_t *)(col->client->state);
 
@@ -467,6 +473,7 @@ static int announce_mediator_withdraw(provision_state_t *state,
                         med->details->ipstr, med->details->portstr,
                         col->identifier);
             }
+            pthread_mutex_unlock(&state->interceptconf.safelock);
             return -1;
         }
         if (enable_epoll_write(state, col->client->commev) == -1) {
@@ -475,9 +482,11 @@ static int announce_mediator_withdraw(provision_state_t *state,
                     "OpenLI provisioner: cannot enable epoll write event to transmit mediator update to collector %s -- %s.",
                     col->identifier, strerror(errno));
             }
+            pthread_mutex_unlock(&state->interceptconf.safelock);
             return -1;
         }
     }
+    pthread_mutex_unlock(&state->interceptconf.safelock);
     return 0;
 }
 
@@ -488,6 +497,8 @@ static int add_collector_to_hashmap(provision_state_t *state,
     prov_collector_t *col;
     char *jsonconfig = NULL;
     char *uuidstr = NULL;
+    int ret = 0;
+    known_client_t *kc = NULL;
 
     if (decode_component_name(msgbody, msglen, &jsonconfig, &uuidstr) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: invalid formatting of collector authentication announcement from %s", client->identifier);
@@ -499,15 +510,29 @@ static int add_collector_to_hashmap(provision_state_t *state,
         return -1;
     }
 
+    pthread_mutex_lock(&state->interceptconf.safelock);
     HASH_FIND(hh, state->collectors, uuidstr, strlen(uuidstr), col);
 
     if (!col) {
         col = calloc(1, sizeof(prov_collector_t));
+        kc = fetch_single_collector_client(state, uuidstr);
         col->identifier = uuidstr;
         col->jsonconfig = jsonconfig;
         col->client = client;
+
+        if (kc) {
+            col->firstseen = kc->firstseen;
+            col->lastseen = kc->lastseen;
+            free_known_client(kc, 1);
+        } else {
+            col->firstseen = time(NULL);
+            col->lastseen = time(NULL);
+        }
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
+        logger(LOG_INFO,
+                "OpenLI provisioner: collector %s is now active",
+                col->identifier);
     } else if (col->client != client) {
         HASH_DELETE(hh, state->collectors, col);
         destroy_provisioner_client(state->epoll_fd, col->client,
@@ -524,16 +549,17 @@ static int add_collector_to_hashmap(provision_state_t *state,
         HASH_ADD_KEYPTR(hh, state->collectors, col->identifier,
                 strlen(col->identifier), col);
     } else {
-        free(jsonconfig);
+        if (col->jsonconfig) {
+            free(col->jsonconfig);
+        }
+        col->jsonconfig = jsonconfig;
         free(uuidstr);
+        ret = 1;
     }
 
+    pthread_mutex_unlock(&state->interceptconf.safelock);
     cs->parent = (void *)col;
-    logger(LOG_INFO,
-            "OpenLI provisioner: collector %s is now active",
-            col->identifier);
-
-    return 0;
+    return ret;
 }
 
 static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
@@ -1297,8 +1323,7 @@ static int process_udp_sink_announcement(provision_state_t *state,
     if (listenport != NULL && listenaddr != NULL && ts != 0 &&
             identifier != NULL) {
 
-        if (update_udp_sink_row(state, col, listenaddr, listenport, identifier,
-                ts) < 0) {
+        if (update_udp_sink_row(state, col, listenaddr, listenport, ts) < 0) {
             logger(LOG_INFO, "OpenLI provisioner: error while updating UDP sink information for collector %s in client DB -- ignoring", col->identifier);
             return -1;
         }
@@ -1323,15 +1348,17 @@ static int process_x2x3_listener_details(provision_state_t *state,
     char *listenport = NULL;
     char *listenaddr = NULL;
     uint64_t ts = 0;
+    uint8_t isactive = 0;
 
     if (decode_x2x3_listener(msgbody, msglen, &listenaddr, &listenport,
-            &ts) < 0) {
+            &ts, &isactive) < 0) {
         logger(LOG_INFO, "OpenLI provisioner: error decoding X2/X3 announcement from collector %s -- ignoring", col->identifier);
         return -1;
     }
 
     if (listenport != NULL && listenaddr != NULL && ts != 0) {
-        if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts) < 0) {
+        if (update_x2x3_listener_row(state, col, listenaddr, listenport, ts,
+                isactive) < 0) {
             logger(LOG_INFO, "OpenLI provisioner: error while updating X2/X3 information for collector %s in client DB -- ignoring", col->identifier);
             return -1;
         }
@@ -1355,6 +1382,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
     uint64_t internalid;
     openli_proto_msgtype_t msgtype;
     uint8_t justauthed = 0;
+    int r;
 
     do {
         msgtype = receive_net_buffer(cs->incoming, &msgbody, &msglen,
@@ -1377,7 +1405,7 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 process_x2x3_listener_details(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
-            case OPENLI_PROTO_ADD_UDPSINK:
+            case OPENLI_PROTO_ADD_COLLECTOR_UDPSINK:
                 process_udp_sink_announcement(state,
                         (prov_collector_t *)(cs->parent), msgbody, msglen);
                 break;
@@ -1392,10 +1420,17 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 if (!cs->trusted) {
                     HASH_DELETE(hh, state->pendingclients, pev->client);
                 }
-                cs->trusted = 1;
-                justauthed = 1;
-                add_collector_to_hashmap(state, pev->client, cs, msgbody,
+                r = add_collector_to_hashmap(state, pev->client, cs, msgbody,
                         msglen);
+                if (r < 0) {
+                    return -1;
+                }
+                if (r == 0) {
+                    justauthed = 1;
+                    cs->trusted = 1;
+                }
+                update_collector_client_row(state,
+                        (prov_collector_t *)(cs->parent));
                 break;
             default:
                 if (cs->log_allowed) {
@@ -1415,7 +1450,6 @@ static int receive_collector(provision_state_t *state, prov_epoll_ev_t *pev) {
                 cs->ipaddr, pev->fd);
         halt_provisioner_client_authtimer(state->epoll_fd, pev->client,
                 cs->ipaddr);
-        update_collector_client_row(state, (prov_collector_t *)(cs->parent));
         return respond_collector_auth(state, pev, cs->outgoing);
    }
 
@@ -1817,6 +1851,7 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
         prov_collector_t *col;
 
         col = (prov_collector_t *)(cs->parent);
+        pthread_mutex_lock(&state->interceptconf.safelock);
         if (col) {
             logger(LOG_DEBUG, "OpenLI: removed collector %s from internal list",
                     col->identifier);
@@ -1827,6 +1862,7 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
             }
             free(col);
         }
+        pthread_mutex_unlock(&state->interceptconf.safelock);
         destroy_provisioner_client(state->epoll_fd, pev->client, cs->ipaddr);
     } else if (cs->clientrole == PROV_EPOLL_MEDIATOR) {
         prov_mediator_t *med;

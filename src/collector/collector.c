@@ -430,7 +430,8 @@ static void check_for_messages(colthread_local_t *loc,
 static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
         void *global, void *local, uint64_t tick) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)local;
     libtrace_stat_t *stats;
     struct timeval tv;
@@ -601,7 +602,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 static void *start_processing_thread(libtrace_t *trace,
         libtrace_thread_t *t, void *global) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = NULL;
     int i, zero=0;
     sync_sendq_t *syncq, *sendq_hash;
@@ -721,7 +723,8 @@ static void free_staticcache(static_ipcache_t *cache) {
 static void stop_processing_thread(libtrace_t *trace UNUSED,
         libtrace_thread_t *t, void *global, void *tls) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)tls;
     ipv4_target_t *v4, *tmp;
     ipv6_target_t *v6, *tmp2;
@@ -980,7 +983,6 @@ static void add_payload_info_from_packet(libtrace_packet_t *pkt,
     } else {
         pinfo->payload_len = rem;
     }
-
 }
 
 static inline uint8_t check_for_invalid_sip(packet_info_t *pinfo,
@@ -1169,11 +1171,49 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
     return 1;
 }
 
+static int apply_vxlan_stripping(libtrace_packet_t *pkt, colinput_t *inp) {
+
+    libtrace_udp_t *udp;
+    uint32_t rem;
+    uint8_t proto;
+    uint16_t caplen, removed = 0;
+    uint8_t *neweth;
+
+    udp = (libtrace_udp_t *)trace_get_transport(pkt, &proto, &rem);
+    if (udp == NULL || rem <= sizeof(libtrace_udp_t) + 8 ||
+            proto != TRACE_IPPROTO_UDP) {
+        return 0;
+    }
+
+    if (inp->vxlan_port != 0) {
+        // really, we probably only need to check dest here...
+        if (ntohs(udp->dest) != inp->vxlan_port &&
+                ntohs(udp->source) != inp->vxlan_port) {
+            return 0;
+        }
+    }
+
+    caplen = trace_get_capture_length(pkt);
+    removed = (((uint8_t *)udp) - (uint8_t *)pkt->payload) + sizeof(libtrace_udp_t) + 8;
+
+    neweth = ((uint8_t *)udp) + sizeof(libtrace_udp_t) + 8;
+
+    pkt->payload = neweth;
+    trace_set_capture_length(pkt, caplen - removed);
+    pkt->cached.l2_header = NULL;
+    pkt->cached.l3_header = NULL;
+    pkt->cached.l4_header = NULL;
+    pkt->cached.payload_length = -1;
+    pkt->unsafe_payload = 1;
+    return 1;
+}
+
 static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
 
-    collector_global_t *glob = (collector_global_t *)global;
+    colinput_t *inp = (colinput_t *)global;
+    collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)tls;
     void *l3;
     uint16_t ethertype;
@@ -1186,12 +1226,21 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
 
     packet_info_t pinfo;
 
-	//check_for_messages(loc, glob);
-
-    //loc->pkts_since_msg_read ++;
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
         return pkt;
+    }
+
+    if (inp->vxlan_strip) {
+        if (apply_vxlan_stripping(pkt, inp) != 0) {
+            /* Don't allow libtrace optimizations that assume the original
+             * packet is intact
+             */
+            l3 = trace_get_layer3(pkt, &ethertype, &rem);
+            if (l3 == NULL || rem == 0) {
+                return pkt;
+            }
+        }
     }
 
     //trace_increment_packet_refcount(pkt);
@@ -1555,6 +1604,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     libtrace_info_t *info;
     struct timeval tv;
 
+    inp->global = glob;
     if (inp->running == 1) {
         /* Trace is already running */
         if (inp->trace && trace_is_err(inp->trace)) {
@@ -1632,13 +1682,13 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
     }
 
     if (inp->coremap) {
-	char opt[256];
+        char opt[256];
 
-	snprintf(opt, 256, "coremap=%s", inp->coremap);
-	if (trace_set_configuration(inp->trace, opt) < 0) {
-	    logger(LOG_INFO, "OpenLI: unable to set coremap (%s) for %s",
-			    inp->coremap, inp->uri);
-	}
+        snprintf(opt, 256, "coremap=%s", inp->coremap);
+        if (trace_set_configuration(inp->trace, opt) < 0) {
+            logger(LOG_INFO, "OpenLI: unable to set coremap (%s) for %s",
+                    inp->coremap, inp->uri);
+        }
     }
 
     if (inp->filterstring) {
@@ -1660,7 +1710,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     trace_set_tick_interval(inp->trace, 10);
 
-    if (trace_pstart(inp->trace, glob, inp->pktcbs, NULL) == -1) {
+    if (trace_pstart(inp->trace, inp, inp->pktcbs, NULL) == -1) {
         libtrace_err_t lterr = trace_get_err(inp->trace);
         logger(LOG_INFO, "OpenLI: Failed to start trace for input %s: %s",
                 inp->uri, lterr.problem);
@@ -1770,7 +1820,7 @@ static void reload_inputs(collector_global_t *glob,
         collector_global_t *newstate) {
 
     colinput_t *oldinp, *newinp, *tmp;
-    int filterchanged = 0, i, coremapchanged = 0;
+    int filterchanged = 0, i, coremapchanged = 0, vxlanchanged = 0;
     char locname[1024];
     colthread_local_t *loc;
 
@@ -1807,11 +1857,21 @@ static void reload_inputs(collector_global_t *glob,
                     filterchanged = 1;
                 }
             }
+
+            if (oldinp->vxlan_strip) {
+                if (newinp->vxlan_strip == 0) {
+                    vxlanchanged = 1;
+                } else if (oldinp->vxlan_port != newinp->vxlan_port) {
+                    vxlanchanged = 1;
+                }
+            } else if (newinp->vxlan_strip) {
+                vxlanchanged = 1;
+            }
         }
 
         if (!newinp || newinp->threadcount != oldinp->threadcount ||
                 newinp->hasher_apply != oldinp->hasher_apply ||
-                filterchanged || coremapchanged) {
+                filterchanged || coremapchanged || vxlanchanged) {
             /* This input is either no longer wanted at all or has
 	     * changed configuration
 	     */
@@ -2013,11 +2073,15 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(loc);
     }
 
+    if (glob->fwdassigner.liid_counts) {
+        free(glob->fwdassigner.liid_counts);
+    }
 
     destroy_sip_call_state(&glob->sip_call_state, &glob->sip_call_state_mutex);
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));
+    pthread_mutex_destroy(&(glob->fwdassigner.mutex));
     pthread_rwlock_destroy(&(glob->email_config_mutex));
     pthread_rwlock_destroy(&glob->config_mutex);
     pthread_rwlock_destroy(&glob->sip_call_state_mutex);
@@ -2261,6 +2325,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sslconf.keyfile = NULL;
     glob->sslconf.cacertfile = NULL;
     glob->sslconf.logkeyfile = NULL;
+    glob->sslconf.tlsgroups = NULL;
     glob->sslconf.ctx = NULL;
 
     glob->RMQ_conf.name = NULL;
@@ -2318,6 +2383,9 @@ static collector_global_t *parse_global_config(char *configfile) {
     char *jsonconfig;
     char *cinstatekey_file = NULL;
     void *dbptr = NULL;
+    colsync_udp_sink_t *sink, *tmp;
+    char uuidstr[64];
+    char fullkey[2048];
 
     glob = (collector_global_t *)calloc(1, sizeof(collector_global_t));
     init_collector_global(glob);
@@ -2325,6 +2393,7 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     pthread_mutex_init(&(glob->stats_mutex), NULL);
     pthread_mutex_init(&(glob->configupdate_mutex), NULL);
+    pthread_mutex_init(&(glob->fwdassigner.mutex), NULL);
     pthread_rwlock_init(&(glob->email_config_mutex), NULL);
 
     pthread_rwlock_init(&glob->config_mutex, NULL);
@@ -2336,17 +2405,24 @@ static collector_global_t *parse_global_config(char *configfile) {
 
     glob->digest_config.map = NULL;
     glob->liid_to_agency.map = NULL;
+
     if (parse_collector_config(configfile, glob) == -1) {
         clear_global_config(glob);
         return NULL;
     }
 
+    glob->fwdassigner.liid_counts = calloc(glob->forwarding_threads,
+            sizeof(size_t));
+    glob->fwdassigner.slots = glob->forwarding_threads;
+    glob->fwdassigner.next_hint = 0;
+
     if (uuid_is_null(glob->sharedinfo.uuid)) {
-        char uuidstr[64];
+
         openli_yaml_config_pending_updates_t *pending;
 
         uuid_generate(glob->sharedinfo.uuid);
         uuid_unparse(glob->sharedinfo.uuid, uuidstr);
+
         /* rewrite config file to contain new UUID */
         //emit_collector_config(configfile, glob);
         pthread_mutex_lock(&(glob->configupdate_mutex));
@@ -2357,8 +2433,29 @@ static collector_global_t *parse_global_config(char *configfile) {
             logger(LOG_INFO, "Failed to write updated YAML configuration to local config file: %s", configfile);
         }
         clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
+
+
         pthread_mutex_unlock(&(glob->configupdate_mutex));
+    } else {
+        uuid_unparse(glob->sharedinfo.uuid, uuidstr);
     }
+
+    HASH_ITER(hh, glob->syncip.udpsinks, sink, tmp) {
+        if (sink->identifier == NULL) {
+            HASH_DELETE(hh, glob->syncip.udpsinks, sink);
+            free(sink->key);
+
+            snprintf(fullkey, 2048, "%s,%s,%s", uuidstr, sink->listenaddr,
+                    sink->listenport);
+
+            sink->key = strdup(fullkey);
+            sink->identifier = strdup(uuidstr);
+
+            HASH_ADD_KEYPTR(hh, glob->syncip.udpsinks, sink->key,
+                    strlen(sink->key), sink);
+        }
+    }
+
     jsonconfig = collector_config_to_json(glob);
     pthread_rwlock_wrlock(&glob->config_mutex);
     glob->sharedinfo.jsonconfig = jsonconfig;
@@ -2543,6 +2640,11 @@ static int reload_collector_config(collector_global_t *glob,
 
     init_collector_global(&newstate);
     if (parse_collector_config(glob->configfile, &newstate) == -1) {
+        ret = -1;
+        goto endreload;
+    }
+
+    if (create_ssl_context(&(newstate.sslconf)) < 0) {
         ret = -1;
         goto endreload;
     }
@@ -2806,6 +2908,7 @@ static void *start_ip_sync_thread(void *params) {
 
     while (collector_halt == 0) {
         if (__atomic_exchange_n(&config_write_required, 0, __ATOMIC_ACQUIRE)) {
+            char *jsonconfig;
             pthread_mutex_lock(&(glob->configupdate_mutex));
             if (apply_yaml_config_updates(glob->configfile,
                     &(glob->syncip.configupdates)) < 0) {
@@ -2814,6 +2917,20 @@ static void *start_ip_sync_thread(void *params) {
             clean_openli_yaml_config_updates(&(glob->syncip.configupdates));
 
             pthread_mutex_unlock(&(glob->configupdate_mutex));
+
+            jsonconfig = collector_config_to_json(glob);
+            pthread_rwlock_wrlock(&glob->config_mutex);
+            if (glob->sharedinfo.jsonconfig) {
+                free(glob->sharedinfo.jsonconfig);
+            }
+            if (jsonconfig) {
+                glob->sharedinfo.jsonconfig = jsonconfig;
+            } else {
+                glob->sharedinfo.jsonconfig = NULL;
+            }
+            pthread_rwlock_unlock(&glob->config_mutex);
+
+            sync_thread_send_provisioner_auth(sync);
             reload_config = 0;
         }
 
@@ -3180,6 +3297,8 @@ int main(int argc, char *argv[]) {
         glob->encoders[i].freegenerics = NULL;
         glob->encoders[i].saved_intercept_templates = NULL;
         glob->encoders[i].saved_global_templates = NULL;
+
+        glob->encoders[i].fwd_assigner = &(glob->fwdassigner);
 
         glob->encoders[i].forwarders = glob->forwarding_threads;
 

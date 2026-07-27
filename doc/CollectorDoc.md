@@ -107,7 +107,7 @@ and `balanced`.
 
 ### X2/X3 Support
 OpenLI collectors now support being able to receive intercepted traffic using
-the X2/X3 standards (i.e. ETSI TS 102 221-2).
+the X2/X3 standards (i.e. ETSI TS 103 221-2).
 
 To enable this feature, specify the IP address and port that you want your
 collector to listen on using the `x2x3inputs` configuration option. You may
@@ -314,7 +314,7 @@ threads should NOT exceed the number of CPU cores on your machine.
 
 Inputs are specified as a YAML sequence with a key of `inputs:`. Each
 sequence item represents a single traffic source to intercept traffic from
-and must contain the following two key-value elements:
+and must contain the following key-value elements:
 * uri              -- [a libtrace URI](https://github.com/LibtraceTeam/libtrace/wiki/Supported-Trace-Formats)
                       describing which interface to intercept packets on.
 * threads          -- the number of processing threads to use with this input.
@@ -322,6 +322,12 @@ and must contain the following two key-value elements:
                       balanced, bidirectional or radius). Inputs that receive
                       RADIUS packets are strongly recommended to use `radius`
                       here, `bidirectional` otherwise.
+* stripvxlan       -- if set, all UDP traffic on the specified port will be
+                      assumed to be VXLAN-encapsulated. The collector will
+                      automatically strip the outer layer of headers and
+                      look at the inner Ethernet frame only. If set to 0, VXLAN
+                      stripping will occur on all UDP traffic seen on this
+                      interface, regardless of port number.
 
 ---
 
