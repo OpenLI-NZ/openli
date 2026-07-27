@@ -2325,6 +2325,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->sslconf.keyfile = NULL;
     glob->sslconf.cacertfile = NULL;
     glob->sslconf.logkeyfile = NULL;
+    glob->sslconf.tlsgroups = NULL;
     glob->sslconf.ctx = NULL;
 
     glob->RMQ_conf.name = NULL;
@@ -2639,6 +2640,11 @@ static int reload_collector_config(collector_global_t *glob,
 
     init_collector_global(&newstate);
     if (parse_collector_config(glob->configfile, &newstate) == -1) {
+        ret = -1;
+        goto endreload;
+    }
+
+    if (create_ssl_context(&(newstate.sslconf)) < 0) {
         ret = -1;
         goto endreload;
     }
