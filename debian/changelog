@@ -1,3 +1,44 @@
+openli (1.1.20-1) unstable; urgency=medium
+
+  * Collector: fix bugs in IP fragment reassembly code that would cause
+    crashes or malformed reassembled packets.
+  * Removed certain assertions in the collector and mediator that would
+    cause crashes if their rare condition was actually met.
+  * TLS: misconfigured keys or certificates will now trigger a fatal error,
+    rather than silently falling back to an unencrypted connection.
+  * Collector: inputs may now be mnaually flagged as VXLAN-encapsulated in
+    the collector configuration. If this is done, the collector will now strip
+    the outer VXLAN encapsulation automatically for all packets received on
+    the input interface that match the configured UDP port.
+  * TLS: fix crashing of the collector and mediator if the TLS configuration
+    is changed and then a SIGHUP is sent to the running process.
+  * TLS: fix bug where changes to TLS configuration were being ignored when
+    a SIGHUP was received.
+  * Collector: in-memory export buffers in the forwarding thread can now
+    grow beyond 4GB without causing memory corruption.
+  * Collector: improve distribution of workload across multiple forwarding
+    threads.
+  * TLS: add `tlsgroups` configuration option to support restricting key
+    exchange to a defined set of groups.
+  * Mediator: improve performance of internal RMQ by batching records on the
+    CC and Raw IP queues.
+  * Mediator: fix bug where a reconnecting internal RMQ publisher would
+    silently fail to declare its queues, resulting in messages being discarded.
+  * Mediator: improved in-memory queue management to ensure that a "queue full"
+    event would occur less frequently.
+  * REST API: add `isactive` field to each X2X3 Listener returned
+    by the collectors/ endpoint.
+  * REST API: add support for PUT method on the collectors/ endpoint, which
+    can now be used to modify a selection of collector configuration
+    properties.
+  * REST API: fix memory leak on provisioner when collectors/ endpoint was
+    queried.
+  * REST API: add udpsink/ endpoint to support adding and removing UDP
+    sinks from a collector.
+
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 27 Jul 2026 16:38:38 +1200
+
 openli (1.1.19-1) unstable; urgency=medium
 
   * REST API: fix bug where intercepts added via the REST API were not
