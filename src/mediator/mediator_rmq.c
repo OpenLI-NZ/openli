@@ -35,6 +35,21 @@
  *  the RabbitMQ API.
  */
 
+void compact_saved_messages(saved_received_data_t *msgs, size_t *msgcnt) {
+    size_t write_idx = 0, i = 0;
+
+    for (i = 0; i < *msgcnt; i++) {
+        if (msgs[i].msgbody != NULL) {
+            if (write_idx != i) {
+                msgs[write_idx] = msgs[i];
+                memset(&(msgs[i]), 0, sizeof(saved_received_data_t));
+            }
+            write_idx ++;
+        }
+    }
+    *msgcnt = write_idx;
+}
+
 /** Declares a RabbitMQ queue on a specified channel
  *
  *  @param state        The RMQ connection to use to declare the queue
@@ -566,6 +581,27 @@ consfailed:
     return NULL;
 }
 
+/** Destroys a connection to the internal RMQ instance that is being used
+ *  to publish intercept records.
+ *
+ *  @param col              The state for the collector receive thread that
+ *                          is calling this function
+ */
+void disconnect_mediator_producer_RMQ(coll_recv_t *col) {
+    col_known_liid_t *known, *tmp;
+
+    if (col->amqp_producer_state) {
+        amqp_destroy_connection(col->amqp_producer_state);
+        col->amqp_producer_state = NULL;
+    }
+
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        known->declared_int_rmq = 0;
+        known->declared_raw_rmq = 0;
+    }
+}
+
+
 /** Creates a connection to the internal RMQ instance for the purposes of
  *  writing intercept records received from a collector
  *
@@ -690,10 +726,7 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
     return col->amqp_producer_state;
 
 prodfailed:
-    if (col->amqp_producer_state) {
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
-    }
+    disconnect_mediator_producer_RMQ(col);
     return NULL;
 }
 
@@ -1096,6 +1129,13 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
             if (cc_await == 0) col->saved_cc_msg_cnt = 0;
             if (iri_await == 0) col->saved_iri_msg_cnt = 0;
             if (raw_await == 0) col->saved_raw_msg_cnt = 0;
+            compact_saved_messages(col->saved_iri_msgs,
+                    &(col->saved_iri_msg_cnt));
+            compact_saved_messages(col->saved_cc_msgs,
+                    &(col->saved_cc_msg_cnt));
+            compact_saved_messages(col->saved_raw_msgs,
+                    &(col->saved_raw_msg_cnt));
+
             if (col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
                     col->saved_iri_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
                     col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA) {
@@ -1161,9 +1201,9 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
             }
         }
     }
-    col->saved_iri_msg_cnt = 0;
-    col->saved_raw_msg_cnt = 0;
-    col->saved_cc_msg_cnt = 0;
+    compact_saved_messages(col->saved_iri_msgs, &(col->saved_iri_msg_cnt));
+    compact_saved_messages(col->saved_cc_msgs, &(col->saved_cc_msg_cnt));
+    compact_saved_messages(col->saved_raw_msgs, &(col->saved_raw_msg_cnt));
     col->queue_full = 0;
     return 1;
 }

@@ -593,8 +593,7 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
                     found->liid, found->queuenames[0], &(col->rmq_blocked));
             if (r < 0) {
                 logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish an IRI", col->ipaddr);
-                amqp_destroy_connection(col->amqp_producer_state);
-                col->amqp_producer_state = NULL;
+                disconnect_mediator_producer_RMQ(col);
                 r = 0;
             }
         } else {
@@ -793,6 +792,9 @@ static int process_saved_messages(coll_recv_t *col,
 
 static int process_all_saved_messages(coll_recv_t *col) {
     int r;
+    compact_saved_messages(col->saved_iri_msgs, &(col->saved_iri_msg_cnt));
+    compact_saved_messages(col->saved_cc_msgs, &(col->saved_cc_msg_cnt));
+    compact_saved_messages(col->saved_raw_msgs, &(col->saved_raw_msg_cnt));
     if (col->saved_iri_msg_cnt > 0) {
         if ((r = process_saved_messages(col, col->saved_iri_msgs,
                 &(col->saved_iri_msg_cnt), &(col->iris_published))) <= 0) {
@@ -982,14 +984,12 @@ static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
 processacks:
     if (col->amqp_producer_state && col->saved_cc_msg_cnt > 0 &&
             publish_pending_cc_batches(col) <= 0) {
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
+        disconnect_mediator_producer_RMQ(col);
     }
 
     if (col->amqp_producer_state && col->saved_raw_msg_cnt > 0 &&
             publish_pending_raw_batches(col) <= 0) {
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
+        disconnect_mediator_producer_RMQ(col);
     }
 
     if (col->amqp_producer_state &&
@@ -998,8 +998,7 @@ processacks:
         /* RMQ failed to acknowledge everything we published, have to
          * reconnect and re-publish
          */
-        amqp_destroy_connection(col->amqp_producer_state);
-        col->amqp_producer_state = NULL;
+        disconnect_mediator_producer_RMQ(col);
     }
 
     /* We use a cap of MAX_COLL_RECV bytes per receive method call so that

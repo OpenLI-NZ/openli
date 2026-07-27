@@ -87,6 +87,24 @@ typedef struct openli_cc_batch_record {
  */
 amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col);
 
+/** Destroys a connection to the internal RMQ instance that is being used
+ *  to publish intercept records.
+ *
+ *  @param col              The state for the collector receive thread that
+ *                          is calling this function
+ */
+void disconnect_mediator_producer_RMQ(coll_recv_t *col);
+
+
+/** Shifts all non-NULL messages to the beginning of the saved messages
+ *  array and updates the available count.
+ *
+ *  @param msgs     The array of saved messages to compact
+ *  @param msgcnt   The current write index of the array, updated with the new
+ *                  write index
+ */
+void compact_saved_messages(saved_received_data_t *msgs, size_t *msgcnt);
+
 /** Connect to the RMQ instance that is running on an OpenLI collector.
  *
  *  This connection would be used by a collector receive thread to
