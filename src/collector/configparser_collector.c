@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 
 #include <errno.h>
 #include <libtrace/message_queue.h>
@@ -39,6 +40,249 @@
 #include "configparser_collector.h"
 #include "configparser_common.h"
 #include "collector/x2x3_ingest.h"
+
+
+static int append_ipcc_prefix_config(collector_global_t *glob,
+        const char *value) {
+    size_t current_length = 0;
+    size_t value_length;
+    char *updated;
+
+    if (glob->ipcc_prefix_config != NULL) {
+        current_length = strlen(glob->ipcc_prefix_config);
+    }
+    value_length = strlen(value);
+
+    updated = realloc(glob->ipcc_prefix_config,
+            current_length + value_length + 2);
+    if (updated == NULL) {
+        return -1;
+    }
+
+    glob->ipcc_prefix_config = updated;
+    memcpy(glob->ipcc_prefix_config + current_length, value, value_length);
+    glob->ipcc_prefix_config[current_length + value_length] = '\n';
+    glob->ipcc_prefix_config[current_length + value_length + 1] = '\0';
+    return 0;
+}
+
+static int parse_ipcc_prefix(const char *text, int *family, void *address,
+        uint8_t *prefix_length) {
+    char buffer[INET6_ADDRSTRLEN + 5];
+    char *slash;
+    char *endptr;
+    unsigned long length;
+    size_t text_length;
+
+    text_length = strlen(text);
+    if (text_length == 0 || text_length >= sizeof(buffer)) {
+        return -1;
+    }
+
+    memcpy(buffer, text, text_length + 1);
+    slash = strrchr(buffer, '/');
+    if (slash == NULL || slash == buffer || slash[1] == '\0') {
+        return -1;
+    }
+
+    *slash = '\0';
+    errno = 0;
+    length = strtoul(slash + 1, &endptr, 10);
+    if (errno != 0 || *endptr != '\0') {
+        return -1;
+    }
+
+    if (inet_pton(AF_INET, buffer, address) == 1) {
+        if (length > 32) {
+            return -1;
+        }
+        *family = AF_INET;
+    } else if (inet_pton(AF_INET6, buffer, address) == 1) {
+        if (length > 128) {
+            return -1;
+        }
+        *family = AF_INET6;
+    } else {
+        return -1;
+    }
+
+    *prefix_length = (uint8_t)length;
+    return 0;
+}
+
+static int ipcc_prefix_group_exists(const collector_global_t *glob,
+        const char *name) {
+    uint8_t i;
+
+    for (i = 0; i < glob->ipcc_prefix_group_count; i++) {
+        if (strcmp(glob->ipcc_prefix_group_names[i], name) == 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int parse_ipcc_prefix_group(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *group, uint8_t group_id) {
+    yaml_node_pair_t *pair;
+    yaml_node_t *prefixes = NULL;
+    const char *name = NULL;
+    yaml_node_item_t *item;
+    size_t prefix_count = 0;
+
+    if (group->type != YAML_MAPPING_NODE) {
+        logger(LOG_INFO,
+                "OpenLI: each IPCC prefix exclusion group must be a mapping");
+        return -1;
+    }
+
+    for (pair = group->data.mapping.pairs.start;
+            pair < group->data.mapping.pairs.top; pair++) {
+        yaml_node_t *key = yaml_document_get_node(doc, pair->key);
+        yaml_node_t *value = yaml_document_get_node(doc, pair->value);
+
+        if (key->type != YAML_SCALAR_NODE) {
+            continue;
+        }
+
+        if (strcasecmp((char *)key->data.scalar.value, "name") == 0) {
+            if (value->type != YAML_SCALAR_NODE) {
+                logger(LOG_INFO,
+                        "OpenLI: IPCC prefix exclusion group name must be a scalar");
+                return -1;
+            }
+            name = (char *)value->data.scalar.value;
+        } else if (strcasecmp((char *)key->data.scalar.value,
+                "prefixes") == 0) {
+            if (value->type != YAML_SEQUENCE_NODE) {
+                logger(LOG_INFO,
+                        "OpenLI: IPCC prefix exclusion group prefixes must be a sequence");
+                return -1;
+            }
+            prefixes = value;
+        }
+    }
+
+    if (name == NULL || name[0] == '\0' || prefixes == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: each IPCC prefix exclusion group requires a name and prefixes");
+        return -1;
+    }
+
+    if (ipcc_prefix_group_exists(glob, name)) {
+        logger(LOG_INFO,
+                "OpenLI: duplicate IPCC prefix exclusion group name '%s'", name);
+        return -1;
+    }
+
+    glob->ipcc_prefix_group_names[group_id] = strdup(name);
+    if (glob->ipcc_prefix_group_names[group_id] == NULL ||
+            append_ipcc_prefix_config(glob, name) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: unable to allocate IPCC prefix exclusion group '%s'", name);
+        return -1;
+    }
+    glob->ipcc_prefix_group_count++;
+
+    for (item = prefixes->data.sequence.items.start;
+            item < prefixes->data.sequence.items.top; item++) {
+        yaml_node_t *prefix = yaml_document_get_node(doc, *item);
+        uint8_t address[sizeof(struct in6_addr)];
+        uint8_t prefix_length;
+        int family;
+        const char *prefix_text;
+        openli_cc_prefix_filter_result_t result;
+
+        if (prefix->type != YAML_SCALAR_NODE) {
+            logger(LOG_INFO,
+                    "OpenLI: prefixes in IPCC exclusion group '%s' must be scalars",
+                    name);
+            return -1;
+        }
+
+        prefix_text = (char *)prefix->data.scalar.value;
+        memset(address, 0, sizeof(address));
+        if (parse_ipcc_prefix(prefix_text, &family, address,
+                &prefix_length) < 0) {
+            logger(LOG_INFO, "OpenLI: invalid IPCC prefix '%s' in group '%s'",
+                    prefix_text, name);
+            return -1;
+        }
+
+        result = openli_cc_prefix_filter_add(glob->ipcc_prefix_filter,
+                family, address, prefix_length, group_id);
+        if (result == OPENLI_CC_PREFIX_FILTER_DUPLICATE) {
+            logger(LOG_INFO,
+                    "OpenLI: duplicate IPCC prefix '%s' in group '%s'",
+                    prefix_text, name);
+            return -1;
+        }
+        if (result != OPENLI_CC_PREFIX_FILTER_OK) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to add IPCC prefix '%s' to group '%s': %s",
+                    prefix_text, name,
+                    openli_cc_prefix_filter_result_string(result));
+            return -1;
+        }
+
+        if (append_ipcc_prefix_config(glob, prefix_text) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: unable to store IPCC prefix configuration");
+            return -1;
+        }
+        prefix_count++;
+    }
+
+    if (prefix_count == 0) {
+        logger(LOG_INFO,
+                "OpenLI: IPCC prefix exclusion group '%s' has no prefixes", name);
+        return -1;
+    }
+
+    return 0;
+}
+
+static int parse_ipcc_prefix_groups(collector_global_t *glob,
+        yaml_document_t *doc, yaml_node_t *groups) {
+    yaml_node_item_t *item;
+
+    if (glob->ipcc_prefix_filter != NULL) {
+        logger(LOG_INFO,
+                "OpenLI: IPCC prefix exclusion groups may only be configured once");
+        return -1;
+    }
+
+    glob->ipcc_prefix_filter = openli_cc_prefix_filter_create();
+    if (glob->ipcc_prefix_filter == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to allocate IPCC prefix filter");
+        return -1;
+    }
+
+    for (item = groups->data.sequence.items.start;
+            item < groups->data.sequence.items.top; item++) {
+        yaml_node_t *group = yaml_document_get_node(doc, *item);
+        uint8_t group_id = glob->ipcc_prefix_group_count;
+
+        if (group_id >= OPENLI_CC_PREFIX_FILTER_MAX_GROUPS) {
+            logger(LOG_INFO,
+                    "OpenLI: no more than %u IPCC prefix exclusion groups may be configured",
+                    OPENLI_CC_PREFIX_FILTER_MAX_GROUPS);
+            return -1;
+        }
+
+        if (parse_ipcc_prefix_group(glob, doc, group, group_id) < 0) {
+            return -1;
+        }
+    }
+
+    if (glob->ipcc_prefix_group_count == 0) {
+        logger(LOG_INFO,
+                "OpenLI: IPCC prefix exclusion group list must not be empty");
+        return -1;
+    }
+
+    return 0;
+}
 
 static int parse_udp_sink_config(collector_global_t *glob,
         yaml_document_t *doc, yaml_node_t *sinks) {
@@ -470,6 +714,13 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
+            strcasecmp((char *)key->data.scalar.value,
+                    "ipcc-exclude-prefix-groups") == 0) {
+        return parse_ipcc_prefix_groups(glob, doc, value);
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "inputs") == 0) {
         if (parse_input_config(glob, doc, value) == -1) {
             return -1;
@@ -872,7 +1123,36 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 }
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {
-    return config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
+    int result;
+    uint8_t i;
+
+    result = config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
+    if (result < 0) {
+        return result;
+    }
+
+    if (glob->ipcc_prefix_filter == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: no IPCC prefix exclusion groups configured");
+        return 0;
+    }
+
+    if (openli_cc_prefix_filter_finalise(glob->ipcc_prefix_filter) !=
+            OPENLI_CC_PREFIX_FILTER_OK) {
+        logger(LOG_INFO, "OpenLI: unable to finalise IPCC prefix filter");
+        return -1;
+    }
+
+    logger(LOG_INFO,
+            "OpenLI: IPCC prefix exclusion filter loaded: %u groups, %zu IPv4 prefixes, %zu IPv6 prefixes",
+            glob->ipcc_prefix_group_count,
+            openli_cc_prefix_filter_count(glob->ipcc_prefix_filter, AF_INET),
+            openli_cc_prefix_filter_count(glob->ipcc_prefix_filter, AF_INET6));
+    for (i = 0; i < glob->ipcc_prefix_group_count; i++) {
+        logger(LOG_INFO, "OpenLI: IPCC prefix exclusion group %u: '%s'",
+                i, glob->ipcc_prefix_group_names[i]);
+    }
+    return 0;
 }
 
 char *collector_config_to_json(collector_global_t *glob) {

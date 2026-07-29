@@ -2167,6 +2167,18 @@ static void clear_global_config(collector_global_t *glob) {
         free_coreserver_list(glob->ciscomirrors);
     }
 
+    if (glob->ipcc_prefix_filter) {
+        openli_cc_prefix_filter_destroy(glob->ipcc_prefix_filter);
+        glob->ipcc_prefix_filter = NULL;
+    }
+    for (uint8_t i = 0; i < glob->ipcc_prefix_group_count; i++) {
+        free(glob->ipcc_prefix_group_names[i]);
+        glob->ipcc_prefix_group_names[i] = NULL;
+    }
+    glob->ipcc_prefix_group_count = 0;
+    free(glob->ipcc_prefix_config);
+    glob->ipcc_prefix_config = NULL;
+
     if (glob->RMQ_conf.name) {
         free(glob->RMQ_conf.name);
     }
@@ -2647,6 +2659,15 @@ static int reload_collector_config(collector_global_t *glob,
     if (create_ssl_context(&(newstate.sslconf)) < 0) {
         ret = -1;
         goto endreload;
+    }
+
+    if ((glob->ipcc_prefix_config == NULL) !=
+            (newstate.ipcc_prefix_config == NULL) ||
+            (glob->ipcc_prefix_config != NULL &&
+            strcmp(glob->ipcc_prefix_config,
+                    newstate.ipcc_prefix_config) != 0)) {
+        logger(LOG_INFO,
+                "OpenLI: IPCC prefix exclusion filter changes require a collector restart; retaining the active filter");
     }
 
     tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate.sslconf));

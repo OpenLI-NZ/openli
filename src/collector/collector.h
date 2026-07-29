@@ -49,6 +49,7 @@
 #include "reassembler.h"
 #include "collector_publish.h"
 #include "collector_base.h"
+#include "cc_prefix_filter.h"
 #include "openli_tls.h"
 #include "radius_hasher.h"
 #include "email_ingest_service.h"
@@ -368,6 +369,11 @@ struct collector_global {
     coreserver_t *alumirrors;
     coreserver_t *jmirrors;
     coreserver_t *ciscomirrors;
+
+    openli_cc_prefix_filter_t *ipcc_prefix_filter;
+    char *ipcc_prefix_group_names[OPENLI_CC_PREFIX_FILTER_MAX_GROUPS];
+    char *ipcc_prefix_config;
+    uint8_t ipcc_prefix_group_count;
 
     pthread_t seqproxy_tid;
 
