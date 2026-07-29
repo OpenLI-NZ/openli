@@ -58,6 +58,8 @@ openlicollector_SOURCES=collector/collector.c \
 		collector/ipmmiri.h \
                 collector/internetaccess.c collector/internetaccess.h \
 		collector/ipcc.c collector/ipcc.h \
+		collector/cc_prefix_filter.c \
+		collector/cc_prefix_filter.h \
                 coreserver.h coreserver.c collector/collector_push_messaging.c \
                 collector/collector_push_messaging.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
