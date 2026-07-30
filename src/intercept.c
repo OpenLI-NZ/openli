@@ -1247,6 +1247,7 @@ staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
     statint->references = 0;
     statint->cin = cin;
     statint->nextseqno = 0;
+    statint->cc_exclude_mask = ipint->cc_exclude_mask;
     copy_intercept_common(&(ipint->common), &(statint->common));
     statint->key = (char *)calloc(1, 128);
     snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);

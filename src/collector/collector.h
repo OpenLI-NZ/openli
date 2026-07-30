@@ -299,6 +299,8 @@ typedef struct colthread_local {
     patricia_tree_t *dynamicv6ranges;
     static_ipcache_t *staticcache;
 
+    const openli_cc_prefix_filter_t *ipcc_prefix_filter;
+
     ipfrag_reassembler_t *fragreass;
 
     uint64_t accepted;

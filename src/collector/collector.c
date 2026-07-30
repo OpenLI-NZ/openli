@@ -509,6 +509,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
+    loc->ipcc_prefix_filter = glob->ipcc_prefix_filter;
     loc->tosyncq_ip = NULL;
 
     loc->accepted = 0;

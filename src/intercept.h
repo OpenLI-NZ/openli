@@ -596,6 +596,7 @@ struct staticipsession {
     uint32_t cin;
     uint32_t nextseqno;
     uint32_t references;
+    uint64_t cc_exclude_mask;
     UT_hash_handle hh;
 };
 
