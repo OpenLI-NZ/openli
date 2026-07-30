@@ -697,6 +697,66 @@ void remove_all_intercept_udp_sinks(ipintercept_t *cept) {
     }
 }
 
+
+void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
+    size_t i;
+
+    if (cept == NULL) {
+        return;
+    }
+    for (i = 0; i < cept->cc_exclude_group_count; i++) {
+        free(cept->cc_exclude_groups[i]);
+    }
+    free(cept->cc_exclude_groups);
+    cept->cc_exclude_groups = NULL;
+    cept->cc_exclude_group_count = 0;
+    cept->cc_exclude_mask = 0;
+}
+
+int add_ipintercept_cc_exclude_group(ipintercept_t *cept,
+        const char *group, size_t group_len) {
+    char **updated;
+    char *copy;
+    size_t i;
+
+    if (cept == NULL || group == NULL || group_len == 0 ||
+            cept->cc_exclude_group_count >= 64) {
+        return -1;
+    }
+    for (i = 0; i < cept->cc_exclude_group_count; i++) {
+        if (strlen(cept->cc_exclude_groups[i]) == group_len &&
+                memcmp(cept->cc_exclude_groups[i], group, group_len) == 0) {
+            return -1;
+        }
+    }
+    copy = malloc(group_len + 1);
+    if (copy == NULL) {
+        return -1;
+    }
+    memcpy(copy, group, group_len);
+    copy[group_len] = '\0';
+
+    updated = realloc(cept->cc_exclude_groups,
+            (cept->cc_exclude_group_count + 1) * sizeof(char *));
+    if (updated == NULL) {
+        free(copy);
+        return -1;
+    }
+    cept->cc_exclude_groups = updated;
+    cept->cc_exclude_groups[cept->cc_exclude_group_count++] = copy;
+    return 0;
+}
+
+size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept) {
+    size_t total = 0;
+    size_t i;
+
+    for (i = 0; i < cept->cc_exclude_group_count; i++) {
+        total += strlen(cept->cc_exclude_groups[i]) + 4;
+    }
+    return total;
+}
+
 void free_single_ipintercept(ipintercept_t *cept) {
     intercept_udp_sink_t *sink, *tmp;
 
@@ -711,6 +771,7 @@ void free_single_ipintercept(ipintercept_t *cept) {
     }
 
     free_all_staticipranges(&(cept->statics));
+    clear_ipintercept_cc_exclude_groups(cept);
     free(cept);
 }
 
@@ -1246,6 +1307,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
     }
     memcpy(ipsess->targetip, assignedip, sizeof(struct sockaddr_storage));
     ipsess->accesstype = ipint->accesstype;
+    ipsess->cc_exclude_mask = ipint->cc_exclude_mask;
 
     copy_intercept_common(&(ipint->common), &(ipsess->common));
 

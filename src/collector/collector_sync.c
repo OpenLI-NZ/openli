@@ -51,6 +51,11 @@
 #include "collector_util.h"
 #include "collector_integrity_check.h"
 
+static int resolve_ipintercept_cc_exclude_mask(collector_sync_t *sync,
+        ipintercept_t *ipint);
+static void move_ipintercept_cc_exclude_policy(ipintercept_t *destination,
+        ipintercept_t *source);
+
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     int zero = 0, hwm = 2000;
@@ -61,6 +66,8 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->allusers = NULL;
     sync->x2x3_queues = NULL;
     sync->ipintercepts = NULL;
+    sync->ipcc_prefix_group_names = glob->ipcc_prefix_group_names;
+    sync->ipcc_prefix_group_count = glob->ipcc_prefix_group_count;
     sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
@@ -2166,6 +2173,11 @@ static int update_modified_intercept(collector_sync_t *sync,
         changed = 1;
     }
 
+    if (ipint->cc_exclude_mask != modified->cc_exclude_mask) {
+        changed = 1;
+    }
+    move_ipintercept_cc_exclude_policy(ipint, modified);
+
     if (encodingchanged) {
         expmsg = create_intercept_details_msg(&(ipint->common),
                 OPENLI_INTERCEPT_TYPE_IP);
@@ -2216,6 +2228,11 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             logger(LOG_INFO,
                     "OpenLI: received invalid IP intercept modification from provisioner.");
         }
+        return -1;
+    }
+
+    if (resolve_ipintercept_cc_exclude_mask(sync, modified) < 0) {
+        free_single_ipintercept(modified);
         return -1;
     }
 
@@ -2706,6 +2723,42 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
+static int resolve_ipintercept_cc_exclude_mask(collector_sync_t *sync,
+        ipintercept_t *ipint) {
+    uint64_t mask = 0;
+    size_t i;
+    uint8_t j;
+
+    for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+        for (j = 0; j < sync->ipcc_prefix_group_count; j++) {
+            if (strcmp(ipint->cc_exclude_groups[i],
+                    sync->ipcc_prefix_group_names[j]) == 0) {
+                mask |= UINT64_C(1) << j;
+                break;
+            }
+        }
+        if (j == sync->ipcc_prefix_group_count) {
+            logger(LOG_INFO,
+                    "OpenLI: IP intercept %s refers to unknown IPCC prefix exclusion group '%s'",
+                    ipint->common.liid, ipint->cc_exclude_groups[i]);
+            return -1;
+        }
+    }
+    ipint->cc_exclude_mask = mask;
+    return 0;
+}
+
+static void move_ipintercept_cc_exclude_policy(ipintercept_t *destination,
+        ipintercept_t *source) {
+    clear_ipintercept_cc_exclude_groups(destination);
+    destination->cc_exclude_groups = source->cc_exclude_groups;
+    destination->cc_exclude_group_count = source->cc_exclude_group_count;
+    destination->cc_exclude_mask = source->cc_exclude_mask;
+    source->cc_exclude_groups = NULL;
+    source->cc_exclude_group_count = 0;
+    source->cc_exclude_mask = 0;
+}
+
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -2718,6 +2771,11 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                     "OpenLI: received invalid IP intercept from provisioner.");
         }
         free(cept);
+        return -1;
+    }
+
+    if (resolve_ipintercept_cc_exclude_mask(sync, cept) < 0) {
+        free_single_ipintercept(cept);
         return -1;
     }
 

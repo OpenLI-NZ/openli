@@ -83,6 +83,8 @@ typedef struct colsync_data {
 
     internet_user_t *allusers;
     ipintercept_t *ipintercepts;
+    char **ipcc_prefix_group_names;
+    uint8_t ipcc_prefix_group_count;
     user_intercept_list_t *userintercepts;
     voipintercept_t *knownvoips;
     default_radius_user_t *defaultradiususers;

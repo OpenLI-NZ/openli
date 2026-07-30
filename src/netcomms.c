@@ -679,7 +679,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         (INTERCEPT_COMMON_LEN(ipint->common) + \
          ipint->username_len + sizeof(ipint->options) + \
          sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + \
-         (4 * 4))
+         ipintercept_cc_exclude_encoded_length(ipint) + (4 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (IPINTERCEPT_BODY_LEN(ipint) + sizeof(ipint->vendmirrorid) + 4)
@@ -786,6 +786,20 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
     return 0;
 }
 
+static int push_ipintercept_cc_exclude_groups(net_buffer_t *nb,
+        const ipintercept_t *ipint) {
+    size_t i;
+
+    for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_IPCC_EXCLUDE_GROUP,
+                (uint8_t *)ipint->cc_exclude_groups[i],
+                strlen(ipint->cc_exclude_groups[i])) == -1) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
     ii_header_t hdr;
@@ -831,6 +845,10 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)(&(ipint->options)),
             sizeof(ipint->options)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_ipintercept_cc_exclude_groups(nb, ipint) == -1) {
         goto pushmodfail;
     }
 
@@ -1457,6 +1475,10 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)(&ipint->options),
             sizeof(ipint->options))) == -1) {
+        goto pushipintfail;
+    }
+
+    if (push_ipintercept_cc_exclude_groups(nb, ipint) == -1) {
         goto pushipintfail;
     }
 
@@ -2299,6 +2321,9 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
     ipint->options = 0;
+    ipint->cc_exclude_groups = NULL;
+    ipint->cc_exclude_group_count = 0;
+    ipint->cc_exclude_mask = 0;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
 
     init_decoded_intercept_common(&(ipint->common));
@@ -2333,6 +2358,11 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->mobileident = *((openli_mobile_identifier_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
             ipint->options = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_IPCC_EXCLUDE_GROUP) {
+            if (add_ipintercept_cc_exclude_group(ipint,
+                    (char *)valptr, vallen) < 0) {
+                return -1;
+            }
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {
