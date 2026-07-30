@@ -309,6 +309,51 @@ uint64_t openli_cc_prefix_filter_match(
     return node_group_mask(node);
 }
 
+uint64_t openli_cc_prefix_filter_match_l3(
+        const openli_cc_prefix_filter_t *filter, const void *l3,
+        uint32_t l3len) {
+    const uint8_t *packet = (const uint8_t *)l3;
+    const void *src;
+    const void *dst;
+    uint64_t mask;
+    uint8_t version;
+
+    if (filter == NULL || packet == NULL || l3len == 0) {
+        return 0;
+    }
+
+    version = packet[0] >> 4;
+    if (version == 4) {
+        uint8_t ihl;
+
+        if (l3len < 20) {
+            return 0;
+        }
+        ihl = (packet[0] & 0x0f) * 4;
+        if (ihl < 20 || l3len < ihl) {
+            return 0;
+        }
+        src = packet + 12;
+        dst = packet + 16;
+        mask = openli_cc_prefix_filter_match(filter, AF_INET, src);
+        mask |= openli_cc_prefix_filter_match(filter, AF_INET, dst);
+        return mask;
+    }
+
+    if (version == 6) {
+        if (l3len < 40) {
+            return 0;
+        }
+        src = packet + 8;
+        dst = packet + 24;
+        mask = openli_cc_prefix_filter_match(filter, AF_INET6, src);
+        mask |= openli_cc_prefix_filter_match(filter, AF_INET6, dst);
+        return mask;
+    }
+
+    return 0;
+}
+
 size_t openli_cc_prefix_filter_count(
         const openli_cc_prefix_filter_t *filter, int family) {
     if (filter == NULL) {

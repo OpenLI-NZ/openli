@@ -1202,6 +1202,7 @@ vendmirror_intercept_t *create_vendmirror_intercept(ipintercept_t *ipint) {
     }
 
     jm->sessionid = ipint->vendmirrorid;
+    jm->cc_exclude_mask = ipint->cc_exclude_mask;
     copy_intercept_common(&(ipint->common), &(jm->common));
 
     return jm;

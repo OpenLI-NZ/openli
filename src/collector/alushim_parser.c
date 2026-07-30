@@ -162,6 +162,7 @@ int check_alu_intercept(colthread_local_t *loc,
     vendmirror_intercept_t *alu, *tmp;
     vendmirror_intercept_list_t *vmilist;
     uint32_t rem = 0, shimintid, cin, bodylen;
+    uint64_t packet_mask;
     void *l3;
     uint8_t *payload = NULL;
     uint8_t direction;
@@ -192,6 +193,9 @@ int check_alu_intercept(colthread_local_t *loc,
         return 0;
     }
 
+    packet_mask = openli_cc_prefix_filter_match_l3(
+            loc->ipcc_prefix_filter, l3, bodylen);
+
     /* Direction 0 = ingress (i.e. coming from the subscriber) */
 
     /* Use the session ID from the shim as the CIN */
@@ -203,6 +207,11 @@ int check_alu_intercept(colthread_local_t *loc,
         }
         if (alu->common.toend_time > 0 &&
                 alu->common.toend_time < pinfo->tv.tv_sec) {
+            continue;
+        }
+
+        if (packet_mask != 0 &&
+                (packet_mask & alu->cc_exclude_mask) != 0) {
             continue;
         }
 

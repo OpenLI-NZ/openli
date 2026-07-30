@@ -579,6 +579,7 @@ struct ipsession {
 
 struct vendmirror_intercept {
     uint32_t sessionid;
+    uint64_t cc_exclude_mask;
     intercept_common_t common;
     UT_hash_handle hh;
 };

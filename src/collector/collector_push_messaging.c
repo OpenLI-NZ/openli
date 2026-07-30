@@ -814,6 +814,7 @@ void handle_change_vendmirror_intercept(colthread_local_t *loc,
     }
 
     update_intercept_common(&(found->common), &(vend->common));
+    found->cc_exclude_mask = vend->cc_exclude_mask;
     free_single_vendmirror_intercept(vend);
 }
 

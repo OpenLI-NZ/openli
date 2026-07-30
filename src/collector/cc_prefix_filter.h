@@ -74,6 +74,15 @@ uint64_t openli_cc_prefix_filter_match(
         const openli_cc_prefix_filter_t *filter, int family,
         const void *address);
 
+/*
+ * Safely extract source and destination addresses from an IPv4 or IPv6
+ * packet beginning at l3, and return the union of their matching group masks.
+ * Returns zero for NULL, truncated, malformed, or non-IP input.
+ */
+uint64_t openli_cc_prefix_filter_match_l3(
+        const openli_cc_prefix_filter_t *filter, const void *l3,
+        uint32_t l3len);
+
 /* Return the number of configured prefixes for an address family. */
 size_t openli_cc_prefix_filter_count(
         const openli_cc_prefix_filter_t *filter, int family);
