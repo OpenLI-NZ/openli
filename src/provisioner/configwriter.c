@@ -870,6 +870,7 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
     ipintercept_t *ipint, *tmp;
     char buffer[64];
     const char *accesstype;
+    size_t i;
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)"ipintercepts", strlen("ipintercepts"), 1, 0,
@@ -907,6 +908,32 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
                 (yaml_char_t *)ipint->username, strlen(ipint->username), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (ipint->cc_exclude_group_count > 0) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"cc_exclude_groups",
+                    strlen("cc_exclude_groups"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_sequence_start_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_SEQ_TAG, 1,
+                    YAML_ANY_SEQUENCE_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)ipint->cc_exclude_groups[i],
+                        strlen(ipint->cc_exclude_groups[i]), 1, 0,
+                        YAML_PLAIN_SCALAR_STYLE);
+                if (!yaml_emitter_emit(emitter, &event)) return -1;
+            }
+
+            yaml_sequence_end_event_initialize(&event);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
 
         if (ipint->accesstype != INTERNET_ACCESS_TYPE_UNDEFINED) {
             yaml_scalar_event_initialize(&event, NULL,

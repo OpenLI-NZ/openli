@@ -79,6 +79,7 @@ struct json_intercept {
     struct json_object *xids;
     struct json_object *xid;
     struct json_object *udpsinks;
+    struct json_object *cc_exclude_groups;
 };
 
 struct json_prov_options {
@@ -253,6 +254,8 @@ static inline void extract_intercept_json_objects(
     json_object_object_get_ex(parsed, "vendmirrorid", &(ipjson->vendmirrorid));
     json_object_object_get_ex(parsed, "staticips", &(ipjson->staticips));
     json_object_object_get_ex(parsed, "udpsinks", &(ipjson->udpsinks));
+    json_object_object_get_ex(parsed, "cc_exclude_groups",
+            &(ipjson->cc_exclude_groups));
     json_object_object_get_ex(parsed, "siptargets", &(ipjson->siptargets));
     json_object_object_get_ex(parsed, "targets", &(ipjson->emailtargets));
     json_object_object_get_ex(parsed, "delivercompressed", &(ipjson->delivercompressed));
@@ -1722,6 +1725,49 @@ sinkerr:
     return -1;
 }
 
+static int parse_ipintercept_cc_exclude_groups(ipintercept_t *ipint,
+        struct json_object *groups, update_con_info_t *cinfo) {
+    size_t i;
+    size_t count;
+
+    if (!json_object_is_type(groups, json_type_array)) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>cc_exclude_groups for an IP intercept must be an array of strings. %s",
+                update_failure_page_start, update_failure_page_end);
+        return -1;
+    }
+
+    count = json_object_array_length(groups);
+    if (count > 64) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>An IP intercept may specify no more than 64 cc_exclude_groups. %s",
+                update_failure_page_start, update_failure_page_end);
+        return -1;
+    }
+
+    for (i = 0; i < count; i++) {
+        struct json_object *entry = json_object_array_get_idx(groups, i);
+        const char *name;
+
+        if (!json_object_is_type(entry, json_type_string)) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Each cc_exclude_groups entry must be a string. %s",
+                    update_failure_page_start, update_failure_page_end);
+            return -1;
+        }
+        name = json_object_get_string(entry);
+        if (name == NULL || name[0] == '\0' ||
+                add_ipintercept_cc_exclude_group(ipint, name,
+                        strlen(name)) < 0) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>cc_exclude_groups contains an empty or duplicate group name. %s",
+                    update_failure_page_start, update_failure_page_end);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int parse_ipintercept_staticips(ipintercept_t *ipint,
         struct json_object *jsonips, update_con_info_t *cinfo) {
 
@@ -2184,6 +2230,12 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             mobileidentstring, &parseerr, false);
 
     if (parseerr) {
+        goto cepterr;
+    }
+
+    if (ipjson.cc_exclude_groups != NULL &&
+            parse_ipintercept_cc_exclude_groups(ipint,
+                    ipjson.cc_exclude_groups, cinfo) < 0) {
         goto cepterr;
     }
 
@@ -2813,6 +2865,31 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (ipjson.cc_exclude_groups != NULL &&
+            parse_ipintercept_cc_exclude_groups(ipint,
+                    ipjson.cc_exclude_groups, cinfo) < 0) {
+        goto cepterr;
+    }
+
+    /* Preserve optional common fields that were omitted from this partial
+     * update. update_intercept_common() compares the parsed values directly,
+     * so leaving integer fields at their calloc() default would otherwise
+     * overwrite the active intercept with zero before later validation.
+     */
+    if (ipjson.agencyid == NULL) {
+        ipint->common.targetagency =
+                strdup(found->common.targetagency);
+        if (ipint->common.targetagency == NULL) {
+            goto cepterr;
+        }
+    }
+    if (ipjson.mediator == NULL) {
+        ipint->common.destid = found->common.destid;
+    }
+    if (ipjson.tomediate == NULL) {
+        ipint->common.tomediate = found->common.tomediate;
+    }
+
     if (set_agency_properties(state, &(ipint->common), cinfo) < 0) {
         goto cepterr;
     }
@@ -2970,8 +3047,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (radiusidentstring) {
         ipint->options = map_radius_ident_string(radiusidentstring);
     } else {
-        ipint->options = (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER) |
-                (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
+        ipint->options = found->options;
     }
 
     if (ipint->accesstype != INTERNET_ACCESS_TYPE_MOBILE) {
@@ -3005,6 +3081,15 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
             ipint->vendmirrorid != found->vendmirrorid) {
         changed = 1;
         found->vendmirrorid = ipint->vendmirrorid;
+    }
+
+    if (ipjson.cc_exclude_groups != NULL) {
+        clear_ipintercept_cc_exclude_groups(found);
+        found->cc_exclude_groups = ipint->cc_exclude_groups;
+        found->cc_exclude_group_count = ipint->cc_exclude_group_count;
+        ipint->cc_exclude_groups = NULL;
+        ipint->cc_exclude_group_count = 0;
+        changed = 1;
     }
 
     if (agencychanged) {
