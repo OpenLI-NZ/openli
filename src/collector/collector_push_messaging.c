@@ -330,6 +330,7 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
     }
 
     update_intercept_common(&(found->common), &(toup->common));
+    found->cc_exclude_mask = toup->cc_exclude_mask;
     return 1;
 }
 
@@ -399,6 +400,7 @@ static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
     }
 
     update_intercept_common(&(found->common), &(toup->common));
+    found->cc_exclude_mask = toup->cc_exclude_mask;
     return 1;
 }
 
@@ -812,6 +814,7 @@ void handle_change_vendmirror_intercept(colthread_local_t *loc,
     }
 
     update_intercept_common(&(found->common), &(vend->common));
+    found->cc_exclude_mask = vend->cc_exclude_mask;
     free_single_vendmirror_intercept(vend);
 }
 
@@ -824,6 +827,7 @@ void handle_change_iprange_intercept(colthread_local_t *loc,
             sessrec);
     if (sessrec) {
         update_intercept_common(&(sessrec->common), &(ipr->common));
+        sessrec->cc_exclude_mask = ipr->cc_exclude_mask;
     }
 
     free_single_staticipsession(ipr);

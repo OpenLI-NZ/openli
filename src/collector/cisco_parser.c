@@ -91,6 +91,7 @@ int generate_cc_from_cisco(colthread_local_t *loc,
     void *payload;
     uint8_t *l3;
     uint32_t rem, cept_id, bodylen;
+    uint64_t packet_mask;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
 
@@ -105,6 +106,9 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         return 0;
     }
 
+    packet_mask = openli_cc_prefix_filter_match_l3(
+            loc->ipcc_prefix_filter, l3, bodylen);
+
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
             continue;
@@ -113,6 +117,11 @@ int generate_cc_from_cisco(colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
+        if (packet_mask != 0 &&
+                (packet_mask & cept->cc_exclude_mask) != 0) {
+            continue;
+        }
+
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),

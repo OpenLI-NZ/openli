@@ -76,6 +76,7 @@ int check_jmirror_intercept(colthread_local_t *loc,
 
     coreserver_t *cs;
     uint32_t rem = 0, cept_id, cin, bodylen;
+    uint64_t packet_mask;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
     uint8_t *l3, *start;
@@ -96,6 +97,9 @@ int check_jmirror_intercept(colthread_local_t *loc,
         return 0;
     }
 
+    packet_mask = openli_cc_prefix_filter_match_l3(
+            loc->ipcc_prefix_filter, l3, bodylen);
+
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
             continue;
@@ -104,7 +108,12 @@ int check_jmirror_intercept(colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
-                /* Create an appropriate IPCC and export it */
+                if (packet_mask != 0 &&
+                (packet_mask & cept->cc_exclude_mask) != 0) {
+            continue;
+        }
+
+        /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
                 trace_get_timeval(packet), cin, ETSI_DIR_INDETERMINATE,

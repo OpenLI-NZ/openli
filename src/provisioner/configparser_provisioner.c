@@ -1198,6 +1198,9 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
         newcept->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
         newcept->statics = NULL;
+        newcept->cc_exclude_groups = NULL;
+        newcept->cc_exclude_group_count = 0;
+        newcept->cc_exclude_mask = 0;
         newcept->options = 0;
 
         /* Mappings describe the parameters for each intercept */
@@ -1215,6 +1218,29 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                     strcasecmp((char *)key->data.scalar.value,
                             "staticips") == 0) {
                 add_intercept_static_ips(&(newcept->statics), doc, value);
+            }
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "cc_exclude_groups") == 0) {
+                yaml_node_item_t *groupitem;
+
+                for (groupitem = value->data.sequence.items.start;
+                        groupitem < value->data.sequence.items.top;
+                        groupitem++) {
+                    yaml_node_t *group = yaml_document_get_node(doc,
+                            *groupitem);
+                    if (group->type != YAML_SCALAR_NODE ||
+                            add_ipintercept_cc_exclude_group(newcept,
+                            (char *)group->data.scalar.value,
+                            group->data.scalar.length) < 0) {
+                        logger(LOG_INFO,
+                                "OpenLI: invalid or duplicate cc_exclude_groups entry in IP intercept configuration");
+                        free_single_ipintercept(newcept);
+                        return -1;
+                    }
+                }
             }
 
             if (key->type == YAML_SCALAR_NODE &&

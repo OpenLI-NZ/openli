@@ -240,6 +240,10 @@ typedef struct ipintercept {
 
     static_ipranges_t *statics;
 
+    char **cc_exclude_groups;
+    size_t cc_exclude_group_count;
+    uint64_t cc_exclude_mask;
+
     openli_mobile_identifier_t mobileident;
     uint8_t awaitingconfirm;
     uint32_t options;
@@ -567,6 +571,7 @@ struct ipsession {
     uint8_t prefixlen;
     uint32_t nextseqno;
     internet_access_method_t accesstype;
+    uint64_t cc_exclude_mask;
 
     intercept_common_t common;
     UT_hash_handle hh;
@@ -574,6 +579,7 @@ struct ipsession {
 
 struct vendmirror_intercept {
     uint32_t sessionid;
+    uint64_t cc_exclude_mask;
     intercept_common_t common;
     UT_hash_handle hh;
 };
@@ -591,6 +597,7 @@ struct staticipsession {
     uint32_t cin;
     uint32_t nextseqno;
     uint32_t references;
+    uint64_t cc_exclude_mask;
     UT_hash_handle hh;
 };
 
@@ -622,6 +629,10 @@ void free_single_register(sipregister_t *sipr);
 void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
+void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept);
+int add_ipintercept_cc_exclude_group(ipintercept_t *cept,
+        const char *group, size_t group_len);
+size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_emailintercept(emailintercept_t *m);
 void free_single_ipsession(ipsession_t *sess);
