@@ -222,8 +222,8 @@ static inline void populate_integrity_check_pshdr_data(
         wandder_etsipshdr_data_t *hdrdata, integrity_check_state_t *ics,
         char *netelemid, char *operatorid) {
 
-    hdrdata->liid = ics->liid_key;
-    hdrdata->liid_len = strlen(ics->liid_key);
+    hdrdata->liid = ics->liid;
+    hdrdata->liid_len = strlen(ics->liid);
     hdrdata->liid_format = ics->liid_format;
     hdrdata->authcc = ics->authcc;
     hdrdata->delivcc = ics->delivcc;
@@ -319,6 +319,7 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         found->cin = cin;
         found->msgtype = msgtype;
         found->liid_key = strdup(known->liid_key);
+        found->liid = strdup(known->liid);
         found->authcc = strdup(known->authcc);
         found->delivcc = strdup(known->delivcc);
         found->hashed_seqnos = calloc(32, sizeof(int64_t));
@@ -679,6 +680,7 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
 
     if (integ->key) free(integ->key);
     if (integ->liid_key) free(integ->liid_key);
+    if (integ->liid) free(integ->liid);
     if (integ->authcc) free(integ->authcc);
     if (integ->delivcc) free(integ->delivcc);
     if (integ->cinstr) free(integ->cinstr);

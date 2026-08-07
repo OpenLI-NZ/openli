@@ -118,14 +118,14 @@ int add_iprange_to_patricia(patricia_tree_t *ptree, char *iprangestr,
         prefix->ref_count --;
     }
 
-    HASH_FIND(hh, *all, common->liid, common->liid_len, found);
+    HASH_FIND(hh, *all, common->liid_key, common->liid_key_len, found);
     if (found) {
         return 0;
     } else {
         char key[128];
 
         found = (liid_set_t *)malloc(sizeof(liid_set_t));
-        found->liid = strdup(common->liid);
+        found->liid = strdup(common->liid_key);
         found->cin = cin;
 
         snprintf(key, 127, "%s-%u", found->liid, found->cin);
@@ -169,7 +169,7 @@ void remove_iprange_from_patricia(patricia_tree_t *ptree, char *iprangestr,
     }
 
     all = (liid_set_t **)&(node->data);
-    HASH_FIND(hh, *all, common->liid, common->liid_len, found);
+    HASH_FIND(hh, *all, common->liid_key, common->liid_key_len, found);
     if (!found) {
         logger(LOG_INFO,
                 "OpenLI: supposed to remove IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
@@ -446,11 +446,11 @@ void handle_push_mirror_intercept(colthread_local_t *loc,
                 sizeof(vmi->sessionid), vmilist);
     }
 
-    HASH_FIND(hh, vmilist->intercepts, vmi->common.liid, (vmi->common.liid_len),
-            found);
+    HASH_FIND(hh, vmilist->intercepts, vmi->common.liid_key,
+            vmi->common.liid_key_len, found);
     if (!found) {
-        HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid,
-                vmi->common.liid_len, vmi);
+        HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid_key,
+                vmi->common.liid_key_len, vmi);
     } else {
         logger(LOG_INFO, "OpenLI: collector received duplicate vendmirror intercept %u:%s, ignoring.", vmi->sessionid, vmi->common.liid);
         free_single_vendmirror_intercept(vmi);
@@ -472,8 +472,8 @@ void handle_halt_mirror_intercept(colthread_local_t *loc,
         return;
     }
 
-    HASH_FIND(hh, parent->intercepts, vmi->common.liid, vmi->common.liid_len,
-            found);
+    HASH_FIND(hh, parent->intercepts, vmi->common.liid_key,
+            vmi->common.liid_key_len, found);
     if (found == NULL) {
         logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u:%s, as the LIID was not present in its intercept list.",
                 vmi->sessionid, vmi->common.liid);
@@ -684,7 +684,7 @@ void handle_modify_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
     }
 
     all = (liid_set_t **)&(node->data);
-    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
+    HASH_FIND(hh, *all, ipr->common.liid_key, ipr->common.liid_key_len, found);
     if (!found) {
         logger(LOG_INFO,
                 "OpenLI: processing thread was supposed to modify IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
@@ -803,7 +803,7 @@ void handle_change_vendmirror_intercept(colthread_local_t *loc,
         return;
     }
 
-    HASH_FIND(hh, parent->intercepts, vend->common.liid, vend->common.liid_len,
+    HASH_FIND(hh, parent->intercepts, vend->common.liid_key, vend->common.liid_key_len,
             found);
     if (found == NULL) {
         logger(LOG_INFO, "OpenLI: collector thread was unable to modify Vendor Mirror intercept %u:%s, as the LIID was not present in its intercept list.",

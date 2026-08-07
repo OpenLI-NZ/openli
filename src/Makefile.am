@@ -165,4 +165,16 @@ openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 
+check_PROGRAMS = test_intercept_liid_key
+TESTS = $(check_PROGRAMS)
+
+test_intercept_liid_key_SOURCES = tests/test_intercept_liid_key.c \
+                intercept.c intercept.h util.c util.h logger.c logger.h \
+                byteswap.c byteswap.h collector/jenkinshash.c \
+                configparser_common.c configparser_common.h \
+                coreserver.c coreserver.h
+test_intercept_liid_key_LDADD = @ADD_LIBS@
+test_intercept_liid_key_LDFLAGS = -lpthread @PROVISIONER_LIBS@
+test_intercept_liid_key_CFLAGS = -Werror -Wall -Wextra
+
 install-exec-hook: $(INSTALL_EXEC_HOOKS)

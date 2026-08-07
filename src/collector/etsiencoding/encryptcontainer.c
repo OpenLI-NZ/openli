@@ -441,7 +441,7 @@ int create_preencrypted_message_body(wandder_encoder_t *encoder,
     /* We should now have a suitable header template and body template to
      * create a complete ETSI PSPDU record */
     if (create_etsi_encoded_result(res, hdr_tplate, tplate->start,
-            tplate->totallen, NULL, 0, job->origreq->type, job->liid) < 0) {
+            tplate->totallen, NULL, 0, job->origreq->type, job->liid_key) < 0) {
         free(buf);
         return -1;
     }

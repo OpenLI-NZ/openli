@@ -534,6 +534,12 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->liid_len = strlen(common->liid);
     }
 
+    if (common->liid && common->authcc) {
+        if (set_intercept_liid_key(common, cinfo->answerstring, 4096) < 0) {
+            return -1;
+        }
+    }
+
 	if (is_new) {
 		if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
                 common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
@@ -611,6 +617,13 @@ static int update_intercept_common(intercept_common_t *parsed,
         }
     }
 
+    if (parsed->authcc && strcmp(parsed->authcc, existing->authcc) != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "the 'authcc' of an existing intercept cannot be modified -- withdraw intercept %s and create a new one instead",
+                existing->liid);
+        return -1;
+    }
+
     if (compare_xid_list(parsed, existing) != 0) {
         *changed = 1;
         free(existing->xids);
@@ -620,8 +633,6 @@ static int update_intercept_common(intercept_common_t *parsed,
         parsed->xid_count = 0;
     }
 
-    MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
-    existing->authcc_len  = strlen(existing->authcc);
     MODIFY_STRING_MEMBER(parsed->delivcc, existing->delivcc, changed);
     existing->delivcc_len  = strlen(existing->delivcc);
 
@@ -681,21 +692,30 @@ static int update_intercept_common(intercept_common_t *parsed,
     return 0;
 }
 
-int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
+int remove_voip_intercept(update_con_info_t *cinfo,
         provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     voipintercept_t *found;
     char *target_info;
+    int ambiguous = 0;
 
-    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, idstr,
-            strlen(idstr), found);
+    FIND_INTERCEPT_BY_ID(voipintercept_t, state->interceptconf.voipintercepts,
+            idstr, found, ambiguous);
+
+    if (ambiguous) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>%d VOIP intercepts exist with the LIID %s -- specify the intercept to remove as '&lt;authcc&gt;-&lt;liid&gt;'. %s",
+                update_failure_page_start, ambiguous, idstr,
+                update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_CONFLICT;
+        return 0;
+    }
 
     if (found) {
         HASH_DELETE(hh_liid, state->interceptconf.voipintercepts, found);
         halt_existing_intercept(state, (void *)found,
                 OPENLI_PROTO_HALT_VOIPINTERCEPT);
-        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-                0);
+        remove_liid_mapping(state, &(found->common), 0);
         target_info = list_sip_targets(found, 256);
         if (send_deactivate) {
             announce_hi1_notification_to_mediators(state, &(found->common),
@@ -714,21 +734,30 @@ int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
     return 0;
 }
 
-int remove_email_intercept(update_con_info_t *cinfo UNUSED,
+int remove_email_intercept(update_con_info_t *cinfo,
         provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     emailintercept_t *found;
     char *target_info;
+    int ambiguous = 0;
 
-    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, idstr,
-            strlen(idstr), found);
+    FIND_INTERCEPT_BY_ID(emailintercept_t,
+            state->interceptconf.emailintercepts, idstr, found, ambiguous);
+
+    if (ambiguous) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>%d Email intercepts exist with the LIID %s -- specify the intercept to remove as '&lt;authcc&gt;-&lt;liid&gt;'. %s",
+                update_failure_page_start, ambiguous, idstr,
+                update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_CONFLICT;
+        return 0;
+    }
 
     if (found) {
         HASH_DELETE(hh_liid, state->interceptconf.emailintercepts, found);
         halt_existing_intercept(state, (void *)found,
                 OPENLI_PROTO_HALT_EMAILINTERCEPT);
-        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-                0);
+        remove_liid_mapping(state, &(found->common), 0);
         target_info = list_email_targets(found, 256);
         if (send_deactivate) {
             announce_hi1_notification_to_mediators(state, &(found->common),
@@ -747,13 +776,24 @@ int remove_email_intercept(update_con_info_t *cinfo UNUSED,
     return 0;
 }
 
-int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
+int remove_ip_intercept(update_con_info_t *cinfo,
         provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     ipintercept_t *found;
+    int ambiguous = 0;
 
-    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, idstr,
-            strlen(idstr), found);
+    FIND_INTERCEPT_BY_ID(ipintercept_t, state->interceptconf.ipintercepts,
+            idstr, found, ambiguous);
+
+    if (ambiguous) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>%d IP intercepts exist with the LIID %s -- specify the intercept to remove as '&lt;authcc&gt;-&lt;liid&gt;'. %s",
+                update_failure_page_start, ambiguous, idstr,
+                update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_CONFLICT;
+        return 0;
+    }
+
     if (!found) {
         return 0;
     }
@@ -767,8 +807,7 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
     HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
     halt_existing_intercept(state, (void *)found,
             OPENLI_PROTO_HALT_IPINTERCEPT);
-    remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-            0);
+    remove_liid_mapping(state, &(found->common), 0);
     if (send_deactivate) {
         announce_hi1_notification_to_mediators(state, &(found->common),
                 found->username, HI1_LI_DEACTIVATED);
@@ -802,7 +841,7 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
                 // Will perform another hash lookup, but that's not a big
                 // deal in the overall scheme of things
                 logger(LOG_INFO, "OpenLI: removing email intercept '%s' as its parent agency '%s' has been removed", mailint->common.liid, idstr);
-                remove_email_intercept(cinfo, state, mailint->common.liid, 0);
+                remove_email_intercept(cinfo, state, mailint->common.liid_key, 0);
             }
         }
 
@@ -812,7 +851,7 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
                 // Will perform another hash lookup, but that's not a big
                 // deal in the overall scheme of things
                 logger(LOG_INFO, "OpenLI: removing VoIP intercept '%s' as its parent agency '%s' has been removed", vint->common.liid, idstr);
-                remove_voip_intercept(cinfo, state, vint->common.liid, 0);
+                remove_voip_intercept(cinfo, state, vint->common.liid_key, 0);
             }
         }
 
@@ -822,7 +861,7 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
                 // Will perform another hash lookup, but that's not a big
                 // deal in the overall scheme of things
                 logger(LOG_INFO, "OpenLI: removing IP intercept '%s' as its parent agency '%s' has been removed", ipint->common.liid, idstr);
-                remove_ip_intercept(cinfo, state, ipint->common.liid, 0);
+                remove_ip_intercept(cinfo, state, ipint->common.liid_key, 0);
             }
         }
 
@@ -1750,6 +1789,7 @@ static int parse_ipintercept_staticips(ipintercept_t *ipint,
         newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
         newr->rangestr = NULL;
         newr->liid = NULL;
+        newr->authcc = NULL;
         newr->awaitingconfirm = 1;
         newr->cin = 1;
 
@@ -1921,19 +1961,19 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     HASH_FIND(hh_liid, state->interceptconf.emailintercepts,
-            mailint->common.liid, mailint->common.liid_len, found);
+            mailint->common.liid_key, mailint->common.liid_key_len, found);
 
     if (found) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>LIID %s already exists as an Email intercept, please use PUT method if you wish to modify it. %s",
+                "%s <p>LIID %s already exists as an Email intercept for authCC %s, please use PUT method if you wish to modify it. %s",
                 update_failure_page_start,
-                mailint->common.liid,
+                mailint->common.liid, mailint->common.authcc,
                 update_failure_page_end);
         goto cepterr;
     }
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.emailintercepts,
-            mailint->common.liid, mailint->common.liid_len, mailint);
+            mailint->common.liid_key, mailint->common.liid_key_len, mailint);
 
 
     new_intercept_liidmapping(state, &(mailint->common));
@@ -2057,19 +2097,19 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     HASH_FIND(hh_liid, state->interceptconf.voipintercepts,
-            vint->common.liid, vint->common.liid_len, found);
+            vint->common.liid_key, vint->common.liid_key_len, found);
 
     if (found) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>LIID %s already exists as an VOIP intercept, please use PUT method if you wish to modify it. %s",
+                "%s <p>LIID %s already exists as an VOIP intercept for authCC %s, please use PUT method if you wish to modify it. %s",
                 update_failure_page_start,
-                vint->common.liid,
+                vint->common.liid, vint->common.authcc,
                 update_failure_page_end);
         goto cepterr;
     }
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
-            vint->common.liid, vint->common.liid_len, vint);
+            vint->common.liid_key, vint->common.liid_key_len, vint);
 
     new_intercept_liidmapping(state, &(vint->common));
 
@@ -2231,19 +2271,19 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     HASH_FIND(hh_liid, state->interceptconf.ipintercepts,
-            ipint->common.liid, ipint->common.liid_len, found);
+            ipint->common.liid_key, ipint->common.liid_key_len, found);
 
     if (found) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>LIID %s already exists as an IP intercept, please use PUT method if you wish to modify it. %s",
+                "%s <p>LIID %s already exists as an IP intercept for authCC %s, please use PUT method if you wish to modify it. %s",
                 update_failure_page_start,
-                ipint->common.liid,
+                ipint->common.liid, ipint->common.authcc,
                 update_failure_page_end);
         goto cepterr;
     }
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
-            ipint->common.liid, ipint->common.liid_len, ipint);
+            ipint->common.liid_key, ipint->common.liid_key_len, ipint);
 
     new_intercept_liidmapping(state, &(ipint->common));
 
@@ -2451,7 +2491,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
 
-    char *liidstr = NULL, *parsedliid = NULL;
+    char *liidstr = NULL, *parsedliid = NULL, *authccstr = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -2470,8 +2510,29 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         parsedliid = liidstr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, parsedliid,
-            strlen(parsedliid), found);
+    EXTRACT_JSON_STRING_PARAM("authcc", "Email intercept", emailjson.authcc,
+            authccstr, &parseerr, false);
+    if (authccstr) {
+        char keybuf[2048];
+        snprintf(keybuf, sizeof(keybuf), "%s-%s", authccstr, parsedliid);
+        HASH_FIND(hh_liid, state->interceptconf.emailintercepts, keybuf,
+                strlen(keybuf), found);
+        free(authccstr);
+        authccstr = NULL;
+    } else {
+        int ambiguous = 0;
+        FIND_INTERCEPT_BY_ID(emailintercept_t,
+                state->interceptconf.emailintercepts, parsedliid, found,
+                ambiguous);
+        if (ambiguous) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>%d Email intercepts exist with the LIID %s -- an 'authcc' must be provided to identify the intercept to modify. %s",
+                    update_failure_page_start, ambiguous, parsedliid,
+                    update_failure_page_end);
+            free(liidstr);
+            goto cepterr;
+        }
+    }
 
     if (!found) {
         json_object_put(parsed);
@@ -2618,6 +2679,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     libtrace_list_t *tmp;
 
     char *liidstr = NULL, *target_info, *parsedliid = NULL;
+    char *authccstr = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
 
@@ -2637,8 +2699,29 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         parsedliid = liidstr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, parsedliid,
-            strlen(parsedliid), found);
+    EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
+            authccstr, &parseerr, false);
+    if (authccstr) {
+        char keybuf[2048];
+        snprintf(keybuf, sizeof(keybuf), "%s-%s", authccstr, parsedliid);
+        HASH_FIND(hh_liid, state->interceptconf.voipintercepts, keybuf,
+                strlen(keybuf), found);
+        free(authccstr);
+        authccstr = NULL;
+    } else {
+        int ambiguous = 0;
+        FIND_INTERCEPT_BY_ID(voipintercept_t,
+                state->interceptconf.voipintercepts, parsedliid, found,
+                ambiguous);
+        if (ambiguous) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>%d VOIP intercepts exist with the LIID %s -- an 'authcc' must be provided to identify the intercept to modify. %s",
+                    update_failure_page_start, ambiguous, parsedliid,
+                    update_failure_page_end);
+            free(liidstr);
+            goto cepterr;
+        }
+    }
 
     if (!found) {
         json_object_put(parsed);
@@ -2766,6 +2849,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipintercept_t *ipint = NULL;
 
     char *liidstr = NULL, *parsedliid = NULL;
+    char *authccstr = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     char *mobileidentstring = NULL;
@@ -2788,8 +2872,29 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         parsedliid = liidstr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, parsedliid,
-            strlen(parsedliid), found);
+    EXTRACT_JSON_STRING_PARAM("authcc", "IP intercept", ipjson.authcc,
+            authccstr, &parseerr, false);
+    if (authccstr) {
+        char keybuf[2048];
+        snprintf(keybuf, sizeof(keybuf), "%s-%s", authccstr, parsedliid);
+        HASH_FIND(hh_liid, state->interceptconf.ipintercepts, keybuf,
+                strlen(keybuf), found);
+        free(authccstr);
+        authccstr = NULL;
+    } else {
+        int ambiguous = 0;
+        FIND_INTERCEPT_BY_ID(ipintercept_t,
+                state->interceptconf.ipintercepts, parsedliid, found,
+                ambiguous);
+        if (ambiguous) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>%d IP intercepts exist with the LIID %s -- an 'authcc' must be provided to identify the intercept to modify. %s",
+                    update_failure_page_start, ambiguous, parsedliid,
+                    update_failure_page_end);
+            free(liidstr);
+            goto cepterr;
+        }
+    }
 
     if (!found) {
         json_object_put(parsed);

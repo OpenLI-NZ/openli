@@ -156,8 +156,11 @@ All VOIP (or IPMM, to use ETSI terminology) intercepts are specified using the
 voipintercepts option. Each intercept is expressed as an item in a list and
 each intercept must be configured with the following six parameters:
 
-* LIID -- the unique lawful intercept ID for this intercept. This will be
-  assigned by the agency and should be present on the warrant for the intercept.
+* LIID -- the lawful intercept ID for this intercept. This will be
+  assigned by the agency and should be present on the warrant for the
+  intercept. An LIID only needs to be unique within its authorising country;
+  two intercepts may share an LIID provided their authorisation country codes
+  differ.
 * Authorisation country code -- the country within which the authorisation to
   intercept was granted.
 * Delivery country code -- the country where the intercept is taking place
@@ -183,8 +186,11 @@ All email intercepts are specified using the emailintercepts option.
 Each intercept is expressed as an item in a list and each intercept must be
 configured with the following six parameters:
 
-* LIID -- the unique lawful intercept ID for this intercept. This will be
-  assigned by the agency and should be present on the warrant for the intercept.
+* LIID -- the lawful intercept ID for this intercept. This will be
+  assigned by the agency and should be present on the warrant for the
+  intercept. An LIID only needs to be unique within its authorising country;
+  two intercepts may share an LIID provided their authorisation country codes
+  differ.
 * Authorisation country code -- the country within which the authorisation to
   intercept was granted.
 * Delivery country code -- the country where the intercept is taking place
@@ -206,8 +212,11 @@ All IP intercepts are specified using the ipintercepts option. As with VOIP
 intercepts, each individual intercept is expressed as a list item and each
 intercept must be configured with the following parameters:
 
-* LIID -- the unique lawful intercept ID for this intercept. This will be
-  assigned by the agency and should be present on the warrant for the intercept.
+* LIID -- the lawful intercept ID for this intercept. This will be
+  assigned by the agency and should be present on the warrant for the
+  intercept. An LIID only needs to be unique within its authorising country;
+  two intercepts may share an LIID provided their authorisation country codes
+  differ.
 * Authorisation country code -- the country within which the authorisation to
   intercept was granted.
 * Delivery country code -- the country where the intercept is taking place

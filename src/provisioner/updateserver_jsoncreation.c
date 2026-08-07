@@ -767,10 +767,22 @@ json_object *get_voip_intercept(update_con_info_t *cinfo UNUSED,
 
     voipintercept_t *vint, *tmp;
     json_object *jarray, *jobj;
+    int ambiguous = 0;
 
     if (target) {
-        HASH_FIND(hh_liid, state->interceptconf.voipintercepts, target,
-                strlen(target), vint);
+        FIND_INTERCEPT_BY_ID(voipintercept_t,
+                state->interceptconf.voipintercepts, target, vint, ambiguous);
+        if (ambiguous) {
+            jarray = json_object_new_array();
+            HASH_ITER(hh_liid, state->interceptconf.voipintercepts, vint,
+                    tmp) {
+                if (strcmp(vint->common.liid, target) == 0) {
+                    json_object_array_add(jarray,
+                            convert_voipintercept_to_json(vint));
+                }
+            }
+            return jarray;
+        }
         if (!vint) {
             return NULL;
         }
@@ -793,10 +805,23 @@ json_object *get_email_intercept(update_con_info_t *cinfo UNUSED,
 
     emailintercept_t *mailint, *tmp;
     json_object *jarray, *jobj;
+    int ambiguous = 0;
 
     if (target) {
-        HASH_FIND(hh_liid, state->interceptconf.emailintercepts, target,
-                strlen(target), mailint);
+        FIND_INTERCEPT_BY_ID(emailintercept_t,
+                state->interceptconf.emailintercepts, target, mailint,
+                ambiguous);
+        if (ambiguous) {
+            jarray = json_object_new_array();
+            HASH_ITER(hh_liid, state->interceptconf.emailintercepts, mailint,
+                    tmp) {
+                if (strcmp(mailint->common.liid, target) == 0) {
+                    json_object_array_add(jarray,
+                            convert_emailintercept_to_json(mailint));
+                }
+            }
+            return jarray;
+        }
         if (!mailint) {
             return NULL;
         }
@@ -819,10 +844,21 @@ json_object *get_ip_intercept(update_con_info_t *cinfo UNUSED,
 
     ipintercept_t *ipint, *tmp;
     json_object *jarray, *jobj;
+    int ambiguous = 0;
 
     if (target) {
-        HASH_FIND(hh_liid, state->interceptconf.ipintercepts, target,
-                strlen(target), ipint);
+        FIND_INTERCEPT_BY_ID(ipintercept_t,
+                state->interceptconf.ipintercepts, target, ipint, ambiguous);
+        if (ambiguous) {
+            jarray = json_object_new_array();
+            HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, tmp) {
+                if (strcmp(ipint->common.liid, target) == 0) {
+                    json_object_array_add(jarray,
+                            convert_ipintercept_to_json(ipint));
+                }
+            }
+            return jarray;
+        }
         if (!ipint) {
             return NULL;
         }

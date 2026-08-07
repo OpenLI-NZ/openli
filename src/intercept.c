@@ -122,6 +122,35 @@ int openli_parse_liid_string(char *liidstr, char **storage,
     return 1;
 }
 
+int set_intercept_liid_key(intercept_common_t *common, char *errorstring,
+        size_t errorstringsize) {
+
+    if (common->liid == NULL || common->authcc == NULL) {
+        snprintf(errorstring, errorstringsize,
+                "both 'liid' and 'authcc' must be set before deriving a key");
+        return -1;
+    }
+
+    if (strchr(common->authcc, '-') != NULL) {
+        snprintf(errorstring, errorstringsize,
+                "'authcc' must not contain a '-' character");
+        return -1;
+    }
+
+    free(common->liid_key);
+    common->liid_key_len = strlen(common->authcc) + strlen(common->liid) + 1;
+    common->liid_key = calloc(common->liid_key_len + 1, sizeof(char));
+    if (common->liid_key == NULL) {
+        common->liid_key_len = 0;
+        snprintf(errorstring, errorstringsize,
+                "out of memory while deriving an intercept key");
+        return -1;
+    }
+    snprintf(common->liid_key, common->liid_key_len + 1, "%s-%s",
+            common->authcc, common->liid);
+    return 1;
+}
+
 int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
         size_t *keylen, char *errorstring, size_t errorstringsize) {
 
@@ -163,6 +192,8 @@ static inline void copy_intercept_common(intercept_common_t *src,
     dest->liid_format = src->liid_format;
     dest->authcc = strdup(src->authcc);
     dest->delivcc = strdup(src->delivcc);
+    dest->liid_key = src->liid_key ? strdup(src->liid_key) : NULL;
+    dest->liid_key_len = src->liid_key_len;
 
     if (src->targetagency) {
         dest->targetagency = strdup(src->targetagency);
@@ -478,7 +509,7 @@ rtpstreaminf_t *create_rtpstream(voipintercept_t *vint, uint32_t cin,
     }
 
     copy_intercept_common(&(vint->common), &(newcin->common));
-    snprintf(newcin->streamkey, 256, "%s-%u-%s", vint->common.liid, cin,
+    snprintf(newcin->streamkey, 256, "%s-%u-%s", vint->common.liid_key, cin,
             callid);
     return newcin;
 }
@@ -543,6 +574,10 @@ static inline void free_intercept_common(intercept_common_t *cept) {
 
     if (cept->liid) {
         free(cept->liid);
+    }
+
+    if (cept->liid_key) {
+        free(cept->liid_key);
     }
 
     if (cept->authcc) {
@@ -683,6 +718,9 @@ void clean_intercept_udp_sink(intercept_udp_sink_t *sink) {
     }
     if (sink->liid) {
         free(sink->liid);
+    }
+    if (sink->authcc) {
+        free(sink->authcc);
     }
     sink->enabled = 0;
 }
@@ -1188,7 +1226,7 @@ staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
     statint->nextseqno = 0;
     copy_intercept_common(&(ipint->common), &(statint->common));
     statint->key = (char *)calloc(1, 128);
-    snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);
+    snprintf(statint->key, 127, "%s-%u", ipint->common.liid_key, cin);
 
     return statint;
 }
@@ -1202,6 +1240,9 @@ void free_single_staticiprange(static_ipranges_t *ipr) {
     }
     if (ipr->liid) {
         free(ipr->liid);
+    }
+    if (ipr->authcc) {
+        free(ipr->authcc);
     }
     free(ipr);
 }
@@ -1255,7 +1296,7 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
         free(ipsess);
         return NULL;
     }
-    snprintf(ipsess->streamkey, 256, "%s-%u", ipint->common.liid, cin);
+    snprintf(ipsess->streamkey, 256, "%s-%u", ipint->common.liid_key, cin);
 
     return ipsess;
 }
@@ -1321,13 +1362,13 @@ static int add_email_targetid_to_user_intercept_list(
                 strlen(found->origaddress), found);
     }
 
-    HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len, intref);
+    HASH_FIND(hh, found->intlist, em->common.liid_key, em->common.liid_key_len, intref);
     if (!intref) {
         intref = calloc(1, sizeof(email_intercept_ref_t));
         intref->em = em;
 
-        HASH_ADD_KEYPTR(hh, found->intlist, em->common.liid,
-                em->common.liid_len, intref);
+        HASH_ADD_KEYPTR(hh, found->intlist, em->common.liid_key,
+                em->common.liid_key_len, intref);
     }
     return 0;
 }
@@ -1358,13 +1399,13 @@ static int add_email_address_to_user_intercept_list(
                 strlen(found->emailaddr), found);
     }
 
-    HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len, intref);
+    HASH_FIND(hh, found->intlist, em->common.liid_key, em->common.liid_key_len, intref);
     if (!intref) {
         intref = calloc(1, sizeof(email_intercept_ref_t));
         intref->em = em;
 
-        HASH_ADD_KEYPTR(hh, found->intlist, em->common.liid,
-                em->common.liid_len, intref);
+        HASH_ADD_KEYPTR(hh, found->intlist, em->common.liid_key,
+                em->common.liid_key_len, intref);
     }
     return 0;
 }
@@ -1465,8 +1506,8 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
                 found);
     }
 
-    HASH_FIND(hh_user, found->intlist, ipint->common.liid,
-            ipint->common.liid_len, check);
+    HASH_FIND(hh_user, found->intlist, ipint->common.liid_key,
+            ipint->common.liid_key_len, check);
     if (check) {
         logger(LOG_INFO,
                 "OpenLI: user %s already has an intercept with ID %s?",
@@ -1474,8 +1515,8 @@ int add_intercept_to_user_intercept_list(user_intercept_list_t **ulist,
         return -1;
     }
 
-    HASH_ADD_KEYPTR(hh_user, found->intlist, ipint->common.liid,
-            ipint->common.liid_len, ipint);
+    HASH_ADD_KEYPTR(hh_user, found->intlist, ipint->common.liid_key,
+            ipint->common.liid_key_len, ipint);
     return 0;
 }
 
@@ -1498,7 +1539,7 @@ int remove_intercept_from_email_user_intercept_list(
             strlen(tgt->address), found);
 
     if (found) {
-        HASH_FIND(hh, found->intlist, em->common.liid, em->common.liid_len,
+        HASH_FIND(hh, found->intlist, em->common.liid_key, em->common.liid_key_len,
                 existing);
         if (!existing) {
             return 0;
@@ -1526,7 +1567,7 @@ int remove_intercept_from_email_user_intercept_list(
     HASH_FIND(hh_sha, ulist->targets, tgt->sha512, strlen(tgt->sha512),
             sha_ref);
     if (sha_ref) {
-        HASH_FIND(hh, sha_ref->intlist, em->common.liid, em->common.liid_len,
+        HASH_FIND(hh, sha_ref->intlist, em->common.liid_key, em->common.liid_key_len,
                 existing);
         if (!existing) {
             return 0;
@@ -1576,8 +1617,8 @@ int remove_intercept_from_user_intercept_list(user_intercept_list_t **ulist,
         return 0;
     }
 
-    HASH_FIND(hh_user, found->intlist, ipint->common.liid,
-            ipint->common.liid_len, existing);
+    HASH_FIND(hh_user, found->intlist, ipint->common.liid_key,
+            ipint->common.liid_key_len, existing);
     if (!existing) {
         return 0;
     }

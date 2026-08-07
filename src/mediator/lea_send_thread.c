@@ -737,7 +737,7 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd) {
     if (r < 0) {
         logger(LOG_INFO,
                 "OpenLI Mediator: WARNING failed to add %s -> %s to LIID map",
-                toadd->liid, state->agencyid);
+                toadd->liid_key, state->agencyid);
         return -1;
     }
 
@@ -750,15 +750,15 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd) {
 
     /* Register to consume from the LIID's internal RMQ queues */
     if ((register_mediator_iri_RMQ_consumer(
-                    state->agency.hi2->rmq_consumer, toadd->liid) < 0) ||
+                    state->agency.hi2->rmq_consumer, toadd->liid_key) < 0) ||
             (register_mediator_cc_RMQ_consumer(state->agency.hi3->rmq_consumer,
-                    toadd->liid) < 0)) {
+                    toadd->liid_key) < 0)) {
         logger(LOG_INFO,
             "OpenLI Mediator: WARNING failed to register RMQ for LIID %s -> %s",
-            toadd->liid, state->agencyid);
+            toadd->liid_key, state->agencyid);
     } else {
         logger(LOG_INFO, "OpenLI Mediator: added %s -> %s to LIID map",
-                toadd->liid, state->agencyid);
+                toadd->liid_key, state->agencyid);
     }
     return 1;
 }
@@ -911,12 +911,18 @@ static void publish_hi1_notification(lea_thread_state_t *state,
     payload_encryption_method_t encmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
     char *operatorid = NULL;
     char *shortoperatorid = NULL;
+    char liid_key[2048];
 
     if (!ndata) {
         return;
     }
 
-    liidmap = lookup_liid_agency_mapping(&(state->active_liids), ndata->liid);
+    if (ndata->liid == NULL || ndata->authcc == NULL) {
+        goto freehi1;
+    }
+
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", ndata->authcc, ndata->liid);
+    liidmap = lookup_liid_agency_mapping(&(state->active_liids), liid_key);
     if (!liidmap) {
         goto freehi1;
     }
@@ -1109,7 +1115,7 @@ static int process_agency_messages(lea_thread_state_t *state) {
                  * from our current handovers so we don't steal records for
                  * it and send them to the wrong agency.
                  */
-                purge_lea_liid_mapping(state, added->liid);
+                purge_lea_liid_mapping(state, added->liid_key);
             } else {
                 /* If the agency ID matches ours, then we should add it to
                  * our handovers.
@@ -1118,6 +1124,7 @@ static int process_agency_messages(lea_thread_state_t *state) {
             }
 
             free(added->liid);
+            free(added->liid_key);
             free(added->agencyid);
             free(added);
         }

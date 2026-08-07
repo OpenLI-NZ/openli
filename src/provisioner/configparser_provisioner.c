@@ -451,6 +451,7 @@ static int add_intercept_static_ips(static_ipranges_t **statics,
         newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
         newr->rangestr = NULL;
         newr->liid = NULL;
+        newr->authcc = NULL;
         newr->awaitingconfirm = 1;
         newr->cin = 1;
 
@@ -991,6 +992,8 @@ static inline void init_intercept_common(intercept_common_t *common,
     common->liid = NULL;
     common->liid_format = OPENLI_LIID_FORMAT_ASCII;
     common->liid_len = 0;
+    common->liid_key = NULL;
+    common->liid_key_len = 0;
     common->authcc = NULL;
     common->authcc_len = 0;
     common->delivcc = NULL;
@@ -1087,8 +1090,16 @@ static int parse_emailintercept_list(emailintercept_t **mailints,
                 tgtcount > 0 &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
-            HASH_ADD_KEYPTR(hh_liid, *mailints, newcept->common.liid,
-                    newcept->common.liid_len, newcept);
+            char keyerr[256];
+            if (set_intercept_liid_key(&(newcept->common), keyerr,
+                    sizeof(keyerr)) < 0) {
+                logger(LOG_INFO, "OpenLI: invalid Email intercept configuration for '%s': %s -- skipping.",
+                        newcept->common.liid, keyerr);
+                free_single_emailintercept(newcept);
+                continue;
+            }
+            HASH_ADD_KEYPTR(hh_liid, *mailints, newcept->common.liid_key,
+                    newcept->common.liid_key_len, newcept);
         } else {
             logger(LOG_INFO, "OpenLI: Email Intercept configuration was incomplete -- skipping.");
             free_single_emailintercept(newcept);
@@ -1160,8 +1171,16 @@ static int parse_voipintercept_list(voipintercept_t **voipints,
                     newcept->common.xid_count > 0) &&
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
-            HASH_ADD_KEYPTR(hh_liid, *voipints, newcept->common.liid,
-                    newcept->common.liid_len, newcept);
+            char keyerr[256];
+            if (set_intercept_liid_key(&(newcept->common), keyerr,
+                    sizeof(keyerr)) < 0) {
+                logger(LOG_INFO, "OpenLI: invalid VOIP intercept configuration for '%s': %s -- skipping.",
+                        newcept->common.liid, keyerr);
+                free_single_voipintercept(newcept);
+                continue;
+            }
+            HASH_ADD_KEYPTR(hh_liid, *voipints, newcept->common.liid_key,
+                    newcept->common.liid_key_len, newcept);
         } else {
             logger(LOG_INFO, "OpenLI: VOIP Intercept configuration was incomplete -- skipping.");
             free_single_voipintercept(newcept);
@@ -1316,14 +1335,23 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                 newcept->common.destid > 0 &&
                 newcept->common.targetagency != NULL) {
 
+            char keyerr[256];
+            if (set_intercept_liid_key(&(newcept->common), keyerr,
+                    sizeof(keyerr)) < 0) {
+                logger(LOG_INFO, "OpenLI: invalid IP intercept configuration for '%s': %s -- skipping.",
+                        newcept->common.liid, keyerr);
+                free_single_ipintercept(newcept);
+                continue;
+            }
+
             /* Default to matching against both RADIUS username and CSID */
             if (!radchosen) {
                 newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_CSID);
                 newcept->options |= (1 << OPENLI_IPINT_OPTION_RADIUS_IDENT_USER);
             }
 
-            HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid,
-                    newcept->common.liid_len, newcept);
+            HASH_ADD_KEYPTR(hh_liid, *ipints, newcept->common.liid_key,
+                    newcept->common.liid_key_len, newcept);
         } else {
             if (newcept->username == NULL) {
                 logger(LOG_INFO, "OpenLI: provisioner configuration error: 'user' must be specified for an IP intercept");

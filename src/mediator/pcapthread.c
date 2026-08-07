@@ -333,21 +333,28 @@ pcaptraceerr:
  */
 static active_pcap_output_t *create_new_pcap_output(
         lea_thread_state_t *state, pcap_thread_state_t *pstate,
-        char *liid) {
+        char *liid, char *liid_key) {
 
     active_pcap_output_t *act;
 
     HASH_FIND(hh, pstate->active, liid, strlen(liid), act);
     if (act) {
+        if (strcmp(act->liid_key, liid_key) != 0) {
+            logger(LOG_INFO,
+                    "OpenLI Mediator: WARNING two pcapdisk intercepts (%s and %s) share the LIID %s -- their packets will be written into the same pcap files.",
+                    act->liid_key, liid_key, liid);
+        }
         return act;
     }
 
     act = (active_pcap_output_t *)malloc(sizeof(active_pcap_output_t));
     act->liid = strdup(liid);
+    act->liid_key = strdup(liid_key);
     act->uri = NULL;
 
     if (open_pcap_output_file(state, pstate, act) == -1) {
         free(act->liid);
+        free(act->liid_key);
         if (act->uri) {
             free(act->uri);
         }
@@ -375,6 +382,7 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
     active_pcap_output_t *pcapout;
     uint32_t pdulen;
     unsigned char liidspace[2048];
+    char *liidstart;
     uint16_t liidlen;
     uint8_t *pktdata;
 
@@ -390,8 +398,8 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
         return sizeof(uint32_t);
     }
 
-    /* Next is the LIID, which is encoded as a 2 byte size field followed
-     * by the LIID string itself (not null-terminated)
+    /* Next is the intercept key, which is encoded as a 2 byte size field
+     * followed by the key string itself (not null-terminated)
      */
     extract_liid_from_exported_msg(nextrec, bufrem, liidspace, 2048, &liidlen);
 
@@ -401,8 +409,14 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
         logger(LOG_INFO, "OpenLI Mediator: raw IP packet is too large to write as a pcap packet, possibly corrupt");
         return pdulen + sizeof(uint32_t);
     }
-    HASH_FIND(hh, pstate->active, liidspace,
-            strlen((const char *)liidspace), pcapout);
+
+    liidstart = strchr((char *)liidspace, '-');
+    if (liidstart != NULL) {
+        liidstart ++;
+    } else {
+        liidstart = (char *)liidspace;
+    }
+    HASH_FIND(hh, pstate->active, liidstart, strlen(liidstart), pcapout);
 
     /* Hopefully, we already know about this LIID and have a pcap output
      * handle all set up and ready for it. If not, let's just skip past it.
@@ -731,6 +745,7 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
             pcapout->out = NULL;
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
+            free(pcapout->liid_key);
             if (pcapout->uri) {
                 free(pcapout->uri);
             }
@@ -771,6 +786,7 @@ static void pcap_rotate_traces(lea_thread_state_t *state,
             }
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
+            free(pcapout->liid_key);
             if (pcapout->uri) {
                 free(pcapout->uri);
             }
@@ -785,12 +801,16 @@ static void pcap_rotate_traces(lea_thread_state_t *state,
  *  @param pstate           The pcap-specific state for the thread
  *  @param liid             The LIID to disable pcap output for
  */
-static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid) {
+static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid,
+        char *liid_key) {
 
     active_pcap_output_t *pcapout;
 
     HASH_FIND(hh, pstate->active, liid, strlen(liid), pcapout);
     if (!pcapout) {
+        return;
+    }
+    if (strcmp(pcapout->liid_key, liid_key) != 0) {
         return;
     }
     logger(LOG_INFO, "OpenLI Mediator: disabling pcap output for LIID '%s'",
@@ -805,6 +825,7 @@ static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid) {
         free(pcapout->uri);
     }
     free(pcapout->liid);
+    free(pcapout->liid_key);
     free(pcapout);
 }
 
@@ -845,14 +866,14 @@ static void add_new_pcapdisk_liid(lea_thread_state_t *state,
     if (strcmp(added->agencyid, state->agencyid) != 0) {
         /* This LIID has switched to another agency, so close any
          * existing pcap output and disable the pcap-specific RMQs */
-        pcap_disable_liid(pstate, added->liid);
-        if (purge_lea_liid_mapping(state, added->liid) > 0) {
+        pcap_disable_liid(pstate, added->liid, added->liid_key);
+        if (purge_lea_liid_mapping(state, added->liid_key) > 0) {
             if (deregister_mediator_rawip_RMQ_consumer(
                         pstate->rawip_handover->rmq_consumer,
-                        added->liid) < 0) {
+                        added->liid_key) < 0) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: WARNING failed to deregister rawip RMQ for LIID %s -> %s",
-                        added->liid, state->agencyid);
+                        added->liid_key, state->agencyid);
             }
         }
     } else {
@@ -861,19 +882,21 @@ static void add_new_pcapdisk_liid(lea_thread_state_t *state,
         if (r > 0) {
             /* Only register with RMQ if this LIID is "new" */
             if (register_mediator_rawip_RMQ_consumer(
-                    pstate->rawip_handover->rmq_consumer, added->liid) < 0) {
+                    pstate->rawip_handover->rmq_consumer,
+                    added->liid_key) < 0) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: WARNING failed to register rawip RMQ for LIID %s in pcap thread",
-                        added->liid);
+                        added->liid_key);
             }
         }
-        if (create_new_pcap_output(state, pstate, added->liid)
-                == NULL) {
+        if (create_new_pcap_output(state, pstate, added->liid,
+                added->liid_key) == NULL) {
             logger(LOG_INFO, "OpenLI Mediator: failed to create new pcap output entity for LIID %s", added->liid);
         }
     }
 
     free(added->liid);
+    free(added->liid_key);
     free(added->agencyid);
     free(added);
 }

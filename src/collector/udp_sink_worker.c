@@ -526,7 +526,9 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
 
         if (msg->type == OPENLI_EXPORT_INTERCEPT_DETAILS ||
                 msg->type == OPENLI_EXPORT_INTERCEPT_CHANGED) {
-            if (strcmp(local->expectedliid, msg->data.cept.liid) != 0) {
+            if (strcmp(local->expectedliid, msg->data.cept.liid) != 0 ||
+                    (msg->data.cept.authcc &&
+                     strcmp(local->authcc, msg->data.cept.authcc) != 0)) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' was expecting to be responsible for intercept '%s', but it was provided details for '%s'?",
                         key, local->expectedliid, msg->data.cept.liid);
@@ -594,7 +596,9 @@ static int process_control_message(udp_sink_local_t *local, char *key) {
             local->cept = msg;
             local->dest_mediator = msg->destid;
         } else if (msg->type == OPENLI_EXPORT_INTERCEPT_OVER) {
-            if (strcmp(local->expectedliid, msg->data.cept.liid) != 0) {
+            if (strcmp(local->expectedliid, msg->data.cept.liid) != 0 ||
+                    (msg->data.cept.authcc &&
+                     strcmp(local->authcc, msg->data.cept.authcc) != 0)) {
                 logger(LOG_INFO,
                         "OpenLI: UDP sink worker '%s' is responsible for intercept '%s', but it was told to cease interception for '%s'?",
                         key, local->expectedliid, msg->data.cept.liid);

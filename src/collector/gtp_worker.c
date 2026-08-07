@@ -247,8 +247,8 @@ static int init_gtp_intercept(openli_gtp_worker_t *worker,
     }
 
     add_intercept_to_user_intercept_list(&worker->userintercepts, ipint);
-    HASH_ADD_KEYPTR(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, ipint);
+    HASH_ADD_KEYPTR(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, ipint);
     ipint->awaitingconfirm = 0;
 
     return 1;
@@ -301,8 +301,8 @@ static int add_new_gtp_intercept(openli_gtp_worker_t *worker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, found);
+    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, found);
 
     if (found) {
         update_modified_gtp_intercept(worker, found, ipint);
@@ -324,8 +324,8 @@ static int modify_gtp_intercept(openli_gtp_worker_t *worker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, found);
+    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, found);
     if (!found) {
         return init_gtp_intercept(worker, ipint);
     } else {
@@ -344,8 +344,8 @@ static int halt_gtp_intercept(openli_gtp_worker_t *worker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, found);
+    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, found);
     if (found) {
         remove_gtp_intercept(worker, found);
     }

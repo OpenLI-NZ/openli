@@ -47,6 +47,9 @@ static inline void free_intercept_msg(exporter_intercept_msg_t *msg) {
     if (msg->liid) {
         free(msg->liid);
     }
+    if (msg->liid_key) {
+        free(msg->liid_key);
+    }
     if (msg->authcc) {
         free(msg->authcc);
     }
@@ -330,10 +333,11 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *cept) {
 
     exporter_intercept_state_t *intstate;
+    char liid_key[2048];
 
-    /* If this LIID already exists, we'll need to replace it */
-    HASH_FIND(hh, seqdata->intercepts, cept->liid, strlen(cept->liid),
-			intstate);
+    /* If this intercept already exists, we'll need to replace it */
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", cept->authcc, cept->liid);
+    HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
 
     if (intstate) {
         remove_preencoded(seqdata, intstate);
@@ -348,11 +352,13 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->version ++;
 
     } else {
-        /* New LIID, create fresh intercept state */
+        /* New intercept, create fresh intercept state */
         intstate = (exporter_intercept_state_t *)malloc(
                 sizeof(exporter_intercept_state_t));
         intstate->details.liid = strdup(cept->liid);
         intstate->details.liid_len = strlen(cept->liid);
+        intstate->details.liid_key = strdup(liid_key);
+        intstate->details.liid_key_len = strlen(liid_key);
         intstate->cinsequencing = NULL;
         intstate->version = 0;
         intstate->encoder_index = seqdata->rr_next_encoder_assign;
@@ -360,8 +366,8 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         if (seqdata->rr_next_encoder_assign >= seqdata->encoders) {
             seqdata->rr_next_encoder_assign %= seqdata->encoders;
         }
-        HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid,
-                intstate->details.liid_len, intstate);
+        HASH_ADD_KEYPTR(hh, seqdata->intercepts, intstate->details.liid_key,
+                intstate->details.liid_key_len, intstate);
     }
 
     intstate->details.agencyid = strdup(cept->targetagency);
@@ -429,7 +435,10 @@ static int modify_tracked_intercept(seqtracker_thread_data_t *seqdata,
 
     int unused;
     exporter_intercept_state_t *intstate;
-    HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
+    char liid_key[2048];
+
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->authcc, msg->liid);
+    HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
 
     if (!intstate) {
         logger(LOG_INFO, "OpenLI collector: tracker thread was told to modify intercept LIID %s, but it is not a valid ID?",
@@ -479,8 +488,10 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     size_t index;
     int ret = 1;
     openli_encoding_job_t job;
+    char liid_key[2048];
 
-    HASH_FIND(hh, seqdata->intercepts, msg->liid, strlen(msg->liid), intstate);
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->authcc, msg->liid);
+    HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
 
     if (!intstate) {
         logger(LOG_INFO, "OpenLI collector: tracker thread was told to end intercept LIID %s, but it is not a valid ID?",
@@ -492,6 +503,7 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
      * origreq */
     memset(&job, 0, sizeof(openli_encoding_job_t));
 	job.liid = strdup(msg->liid);
+    job.authcc = strdup(msg->authcc);
 
     index = intstate->encoder_index;
     while (1) {
@@ -509,7 +521,7 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     }
 
     establish_cinstate_dbconn(seqdata);
-    cinstate_db_remove_by_liid(seqdata->cinstatedb, msg->liid);
+    cinstate_db_remove_by_liid(seqdata->cinstatedb, liid_key);
 
     HASH_DELETE(hh, seqdata->intercepts, intstate);
     free_intercept_state(seqdata, intstate);
@@ -529,6 +541,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.preencoded = intstate->preencoded;
 	job.origreq = recvd;
 	job.liid = strdup(liid);
+    job.liid_key = strdup(intstate->details.liid_key);
     job.authcc = strdup(authcc);
     job.cinstr = strdup(cinseq->cin_string);
     job.cin = (int64_t)cinseq->cin;
@@ -639,6 +652,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd) {
 
     char *liid, *authcc, *delivcc;
+    char liid_key[2048];
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
@@ -655,7 +669,8 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     cin = extract_cin_from_job(recvd);
     iritype = extract_iritype_from_job(recvd);
 
-    HASH_FIND(hh, seqdata->intercepts, liid, strlen(liid), intstate);
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", authcc, liid);
+    HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
@@ -665,7 +680,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
     if (!cinseq) {
-        char cinstr[1024];
+        char cinstr[sizeof(liid_key) + 16];
         struct cinstate_t init_cinstate;
 
         establish_cinstate_dbconn(seqdata);
@@ -677,11 +692,12 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             return -1;
         }
 
-        snprintf(cinstr, 1024, "%s-%u", liid, cin);
+        snprintf(cinstr, sizeof(cinstr), "%s-%u", liid_key, cin);
 
         memset(&init_cinstate, 0, sizeof(init_cinstate));
         if (seqdata->cinstatedb) {
-            cinstate_db_lookup(seqdata->cinstatedb, liid, cin, &init_cinstate);
+            cinstate_db_lookup(seqdata->cinstatedb, liid_key, cin,
+                    &init_cinstate);
         }
 
         cinseq->cin = cin;
@@ -700,6 +716,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             resetjob->type = OPENLI_EXPORT_CIN_RESET;
             resetjob->destid = recvd->destid;
             resetjob->data.cininfo.liid = strdup(liid);
+            resetjob->data.cininfo.authcc = strdup(authcc);
             resetjob->data.cininfo.cin = cin;
 
             generate_encoding_job(seqdata, resetjob, intstate, cinseq,
@@ -759,7 +776,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                 // If we've sent IRI end, we should probably remove this
                 // entry from the cinstate DB because a CIN Reset is
                 // going to be meaningless and/or alarmist
-                cinstate_db_remove_by_cin(seqdata->cinstatedb, liid, cin);
+                cinstate_db_remove_by_cin(seqdata->cinstatedb, liid_key, cin);
             }
         }
         seqno = &(cinseq->iri_seqno);
@@ -776,7 +793,7 @@ postencodepush:
         update_cinstate.cc_seqno = cinseq->cc_seqno;
 
         if (seqdata->cinstate_enabled) {
-            if (cinstate_db_update(seqdata->cinstatedb, liid, cin,
+            if (cinstate_db_update(seqdata->cinstatedb, liid_key, cin,
                     &update_cinstate) < 0) {
                 seqdata->cinstate_enabled = 0;
                 cinstate_db_close(&(seqdata->cinstatedb));
@@ -841,8 +858,14 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                     // a worker has determined that a CIN is no longer
                     // active for a session where an IRI End is not suitable
                     // e.g. SIP REGISTER exchanges
-                    cinstate_db_remove_by_cin(seqdata->cinstatedb,
-                            job->data.cininfo.liid, job->data.cininfo.cin);
+                    {
+                        char closekey[2048];
+                        snprintf(closekey, sizeof(closekey), "%s-%s",
+                                job->data.cininfo.authcc,
+                                job->data.cininfo.liid);
+                        cinstate_db_remove_by_cin(seqdata->cinstatedb,
+                                closekey, job->data.cininfo.cin);
+                    }
                     free_published_message(job);
                     break;
 

@@ -310,10 +310,10 @@ int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
         const char *port, const char *identifier, uint64_t ts,
         openli_proto_msgtype_t msgtype);
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid, uint8_t *encryptkey, size_t encryptlen,
+        char *liid, char *authcc, uint8_t *encryptkey, size_t encryptlen,
         payload_encryption_method_t method, openli_liid_format_t liidformat);
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
-        int liid_len);
+        int liid_len, char *authcc, int authcc_len);
 int push_disconnect_mediators_onto_net_buffer(net_buffer_t *nb);
 int push_coreserver_onto_net_buffer(net_buffer_t *nb, coreserver_t *cs,
         uint8_t cstype);
@@ -393,26 +393,27 @@ int decode_lea_withdrawal(uint8_t *msgbody, uint16_t len, liagency_t *lea);
 int decode_lea_digest_config(uint8_t *msgbody, uint16_t len, char **agencyid,
         liagency_digest_config_t **digest, char **operatorid);
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid, uint8_t *encryptkey, size_t *encryptlen,
+        char **liid, char **authcc, uint8_t *encryptkey, size_t *encryptlen,
         payload_encryption_method_t *method,
         openli_liid_format_t *liidformat);
 int decode_udp_sink(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, char **identifier, uint64_t *ts);
 int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
         char **port, uint64_t *ts, uint8_t *isactive);
-int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid);
+int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid,
+        char **authcc);
 int decode_coreserver_announcement(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);
 int decode_coreserver_withdraw(uint8_t *msgbody, uint16_t len,
         coreserver_t *cs);
 int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
-        openli_sip_identity_t *sipid, char *liidspace, int spacelen);
+        openli_sip_identity_t *sipid, char *keyspace, int spacelen);
 int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
-        openli_sip_identity_t *sipid, char *liidspace, int spacelen);
+        openli_sip_identity_t *sipid, char *keyspace, int spacelen);
 int decode_email_target_announcement(uint8_t *msgbody, uint16_t len,
-        email_target_t *tgt, char *liidspace, int spacelen);
+        email_target_t *tgt, char *keyspace, int spacelen);
 int decode_email_target_withdraw(uint8_t *msgbody, uint16_t len,
-        email_target_t *tgt, char *liidspace, int spacelen);
+        email_target_t *tgt, char *keyspace, int spacelen);
 int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
         static_ipranges_t *ipr);
 int decode_staticip_removal(uint8_t *msgbody, uint16_t len,

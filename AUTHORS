@@ -22,7 +22,7 @@ In no particular order, we would like to thank the following people:
  * NETPLANET GmbH for contributing code to support the "sipusesessiondir"
    configuration option (AT-specific requirement)
  * Pawel Jablonski for contributing a number of performance improvements.
- * Jason van der Schyff for contributing bug fixes to our TLS integration.
+ * Jason Van der Schyff for contributing bug fixes to our TLS integration.
  * Laura Domínguez Céspedes for adding support for PQC TLS.
 
 Apologies to anyone that has made a contribution but we've forgotten to

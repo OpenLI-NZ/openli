@@ -45,7 +45,7 @@ static inline void remove_time_event(Pvoid_t *timeevents,
         return;
     }
 
-    HASH_FIND(hh, timeentry->events, common->liid, common->liid_len, found);
+    HASH_FIND(hh, timeentry->events, common->liid_key, common->liid_key_len, found);
     if (!found) {
         return;
     }
@@ -82,7 +82,7 @@ static inline void add_time_event(Pvoid_t *timeevents, void *intercept,
         *pval = (Word_t)timeentry;
     }
 
-    HASH_FIND(hh, timeentry->events, common->liid, common->liid_len, found);
+    HASH_FIND(hh, timeentry->events, common->liid_key, common->liid_key_len, found);
     if (found) {
         HASH_DELETE(hh, timeentry->events, found);
         free(found->liid);
@@ -91,9 +91,9 @@ static inline void add_time_event(Pvoid_t *timeevents, void *intercept,
     found = calloc(1, sizeof(struct upcoming_intercept_event));
     found->event_type = evtype;
     found->intercept = intercept;
-    found->liid = strdup(common->liid);
+    found->liid = strdup(common->liid_key);
 
-    HASH_ADD_KEYPTR(hh, timeentry->events, found->liid, common->liid_len,
+    HASH_ADD_KEYPTR(hh, timeentry->events, found->liid, common->liid_key_len,
             found);
 }
 
