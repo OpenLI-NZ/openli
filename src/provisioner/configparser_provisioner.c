@@ -693,6 +693,8 @@ static int parse_ipcc_prefix_filters(prov_intercept_conf_t *state,
             }
             HASH_ADD_KEYPTR(hh, state->ipcc_filters, pfxflt->group_name,
                     strlen(pfxflt->group_name), pfxflt);
+        } else {
+            destroy_ipcc_prefix_filter(pfxflt);
         }
     }
     return 0;
