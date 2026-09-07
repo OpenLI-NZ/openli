@@ -588,14 +588,12 @@ struct ipsession {
     uint32_t nextseqno;
     internet_access_method_t accesstype;
 
-    openli_cc_prefix_filter_t *cc_exclude_tries;
     intercept_common_t common;
     UT_hash_handle hh;
 };
 
 struct vendmirror_intercept {
     uint32_t sessionid;
-    openli_cc_prefix_filter_t *cc_exclude_tries;
     intercept_common_t common;
     UT_hash_handle hh;
 };
@@ -613,7 +611,6 @@ struct staticipsession {
     uint32_t cin;
     uint32_t nextseqno;
     uint32_t references;
-    openli_cc_prefix_filter_t *cc_exclude_tries;
     UT_hash_handle hh;
 };
 

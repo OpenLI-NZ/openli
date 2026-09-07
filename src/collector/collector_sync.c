@@ -2136,6 +2136,7 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     }
 
     push_ipintercept_halt_to_threads(sync, ipint);
+    push_cc_exclude_withdraw(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
     if (ipint->username) {
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
@@ -2245,11 +2246,19 @@ static int update_modified_intercept(collector_sync_t *sync,
         if (ipint->cc_exclude_count == 0) {
             // tell collector local threads to remove the filter without
             // replacement
+            if (ipint->cc_exclude_tries) {
+                openli_cc_prefix_filter_release(ipint->cc_exclude_tries);
+                ipint->cc_exclude_tries = NULL;
+            }
             push_cc_exclude_withdraw(sync, ipint);
         } else {
             replace = construct_openli_cc_prefix_filter(ipint,
                     HASH_CNT(hh, (sync_sendq_t *)sync->glob->collector_queues));
             if (replace) {
+                if (ipint->cc_exclude_tries) {
+                    openli_cc_prefix_filter_release(ipint->cc_exclude_tries);
+                }
+                ipint->cc_exclude_tries = replace;
                 push_cc_exclude_tries(sync, ipint);
             }
         }

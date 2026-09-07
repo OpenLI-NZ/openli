@@ -44,7 +44,10 @@ static inline openli_cc_prefix_filter_t *cisco_lookup_cc_prefix_filter(
     cc_prefix_exclusion_map_t *found;
 
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
-    return found->cc_exclude;
+    if (found) {
+        return found->cc_exclude;
+    }
+    return NULL;
 }
 
 static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {

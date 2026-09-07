@@ -529,7 +529,6 @@ void handle_halt_ipmmintercept(colthread_local_t *loc,
 }
 
 void handle_halt_ipintercept(colthread_local_t *loc, ipsession_t *sess) {
-    cc_prefix_exclusion_map_t *found;
 
     if (sess->ai_family == AF_INET) {
         remove_ipv4_intercept(loc, sess);
@@ -539,13 +538,6 @@ void handle_halt_ipintercept(colthread_local_t *loc, ipsession_t *sess) {
         logger(LOG_INFO,
                  "OpenLI: invalid address family for new IP intercept: %d",
                  sess->ai_family);
-    }
-    HASH_FIND(hh, loc->ipcc_filters, sess->common.liid,
-            strlen(sess->common.liid), found);
-    if (found) {
-        HASH_DELETE(hh, loc->ipcc_filters, found);
-        openli_cc_prefix_filter_release(found->cc_exclude);
-        free(found);
     }
     free_single_ipsession(sess);
 }

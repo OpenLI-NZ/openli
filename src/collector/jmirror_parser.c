@@ -50,7 +50,10 @@ static inline openli_cc_prefix_filter_t *jmirror_lookup_cc_prefix_filter(
     cc_prefix_exclusion_map_t *found;
 
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
-    return found->cc_exclude;
+    if (found) {
+        return found->cc_exclude;
+    }
+    return NULL;
 }
 
 uint8_t *decode_jmirror_from_udp_payload(uint8_t *payload, uint32_t plen,

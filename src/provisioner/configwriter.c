@@ -919,6 +919,7 @@ static int emit_ipcc_prefix_filters(ipcc_prefix_filter_t *filters,
             yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
                     (yaml_char_t *)flt->pfx_cidrs[i], strlen(flt->pfx_cidrs[i]),
                     1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
         }
         yaml_sequence_end_event_initialize(&event);
         if (!yaml_emitter_emit(emitter, &event)) return -1;

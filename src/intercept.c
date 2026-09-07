@@ -816,8 +816,8 @@ size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept) {
     size_t total = 0;
     size_t i;
 
-    for (i = 0; i < cept->cc_exclude_group_count; i++) {
-        total += strlen(cept->cc_exclude_groups[i]) + 4;
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        total += strlen(cept->cc_exclude_cidrs[i]) + 4;
     }
     return total;
 }
