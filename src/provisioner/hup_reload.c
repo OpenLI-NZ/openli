@@ -392,21 +392,6 @@ endxidcheck:
     return ret;
 }
 
-static int reload_ipcc_prefix_filter_groups(prov_intercept_conf_t *curr,
-        prov_intercept_conf_t *latest) {
-
-    ipcc_prefix_filter_t *flt, *tmp;
-
-    HASH_ITER(hh, curr->ipcc_filters, flt, tmp) {
-        HASH_DELETE(hh, curr->ipcc_filters, flt);
-        destroy_ipcc_prefix_filter(flt);
-    }
-
-    curr->ipcc_filters = latest->ipcc_filters;
-    latest->ipcc_filters = NULL;
-    return 0;
-}
-
 static int reload_leas(provision_state_t *state, prov_intercept_conf_t *curr,
         prov_intercept_conf_t *latest) {
 
@@ -976,7 +961,7 @@ static int reload_ipintercepts(provision_state_t *currstate,
                 return -1;
             }
 
-            if (!intsame && !droppedcols) {
+            if ((!intsame || pfxfilterchanged) && !droppedcols) {
                 modify_existing_intercept_options(currstate, (void *)newequiv,
                         OPENLI_PROTO_MODIFY_IPINTERCEPT);
             }
@@ -1097,11 +1082,6 @@ static int reload_intercept_config(provision_state_t *currstate,
         {
             return -1;
         }
-    }
-
-    if (reload_ipcc_prefix_filter_groups(&(currstate->interceptconf),
-            &(newconf)) < 0) {
-        return -1;
     }
 
 	if (reload_voipintercepts(currstate,
