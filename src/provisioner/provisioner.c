@@ -178,6 +178,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->udp_sink_intercept_mappings = NULL;
     state->destroy_pending = 0;
     state->was_encrypted = 0;
+    state->ipcc_filters = NULL;
     state->default_email_deliver_compress =
             OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
     pthread_mutex_init(&(state->safelock), NULL);
