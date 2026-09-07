@@ -248,18 +248,14 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         free_etsili_generics(enc->freegenerics);
     }
 
-    do {
-        x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t), 0);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                continue;
-            }
-            break;
-        }
+
+    while ((x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t),
+            ZMQ_DONTWAIT)) > 0) {
+
         destroy_encoding_job(&job, 1);
         drained ++;
 
-    } while (x > 0);
+    }
     zmq_close(enc->zmq_recvjob);
 
     remove_openli_fdevent(enc->zmq_job_ev);
