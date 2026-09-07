@@ -1750,13 +1750,29 @@ static void resolve_ipcc_prefix_filters(prov_intercept_conf_t *conf) {
     size_t i, j;
 
     HASH_ITER(hh_liid, conf->ipintercepts, ipint, ipinttmp) {
-        for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+        i = 0;
+        while (i < ipint->cc_exclude_group_count) {
             char *name = ipint->cc_exclude_groups[i];
+            if (name == NULL) {
+                i++;
+                continue;
+            }
             HASH_FIND(hh, conf->ipcc_filters, name, strlen(name), found);
 
             if (!found) {
+                size_t k;
                 logger(LOG_INFO, "OpenLI: WARNING, IPCC prefix filter group '%s' was configured for IP intercept '%s', but no such group exists?",
                         name, ipint->common.liid);
+                // remove the group from the intercept, so that we don't have
+                // dangling references -- compress the existing array rather
+                // than leaving a hole as this ends up being cleaner in other
+                // contexts (e.g. an accurate cc_exclude_group_count value)
+                free(ipint->cc_exclude_groups[i]);
+                for (k = i; k < ipint->cc_exclude_group_count - 1; k++) {
+                    ipint->cc_exclude_groups[k] =
+                            ipint->cc_exclude_groups[k + 1];
+                }
+                ipint->cc_exclude_group_count--;
                 continue;
             }
 
@@ -1769,6 +1785,7 @@ static void resolve_ipcc_prefix_filters(prov_intercept_conf_t *conf) {
                     }
                 }
             }
+            i++;
         }
     }
 
