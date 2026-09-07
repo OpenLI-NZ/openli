@@ -38,6 +38,15 @@ typedef struct ciscomirror_hdr {
     uint32_t interceptid;
 } PACKED ciscomirror_hdr_t;
 
+static inline openli_cc_prefix_filter_t *cisco_lookup_cc_prefix_filter(
+        colthread_local_t *loc, char *liid) {
+
+    cc_prefix_exclusion_map_t *found;
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    return found->cc_exclude;
+}
+
 static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {
 
     return ntohl(hdr->interceptid);
@@ -91,9 +100,9 @@ int generate_cc_from_cisco(colthread_local_t *loc,
     void *payload;
     uint8_t *l3;
     uint32_t rem, cept_id, bodylen;
-    uint64_t packet_mask;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
+    openli_cc_prefix_filter_t *cc_exclude;
 
     payload = get_udp_payload(packet, &rem, NULL, NULL);
     l3 = decode_cisco_from_udp_payload(payload, rem, &cept_id, &bodylen);
@@ -106,9 +115,6 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         return 0;
     }
 
-    packet_mask = openli_cc_prefix_filter_match_l3(
-            loc->ipcc_prefix_filter, l3, bodylen);
-
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
             continue;
@@ -117,9 +123,12 @@ int generate_cc_from_cisco(colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
-        if (packet_mask != 0 &&
-                (packet_mask & cept->cc_exclude_mask) != 0) {
-            continue;
+
+        cc_exclude = cisco_lookup_cc_prefix_filter(loc, cept->common.liid);
+        if (cc_exclude) {
+            if (openli_cc_prefix_filter_match_l3(cc_exclude, l3, bodylen)) {
+                continue;
+            }
         }
 
         /* Create an appropriate IPCC and export it */

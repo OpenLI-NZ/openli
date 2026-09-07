@@ -39,37 +39,14 @@
 #include "etsili_core.h"
 #include "ipcc.h"
 
-#if 0
-static inline uint64_t packet_cc_exclude_mask(packet_info_t *pinfo,
-        int family, colthread_local_t *loc) {
-    const void *src;
-    const void *dst;
-    uint64_t mask;
+static inline openli_cc_prefix_filter_t *lookup_cc_prefix_filter(
+        colthread_local_t *loc, char *liid) {
 
-    if (loc->ipcc_prefix_filter == NULL) {
-        return 0;
-    }
+    cc_prefix_exclusion_map_t *found;
 
-    if (family == AF_INET) {
-        src = &((struct sockaddr_in *)&pinfo->srcip)->sin_addr;
-        dst = &((struct sockaddr_in *)&pinfo->destip)->sin_addr;
-    } else {
-        src = &((struct sockaddr_in6 *)&pinfo->srcip)->sin6_addr;
-        dst = &((struct sockaddr_in6 *)&pinfo->destip)->sin6_addr;
-    }
-
-    mask = openli_cc_prefix_filter_match(loc->ipcc_prefix_filter,
-            family, src);
-    mask |= openli_cc_prefix_filter_match(loc->ipcc_prefix_filter,
-            family, dst);
-    return mask;
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    return found->cc_exclude;
 }
-
-static inline int suppress_ipcc(uint64_t packet_mask,
-        uint64_t intercept_mask) {
-    return packet_mask != 0 && (packet_mask & intercept_mask) != 0;
-}
-#endif
 
 static inline static_ipcache_t *find_static_cached(prefix_t *prefix,
         colthread_local_t *loc) {
@@ -118,6 +95,7 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
     prefix_t prefix;
     openli_export_recv_t *msg;
     static_ipcache_t *cached = NULL;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
 
     memset(&prefix, 0, sizeof(prefix_t));
 
@@ -175,12 +153,22 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                     continue;
                 }
 
-#if 0
-                if (suppress_ipcc(packet_mask,
-                        matchsess->cc_exclude_mask)) {
-                    continue;
+                if (matchsess->common.liid) {
+                    cc_exclude = lookup_cc_prefix_filter(loc,
+                            matchsess->common.liid);
+                    if (cc_exclude) {
+                        void *address;
+                        if (family == AF_INET6) {
+                            address = &(prefix.add.sin6.s6_addr);
+                        } else {
+                            address = &(prefix.add.sin.s_addr);
+                        }
+                        if (openli_cc_prefix_filter_match(cc_exclude,
+                                    family, address)) {
+                            continue;
+                        }
+                    }
                 }
-#endif
 
                 matched ++;
                 if (matchsess->common.targetagency == NULL ||
@@ -214,6 +202,7 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
     openli_export_recv_t *msg;
     ipv6_target_t *tgt;
     ipsession_t *sess, *tmp;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
 
     memset(&prefix, 0, sizeof(prefix_t));
     memcpy(&(prefix.add.sin6), &(cmp->sin6_addr), 16);
@@ -250,12 +239,17 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                         continue;
                     }
 
-#if 0
-                    if (suppress_ipcc(packet_mask,
-                            sess->cc_exclude_mask)) {
-                        continue;
+                    if (sess->common.liid) {
+                        cc_exclude = lookup_cc_prefix_filter(loc,
+                                sess->common.liid);
+                        if (cc_exclude) {
+                            if (openli_cc_prefix_filter_match(cc_exclude,
+                                        AF_INET6,
+                                        &(cmp->sin6_addr.s6_addr))) {
+                                continue;
+                            }
+                        }
                     }
-#endif
 
                     *matched = ((*matched) + 1);
                     if (sess->common.targetagency == NULL ||
@@ -324,6 +318,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     int matched = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
 
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
@@ -341,6 +336,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+
             if (sess->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
                 continue;
             }
@@ -353,11 +349,15 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 continue;
             }
 
-#if 0
-            if (suppress_ipcc(packet_mask, sess->cc_exclude_mask)) {
-                continue;
+            if (sess->common.liid) {
+                cc_exclude = lookup_cc_prefix_filter(loc, sess->common.liid);
+                if (cc_exclude) {
+                    if (openli_cc_prefix_filter_match(cc_exclude, AF_INET,
+                            &(cmp->sin_addr.s_addr))) {
+                        continue;
+                    }
+                }
             }
-#endif
 
             matched ++;
             if (sess->common.targetagency == NULL ||
@@ -398,11 +398,15 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 continue;
             }
 
-#if 0
-            if (suppress_ipcc(packet_mask, sess->cc_exclude_mask)) {
-                continue;
+            if (sess->common.liid) {
+                cc_exclude = lookup_cc_prefix_filter(loc, sess->common.liid);
+                if (cc_exclude) {
+                    if (openli_cc_prefix_filter_match(cc_exclude, AF_INET,
+                            &(cmp->sin_addr.s_addr))) {
+                        continue;
+                    }
+                }
             }
-#endif
 
             matched ++;
             if (sess->common.targetagency == NULL ||

@@ -164,9 +164,10 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 collector/etsiencoding/hi1notification.c \
                 collector/etsiencoding/encryptcontainer.c \
                 collector/etsiencoding/templating.c \
+                collector/cc_prefix_filter.c collector/cc_prefix_filter.h \
                 coreserver.c coreserver.h
-openlimediator_LDADD = @ADD_LIBS@
-openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
+openlimediator_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
+openlimediator_LDFLAGS=-lpthread -lpatricia @MEDIATOR_LIBS@
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 
