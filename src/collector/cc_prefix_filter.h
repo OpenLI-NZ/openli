@@ -18,15 +18,12 @@
 
 #include "intercept.h"
 
-#define OPENLI_CC_PREFIX_FILTER_MAX_GROUPS 64
-
 typedef enum openli_cc_prefix_filter_result {
     OPENLI_CC_PREFIX_FILTER_OK = 0,
     OPENLI_CC_PREFIX_FILTER_DUPLICATE = 1,
     OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT = -1,
     OPENLI_CC_PREFIX_FILTER_NO_MEMORY = -2,
     OPENLI_CC_PREFIX_FILTER_OVERLAP = -3,
-    OPENLI_CC_PREFIX_FILTER_FINALISED = -4
 } openli_cc_prefix_filter_result_t;
 
 /*
@@ -65,21 +62,6 @@ openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
         openli_cc_prefix_filter_t *filter, char *cidr);
 
 /*
- * Add a binary IPv4 or IPv6 prefix to a filter group.
- *
- * family must be AF_INET or AF_INET6. address must point to struct in_addr
- * or struct in6_addr respectively. group_id must be in the range 0..63.
- * Host bits in address are cleared before the prefix is inserted.
- *
- * Prefixes belonging to different groups may not overlap. Re-adding the
- * exact same prefix to the same group returns
- * OPENLI_CC_PREFIX_FILTER_DUPLICATE.
- */
-openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(
-        openli_cc_prefix_filter_t *filter, int family, const void *address,
-        uint8_t prefix_length, uint8_t group_id);
-
-/*
  * Prevent further modifications to filter. After successful finalisation,
  * concurrent lookups are safe because the Patricia tries are immutable.
  */
@@ -89,8 +71,7 @@ openli_cc_prefix_filter_result_t openli_cc_prefix_filter_finalise(
 /*
  * Return the group mask for the longest prefix matching address.
  *
- * A return value of zero means that no configured prefix matched. The
- * filter must have been finalised before this function is called. Invalid
+ * A return value of zero means that no configured prefix matched. Invalid
  * arguments also return zero.
  */
 uint64_t openli_cc_prefix_filter_match(
@@ -105,14 +86,6 @@ uint64_t openli_cc_prefix_filter_match(
 uint64_t openli_cc_prefix_filter_match_l3(
         const openli_cc_prefix_filter_t *filter, const void *l3,
         uint32_t l3len);
-
-/* Return the number of configured prefixes for an address family. */
-size_t openli_cc_prefix_filter_count(
-        const openli_cc_prefix_filter_t *filter, int family);
-
-/* Return non-zero after the filter has been finalised. */
-int openli_cc_prefix_filter_is_finalised(
-        const openli_cc_prefix_filter_t *filter);
 
 const char *openli_cc_prefix_filter_result_string(
         openli_cc_prefix_filter_result_t result);

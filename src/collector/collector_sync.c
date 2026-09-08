@@ -2022,16 +2022,6 @@ static openli_cc_prefix_filter_t *construct_openli_cc_prefix_filter(
         }
     }
 
-    res = openli_cc_prefix_filter_finalise(tries);
-    if (res != OPENLI_CC_PREFIX_FILTER_OK) {
-        logger(LOG_INFO,
-                "OpenLI collector: unable to finalise IPCC filter for LIID %s: %s",
-                cept->common.liid,
-                openli_cc_prefix_filter_result_string(res));
-        openli_cc_prefix_filter_destroy(tries);
-        return NULL;
-    }
-
     return tries;
 }
 

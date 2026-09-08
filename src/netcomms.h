@@ -259,7 +259,6 @@ typedef enum {
     OPENLI_PROTO_FIELD_OPERATORID,
     OPENLI_PROTO_FIELD_SHORTOPERATORID,
     OPENLI_PROTO_FIELD_ISACTIVE,
-    OPENLI_PROTO_FIELD_IPCC_EXCLUDE_GROUP,
     OPENLI_PROTO_FIELD_IPCC_EXCLUDE_PREFIX,
 } openli_proto_fieldtype_t;
 /* XXX one day we may need to separate these field types into distinct

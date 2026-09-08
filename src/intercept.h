@@ -227,7 +227,6 @@ typedef struct cc_exclude_tries {
     patricia_tree_t *ipv6;
     size_t ipv4_count;
     size_t ipv6_count;
-    int finalised;
     int refcnt;
     char *liid;
 } openli_cc_prefix_filter_t;

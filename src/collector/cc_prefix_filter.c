@@ -212,21 +212,7 @@ void openli_cc_prefix_filter_release(openli_cc_prefix_filter_t *filter) {
     }
 }
 
-openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
-        openli_cc_prefix_filter_t *filter, char *cidr) {
-    uint8_t address[INET6_ADDRSTRLEN];
-    uint8_t pfxlen;
-    int family;
-
-    if (parse_ipcc_prefix(cidr, &family, address, &pfxlen) < 0) {
-        return OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT;
-    }
-
-    return openli_cc_prefix_filter_add(filter, family, address,
-            pfxlen, 0);
-}
-
-openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(
+static openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(
         openli_cc_prefix_filter_t *filter, int family, const void *address,
         uint8_t prefix_length, uint8_t group_id) {
     uint8_t normalised[sizeof(struct in6_addr)];
@@ -243,10 +229,6 @@ openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(
     if (filter == NULL || address == NULL ||
             group_id >= OPENLI_CC_PREFIX_FILTER_MAX_GROUPS) {
         return OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT;
-    }
-
-    if (filter->finalised) {
-        return OPENLI_CC_PREFIX_FILTER_FINALISED;
     }
 
     if (family_parameters(family, &maximum_bits, &address_length) != 0 ||
@@ -290,14 +272,18 @@ openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(
     return OPENLI_CC_PREFIX_FILTER_OK;
 }
 
-openli_cc_prefix_filter_result_t openli_cc_prefix_filter_finalise(
-        openli_cc_prefix_filter_t *filter) {
-    if (filter == NULL) {
+openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
+        openli_cc_prefix_filter_t *filter, char *cidr) {
+    uint8_t address[INET6_ADDRSTRLEN];
+    uint8_t pfxlen;
+    int family;
+
+    if (parse_ipcc_prefix(cidr, &family, address, &pfxlen) < 0) {
         return OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT;
     }
 
-    filter->finalised = 1;
-    return OPENLI_CC_PREFIX_FILTER_OK;
+    return openli_cc_prefix_filter_add(filter, family, address,
+            pfxlen, 0);
 }
 
 uint64_t openli_cc_prefix_filter_match(
@@ -309,7 +295,7 @@ uint64_t openli_cc_prefix_filter_match(
     patricia_node_t *node;
     prefix_t prefix;
 
-    if (filter == NULL || address == NULL || !filter->finalised) {
+    if (filter == NULL || address == NULL) {
         return 0;
     }
 
@@ -378,26 +364,6 @@ uint64_t openli_cc_prefix_filter_match_l3(
     return 0;
 }
 
-size_t openli_cc_prefix_filter_count(
-        const openli_cc_prefix_filter_t *filter, int family) {
-    if (filter == NULL) {
-        return 0;
-    }
-
-    if (family == AF_INET) {
-        return filter->ipv4_count;
-    }
-    if (family == AF_INET6) {
-        return filter->ipv6_count;
-    }
-    return 0;
-}
-
-int openli_cc_prefix_filter_is_finalised(
-        const openli_cc_prefix_filter_t *filter) {
-    return filter != NULL && filter->finalised;
-}
-
 const char *openli_cc_prefix_filter_result_string(
         openli_cc_prefix_filter_result_t result) {
     switch (result) {
@@ -411,8 +377,6 @@ const char *openli_cc_prefix_filter_result_string(
             return "out of memory";
         case OPENLI_CC_PREFIX_FILTER_OVERLAP:
             return "prefix overlaps another group";
-        case OPENLI_CC_PREFIX_FILTER_FINALISED:
-            return "filter is already finalised";
         default:
             return "unknown prefix filter result";
     }
