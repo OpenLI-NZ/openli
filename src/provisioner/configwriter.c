@@ -872,8 +872,9 @@ static int emit_ipcc_prefix_filters(ipcc_prefix_filter_t *filters,
     uint32_t i;
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
-            (yaml_char_t *)"ipcc_prefix_filters",
-            strlen("ipcc_prefix_filters"), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+            (yaml_char_t *)"ipcc-exclude-prefix-groups",
+            strlen("ipcc-exclude-prefix-groups"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
 
     if (!yaml_emitter_emit(emitter, &event)) return -1;
 

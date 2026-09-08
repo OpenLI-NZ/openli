@@ -1490,7 +1490,8 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
-            strcasecmp((char *)key->data.scalar.value, "ipcc_prefix_filters") == 0) {
+            strcasecmp((char *)key->data.scalar.value,
+                    "ipcc-exclude-prefix-groups") == 0) {
         if (parse_ipcc_prefix_filters(state, doc, value) == -1) {
             return -1;
         }
