@@ -195,6 +195,53 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
     return strcmp(a->liid, b->liid);
 }
 
+void resolve_ipcc_prefix_filter_for_ipintercept(prov_intercept_conf_t *conf,
+        ipintercept_t *ipint) {
+
+    size_t i, j;
+    ipcc_prefix_filter_t *found;
+
+    i = 0;
+    clear_ipintercept_cc_exclude_cidrs(ipint);
+
+    while (i < ipint->cc_exclude_group_count) {
+        char *name = ipint->cc_exclude_groups[i];
+        if (name == NULL) {
+            i++;
+            continue;
+        }
+        HASH_FIND(hh, conf->ipcc_filters, name, strlen(name), found);
+
+        if (!found) {
+            size_t k;
+            logger(LOG_INFO, "OpenLI: WARNING, IPCC prefix filter group '%s' was configured for IP intercept '%s', but no such group exists?",
+                    name, ipint->common.liid);
+            // remove the group from the intercept, so that we don't have
+            // dangling references -- compress the existing array rather
+            // than leaving a hole as this ends up being cleaner in other
+            // contexts (e.g. an accurate cc_exclude_group_count value)
+            free(ipint->cc_exclude_groups[i]);
+            for (k = i; k < ipint->cc_exclude_group_count - 1; k++) {
+                ipint->cc_exclude_groups[k] =
+                    ipint->cc_exclude_groups[k + 1];
+            }
+            ipint->cc_exclude_group_count--;
+            continue;
+        }
+
+        for (j = 0; j < found->pfx_count; j++) {
+            if (found->pfx_cidrs[j]) {
+                if (add_ipintercept_cc_exclude_cidr(ipint,
+                            found->pfx_cidrs[j]) < 0) {
+                    logger(LOG_INFO, "OpenLI: ERROR, unable to add %s to the set of filtered CIDRs for IP intercept '%s'",
+                            found->pfx_cidrs[j], ipint->common.liid);
+                }
+            }
+        }
+        i++;
+    }
+}
+
 int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
 
     int failed = 0;

@@ -68,6 +68,7 @@ enum {
     TARGET_DIGESTHASHKEY,
     TARGET_X2X3LISTENER,
     TARGET_UDPSINK,
+    TARGET_IPCCFILTER,
 };
 
 extern const char *update_success_page;
@@ -107,6 +108,8 @@ int remove_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state,
         const char *fullid);
 int remove_collector_udp_sink(update_con_info_t *cinfo,
         provision_state_t *state, const char *fullid);
+int remove_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state,
+        const char *name, uint8_t cascade);
 
 int add_new_agency(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_defaultradius(update_con_info_t *cinfo, provision_state_t *state);
@@ -118,6 +121,7 @@ int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,
 int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_collector_udp_sink(update_con_info_t *cinfo,
         provision_state_t *state);
+int add_new_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state);
 
 int modify_agency(update_con_info_t *cinfo, provision_state_t *state);
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state);
@@ -127,6 +131,7 @@ int modify_provisioner_options(update_con_info_t *cinfo,
         provision_state_t *state);
 int modify_collector_configuration(update_con_info_t *cinfo,
         provision_state_t *state);
+int modify_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state);
 
 struct json_object *get_agency(update_con_info_t *cinfo,
         provision_state_t *state, char *target);
@@ -147,5 +152,7 @@ struct json_object *get_known_collectors(update_con_info_t *cinfo,
         provision_state_t *state);
 struct json_object *get_known_mediators(update_con_info_t *cinfo,
         provision_state_t *state);
+json_object *get_ipcc_filter(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, char *name);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

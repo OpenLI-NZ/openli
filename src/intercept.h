@@ -643,6 +643,7 @@ void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
 void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept);
+void clear_ipintercept_cc_exclude_cidrs(ipintercept_t *cept);
 int add_ipintercept_cc_exclude_cidr(ipintercept_t *cept, char *cidr);
 int add_ipintercept_cc_exclude_group_name(ipintercept_t *cept, char *group);
 size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept);

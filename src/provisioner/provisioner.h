@@ -489,6 +489,8 @@ void clear_intercept_state(prov_intercept_conf_t *conf);
 void init_intercept_config(prov_intercept_conf_t *conf);
 int map_intercepts_to_leas(prov_intercept_conf_t *conf);
 void destroy_ipcc_prefix_filter(ipcc_prefix_filter_t *pfxflt);
+void resolve_ipcc_prefix_filter_for_ipintercept(prov_intercept_conf_t *conf,
+        ipintercept_t *ipint);
 
 /* Implemented in configparser_provisioner.c */
 size_t read_encryption_password_file(const char *encpassfile, uint8_t *space);

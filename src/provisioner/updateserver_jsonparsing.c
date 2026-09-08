@@ -308,6 +308,30 @@ static char *merge_json_objects(const char *existing, const char *received) {
     return result;
 }
 
+static inline int compare_ipcc_prefix_filter_cidrs(ipcc_prefix_filter_t *a,
+        ipcc_prefix_filter_t *b) {
+
+    size_t i, j;
+    uint8_t found = 0;
+
+    if (a->pfx_count != b->pfx_count) {
+        return 1;
+    }
+
+    for (i = 0; i < a->pfx_count; i++) {
+        found = 0;
+        for (j = 0; j < b->pfx_count; j++) {
+            if (strcmp(a->pfx_cidrs[i], b->pfx_cidrs[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return 1;
+    }
+    return 0;
+
+}
+
 static inline int compare_intercept_times(intercept_common_t *latest,
         intercept_common_t *current) {
 
@@ -783,6 +807,96 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
     free_single_ipintercept(found);
     return 1;
 }
+
+int remove_ipcc_filter(update_con_info_t *cinfo,
+        provision_state_t *state, const char *name, uint8_t cascade) {
+
+    ipcc_prefix_filter_t *found;
+    ipintercept_t *ipint, *tmp;
+    uint8_t referenced = 0;
+    size_t i, k;
+
+    if (name == NULL) {
+        return 0;
+    }
+
+    HASH_FIND(hh, state->interceptconf.ipcc_filters, name, strlen(name), found);
+    if (!found) {
+        snprintf(cinfo->answerstring, 4096, "%s <p>Request failed, as IPCC filter '%s' does not exist on this OpenLI provisioner. %s",
+                update_failure_page_start, name, update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_NOT_FOUND;
+        return 0;
+    }
+
+    if (cascade) {
+        // if we're cascading, delete immediately so we can resolve the new
+        // filter CIDRs for any affected intercept
+        HASH_DELETE(hh, state->interceptconf.ipcc_filters, found);
+        destroy_ipcc_prefix_filter(found);
+    }
+
+    // check if any intercepts are still using this filter
+    HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, tmp) {
+        i = 0;
+        while (i < ipint->cc_exclude_group_count) {
+            if (ipint->cc_exclude_groups[i] == NULL) {
+                i++;
+                continue;
+            }
+
+            if (strcmp(ipint->cc_exclude_groups[i], name) != 0) {
+                i++;
+                continue;
+            }
+
+            if (!cascade) {
+                referenced = 1;
+                break;
+            }
+
+            // remove the filter from the intercept and update the filter CIDRs
+            // on the collectors
+            free(ipint->cc_exclude_groups[i]);
+            for (k = i; k < ipint->cc_exclude_group_count - 1; k++) {
+                ipint->cc_exclude_groups[k] = ipint->cc_exclude_groups[k + 1];
+            }
+            ipint->cc_exclude_group_count--;
+
+            resolve_ipcc_prefix_filter_for_ipintercept(&state->interceptconf,
+                    ipint);
+
+            // trigger an HI1 modified notification
+            announce_hi1_notification_to_mediators(state, &(ipint->common),
+                    ipint->username, HI1_LI_MODIFIED);
+
+            // call modify_existing_intercept_options to trigger update of
+            // collectors
+            modify_existing_intercept_options(state, (void *)ipint,
+                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
+
+            break;
+        }
+
+        if (!cascade && referenced) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Cannot delete IPCC filter '%s' as it is still in use by at least one intercept. %s",
+                    update_failure_page_start, name, update_failure_page_end);
+            return -1;
+        }
+
+    }
+
+    if (!cascade) {
+        HASH_DELETE(hh, state->interceptconf.ipcc_filters, found);
+        destroy_ipcc_prefix_filter(found);
+    }
+
+    logger(LOG_INFO,
+            "OpenLI provisioner: removed IPCC filter '%s' successfully via update socket", name);
+
+    return 1;
+}
+
 
 int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
         const char *idstr) {
@@ -1263,6 +1377,314 @@ x2x3err:
     }
     json_tokener_free(tknr);
     return ret;
+}
+
+int add_new_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state) {
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    ipcc_prefix_filter_t *found = NULL;
+    ipcc_prefix_filter_t *newflt = NULL;
+    int parseerr = 0;
+    size_t i;
+
+    struct json_object *groupname;
+    struct json_object *prefixes;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse IPCC filter JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto flterr;
+    }
+    newflt = calloc(1, sizeof(ipcc_prefix_filter_t));
+
+    json_object_object_get_ex(parsed, "name", &(groupname));
+    json_object_object_get_ex(parsed, "prefixes", &(prefixes));
+
+    EXTRACT_JSON_STRING_PARAM("name", "IPCC filter", groupname,
+            newflt->group_name, &parseerr, true);
+    if (parseerr) {
+        goto flterr;
+    }
+
+    if (prefixes == NULL) {
+        logger(LOG_INFO,
+                "OpenLI update socket: IPCC prefix filters must contain a 'prefixes' sequence");
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>IPCC prefix filters must contain a 'prefixes' sequence. %s",
+                update_failure_page_start,
+                update_failure_page_end);
+        goto flterr;
+
+    }
+
+    if (json_object_get_type(prefixes) != json_type_array) {
+        logger(LOG_INFO,
+                "OpenLI update socket: 'prefixes' for an IPCC filter must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'prefixes' for an IPCC filter must be expressed as a JSON array. %s",
+                update_failure_page_start,
+                update_failure_page_end);
+        goto flterr;
+
+    }
+
+    if (json_object_array_length(prefixes) == 0) {
+        logger(LOG_INFO,
+                "OpenLI update socket: 'prefixes' sequence for an IPCC filter must not be empty");
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'prefixes' sequence for an IPCC filter must not be empty. %s",
+                update_failure_page_start,
+                update_failure_page_end);
+        goto flterr;
+    }
+
+    for (i = 0; i < (size_t)json_object_array_length(prefixes); i++) {
+        struct json_object *jobj;
+        int family;
+        uint8_t addr[INET6_ADDRSTRLEN];
+        uint8_t pfxlen;
+        jobj = json_object_array_get_idx(prefixes, i);
+
+        if (json_object_get_type(jobj) != json_type_string) {
+            logger(LOG_INFO,
+                "OpenLI update socket: each entry in the 'prefixes' sequence for an IPCC filter must be expressed as a string");
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Each entry in the 'prefixes' sequence for an IPCC filter must be expressed as a string. %s",
+                    update_failure_page_start,
+                    update_failure_page_end);
+            goto flterr;
+        }
+
+        newflt->pfx_count ++;
+        newflt->pfx_cidrs = realloc(newflt->pfx_cidrs,
+                newflt->pfx_count * sizeof(char *));
+        EXTRACT_JSON_STRING_PARAM("prefix", "IPCC filter", jobj,
+                newflt->pfx_cidrs[newflt->pfx_count - 1], &parseerr, true);
+
+        if (parseerr) {
+            goto flterr;
+        }
+
+        if (parse_ipcc_prefix(newflt->pfx_cidrs[newflt->pfx_count - 1],
+                &family, addr, &pfxlen) < 0) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Each entry in the 'prefixes' sequence for an IPCC filter must be a valid CIDR  -- failing prefix is '%s'. %s",
+                    update_failure_page_start,
+                    newflt->pfx_cidrs[newflt->pfx_count - 1],
+                    update_failure_page_end);
+            goto flterr;
+        }
+
+    }
+
+    HASH_FIND(hh, state->interceptconf.ipcc_filters, newflt->group_name,
+            strlen(newflt->group_name), found);
+    if (found) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>IPCC filter '%s' already exists, use PUT to modify. %s",
+                update_failure_page_start, found->group_name,
+                update_failure_page_end);
+        goto flterr;
+    }
+    HASH_ADD_KEYPTR(hh, state->interceptconf.ipcc_filters, newflt->group_name,
+            strlen(newflt->group_name), newflt);
+
+    // no need to announce anything, as this is just local state used to
+    // determine the right CIDRs to include when an intercept is added/changed
+
+    logger(LOG_INFO,
+            "OpenLI provisioner: added new IPCC filter '%s' via update socket.",
+            newflt->group_name);
+
+    if (parsed) json_object_put(parsed);
+    json_tokener_free(tknr);
+    return 0;
+
+flterr:
+    if (newflt) destroy_ipcc_prefix_filter(newflt);
+    if (parsed) json_object_put(parsed);
+    json_tokener_free(tknr);
+    return -1;
+
+}
+
+int modify_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state) {
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    ipcc_prefix_filter_t *found = NULL, *flt = NULL;
+    int parseerr = 0;
+    size_t i;
+    ipintercept_t *ipint, *tmp;
+    struct json_object *groupname;
+    struct json_object *prefixes;
+    char *namestr = NULL;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse IPCC filter JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto flterr;
+    }
+
+    json_object_object_get_ex(parsed, "name", &(groupname));
+    EXTRACT_JSON_STRING_PARAM("name", "IPCC filter", groupname, namestr,
+            &parseerr, true);
+
+    if (!namestr || parseerr) {
+        goto flterr;
+    }
+
+    HASH_FIND(hh, state->interceptconf.ipcc_filters, namestr, strlen(namestr),
+            found);
+    if (!found) {
+        json_object_put(parsed);
+        json_tokener_free(tknr);
+        if (namestr) free(namestr);
+        return add_new_ipcc_filter(cinfo, state);
+    }
+
+    json_object_object_get_ex(parsed, "prefixes", &(prefixes));
+
+    if (prefixes == NULL) {
+        logger(LOG_INFO,
+                "OpenLI update socket: IPCC prefix filters must contain a 'prefixes' sequence");
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>IPCC prefix filters must contain a 'prefixes' sequence. %s",
+                update_failure_page_start,
+                update_failure_page_end);
+        goto flterr;
+
+    }
+
+    if (json_object_get_type(prefixes) != json_type_array) {
+        logger(LOG_INFO,
+                "OpenLI update socket: 'prefixes' for an IPCC filter must be expressed as a JSON array");
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'prefixes' for an IPCC filter must be expressed as a JSON array. %s",
+                update_failure_page_start,
+                update_failure_page_end);
+        goto flterr;
+
+    }
+
+    if (json_object_array_length(prefixes) == 0) {
+        logger(LOG_INFO,
+                "OpenLI update socket: 'prefixes' sequence for an IPCC filter must not be empty");
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>'prefixes' sequence for an IPCC filter must not be empty. %s",
+                update_failure_page_start,
+                update_failure_page_end);
+        goto flterr;
+    }
+
+    flt = calloc(1, sizeof(ipcc_prefix_filter_t));
+    flt->group_name = namestr;
+    namestr = NULL;
+
+    for (i = 0; i < (size_t)json_object_array_length(prefixes); i++) {
+        struct json_object *jobj;
+        int family;
+        uint8_t pfxlen;
+        uint8_t addr[INET6_ADDRSTRLEN];
+
+        jobj = json_object_array_get_idx(prefixes, i);
+
+        if (json_object_get_type(jobj) != json_type_string) {
+            logger(LOG_INFO,
+                "OpenLI update socket: each entry in the 'prefixes' sequence for an IPCC filter must be expressed as a string");
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Each entry in the 'prefixes' sequence for an IPCC filter must be expressed as a string. %s",
+                    update_failure_page_start,
+                    update_failure_page_end);
+            goto flterr;
+        }
+
+        flt->pfx_count ++;
+        flt->pfx_cidrs = realloc(flt->pfx_cidrs,
+                flt->pfx_count * sizeof(char *));
+        EXTRACT_JSON_STRING_PARAM("prefix", "IPCC filter", jobj,
+                flt->pfx_cidrs[flt->pfx_count - 1], &parseerr, true);
+        if (parseerr) {
+            goto flterr;
+        }
+        if (parse_ipcc_prefix(flt->pfx_cidrs[flt->pfx_count - 1],
+                &family, addr, &pfxlen) < 0) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Each entry in the 'prefixes' sequence for an IPCC filter must be a valid CIDR  -- failing prefix is '%s'. %s",
+                    update_failure_page_start,
+                    flt->pfx_cidrs[flt->pfx_count - 1],
+                    update_failure_page_end);
+            goto flterr;
+        }
+    }
+
+    if (compare_ipcc_prefix_filter_cidrs(found, flt) == 0) {
+        // no change, just ignore
+        if (flt) destroy_ipcc_prefix_filter(flt);
+        if (parsed) json_object_put(parsed);
+        json_tokener_free(tknr);
+        return 0;
+    }
+
+    // replace existing entry with the new one
+    HASH_DELETE(hh, state->interceptconf.ipcc_filters, found);
+    HASH_ADD_KEYPTR(hh, state->interceptconf.ipcc_filters, flt->group_name,
+            strlen(flt->group_name), flt);
+    destroy_ipcc_prefix_filter(found);
+
+    HASH_ITER(hh_liid, state->interceptconf.ipintercepts, ipint, tmp) {
+        for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+            if (ipint->cc_exclude_groups[i] == NULL) {
+                continue;
+            }
+            if (strcmp(ipint->cc_exclude_groups[i], flt->group_name) != 0) {
+                continue;
+            }
+
+            // clear and regenerate all filter CIDRs for this intercept
+            resolve_ipcc_prefix_filter_for_ipintercept(&state->interceptconf,
+                    ipint);
+
+            // trigger an HI1 modified notification
+            announce_hi1_notification_to_mediators(state, &(ipint->common),
+                    ipint->username, HI1_LI_MODIFIED);
+
+            // call modify_existing_intercept_options to trigger update of
+            // collectors
+            modify_existing_intercept_options(state, (void *)ipint,
+                    OPENLI_PROTO_MODIFY_IPINTERCEPT);
+            break;
+        }
+    }
+
+
+    if (parsed) json_object_put(parsed);
+    json_tokener_free(tknr);
+    return 1;
+
+flterr:
+    if (namestr) free(namestr);
+    if (flt) destroy_ipcc_prefix_filter(flt);
+    if (parsed) json_object_put(parsed);
+    json_tokener_free(tknr);
+    return -1;
+
+
 }
 
 int add_new_coreserver(update_con_info_t *cinfo, provision_state_t *state,

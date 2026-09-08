@@ -732,8 +732,7 @@ void remove_all_intercept_udp_sinks(ipintercept_t *cept) {
     }
 }
 
-
-void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
+void clear_ipintercept_cc_exclude_cidrs(ipintercept_t *cept) {
     size_t i;
 
     if (cept == NULL) {
@@ -748,6 +747,18 @@ void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
         }
         free(cept->cc_exclude_cidrs);
     }
+    cept->cc_exclude_cidrs = NULL;
+    cept->cc_exclude_count = 0;
+}
+
+void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
+    size_t i;
+
+    if (cept == NULL) {
+        return;
+    }
+    clear_ipintercept_cc_exclude_cidrs(cept);
+
     if (cept->cc_exclude_groups) {
         for (i = 0; i < cept->cc_exclude_group_count; i++) {
             if (cept->cc_exclude_groups[i]) {
