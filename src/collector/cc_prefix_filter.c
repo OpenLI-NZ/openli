@@ -226,8 +226,7 @@ static openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add(
     uint64_t *stored_mask;
     openli_cc_prefix_filter_result_t result;
 
-    if (filter == NULL || address == NULL ||
-            group_id >= OPENLI_CC_PREFIX_FILTER_MAX_GROUPS) {
+    if (filter == NULL || address == NULL) {
         return OPENLI_CC_PREFIX_FILTER_INVALID_ARGUMENT;
     }
 

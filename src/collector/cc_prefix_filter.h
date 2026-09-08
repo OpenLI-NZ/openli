@@ -27,8 +27,7 @@ typedef enum openli_cc_prefix_filter_result {
 } openli_cc_prefix_filter_result_t;
 
 /*
- * Allocate an empty prefix filter. Prefixes may be added until
- * openli_cc_prefix_filter_finalise() is called.
+ * Allocate an empty prefix filter.
  *
  * Parameter 'shared' is the value that will used as the initial
  * reference count (i.e. the number of threads that will have
@@ -60,13 +59,6 @@ void openli_cc_prefix_filter_release(openli_cc_prefix_filter_t *filter);
  */
 openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
         openli_cc_prefix_filter_t *filter, char *cidr);
-
-/*
- * Prevent further modifications to filter. After successful finalisation,
- * concurrent lookups are safe because the Patricia tries are immutable.
- */
-openli_cc_prefix_filter_result_t openli_cc_prefix_filter_finalise(
-        openli_cc_prefix_filter_t *filter);
 
 /*
  * Return the group mask for the longest prefix matching address.
