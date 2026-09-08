@@ -398,6 +398,13 @@ static void process_incoming_messages(colthread_local_t *loc,
         handle_change_iprange_intercept(loc, syncpush->data.iprange);
     }
 
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPCC_FILTERS) {
+        handle_update_ipcc_filters(loc, syncpush->data.cc_exclude);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_IPCC_FILTERS) {
+        handle_remove_ipcc_filters(loc, syncpush->data.liid);
+    }
 }
 
 #define PACKETS_PER_READ_THRESH 100
@@ -514,14 +521,13 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
     loc->staticcache = NULL;
-    loc->ipcc_prefix_filter = glob->ipcc_prefix_filter;
     loc->tosyncq_ip = NULL;
 
     loc->accepted = 0;
     loc->dropped = 0;
     loc->pkts_since_msg_read = 0;
     loc->tick_counter = 0;
-
+    loc->ipcc_filters = NULL;
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -765,6 +771,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
     libtrace_packet_t *pkt = NULL;
+    cc_prefix_exclusion_map_t *flt, *tmpflt;
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
@@ -889,6 +896,12 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         free(v6);
     }
 
+
+    HASH_ITER(hh, loc->ipcc_filters, flt, tmpflt) {
+        HASH_DELETE(hh, loc->ipcc_filters, flt);
+        openli_cc_prefix_filter_release(flt->cc_exclude);
+        free(flt);
+    }
 
     free_all_staticipsessions(&(loc->activestaticintercepts));
     free_all_rtpstreams(&(loc->activertpintercepts));
@@ -2345,18 +2358,6 @@ static void clear_global_config(collector_global_t *glob) {
         free_coreserver_list(glob->ciscomirrors);
     }
 
-    if (glob->ipcc_prefix_filter) {
-        openli_cc_prefix_filter_destroy(glob->ipcc_prefix_filter);
-        glob->ipcc_prefix_filter = NULL;
-    }
-    for (uint8_t i = 0; i < glob->ipcc_prefix_group_count; i++) {
-        free(glob->ipcc_prefix_group_names[i]);
-        glob->ipcc_prefix_group_names[i] = NULL;
-    }
-    glob->ipcc_prefix_group_count = 0;
-    free(glob->ipcc_prefix_config);
-    glob->ipcc_prefix_config = NULL;
-
     if (glob->RMQ_conf.name) {
         free(glob->RMQ_conf.name);
     }
@@ -2855,15 +2856,6 @@ static int reload_collector_config(collector_global_t *glob,
     if (create_ssl_context(&(newstate.sslconf)) < 0) {
         ret = -1;
         goto endreload;
-    }
-
-    if ((glob->ipcc_prefix_config == NULL) !=
-            (newstate.ipcc_prefix_config == NULL) ||
-            (glob->ipcc_prefix_config != NULL &&
-            strcmp(glob->ipcc_prefix_config,
-                    newstate.ipcc_prefix_config) != 0)) {
-        logger(LOG_INFO,
-                "OpenLI: IPCC prefix exclusion filter changes require a collector restart; retaining the active filter");
     }
 
     tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate.sslconf));

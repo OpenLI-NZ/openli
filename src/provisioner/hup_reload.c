@@ -927,6 +927,7 @@ static int reload_ipintercepts(provision_state_t *currstate,
                     newequiv->common.targetagency);
             int encryptchanged = compare_intercept_encrypt_configuration(
                     &(ipint->common), &(newequiv->common));
+            int pfxfilterchanged = compare_ipcc_prefix_filters(ipint, newequiv);
 
             HASH_FIND(hh, intconf->leas, newequiv->common.targetagency,
                     strlen(newequiv->common.targetagency), lea);
@@ -953,13 +954,14 @@ static int reload_ipintercepts(provision_state_t *currstate,
 
             if (update_reconfigured_intercept(currstate, &(ipint->common),
                     &(newequiv->common), intconf,
-                    (!intsame || staticchanged || udpsinkchanged),
+                    (!intsame || staticchanged || udpsinkchanged ||
+                            pfxfilterchanged),
                     agencychanged, encryptchanged, droppedmeds, ipint->username,
                     newequiv->username) < 0) {
                 return -1;
             }
 
-            if (!intsame && !droppedcols) {
+            if ((!intsame || pfxfilterchanged) && !droppedcols) {
                 modify_existing_intercept_options(currstate, (void *)newequiv,
                         OPENLI_PROTO_MODIFY_IPINTERCEPT);
             }

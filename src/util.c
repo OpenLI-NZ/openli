@@ -104,6 +104,50 @@ int validate_openli_liid(const char *liidstr, char *errbuf, size_t errlen) {
     return 0;
 }
 
+int parse_ipcc_prefix(const char *text, int *family, void *address,
+        uint8_t *prefix_length) {
+    char buffer[INET6_ADDRSTRLEN + 5];
+    char *slash;
+    char *endptr;
+    unsigned long length;
+    size_t text_length;
+
+    text_length = strlen(text);
+    if (text_length == 0 || text_length >= sizeof(buffer)) {
+        return -1;
+    }
+
+    memcpy(buffer, text, text_length + 1);
+    slash = strrchr(buffer, '/');
+    if (slash == NULL || slash == buffer || slash[1] == '\0') {
+        return -1;
+    }
+
+    *slash = '\0';
+    errno = 0;
+    length = strtoul(slash + 1, &endptr, 10);
+    if (errno != 0 || *endptr != '\0') {
+        return -1;
+    }
+
+    if (inet_pton(AF_INET, buffer, address) == 1) {
+        if (length > 32) {
+            return -1;
+        }
+        *family = AF_INET;
+    } else if (inet_pton(AF_INET6, buffer, address) == 1) {
+        if (length > 128) {
+            return -1;
+        }
+        *family = AF_INET6;
+    } else {
+        return -1;
+    }
+
+    *prefix_length = (uint8_t)length;
+    return 0;
+}
+
 char *load_file_into_string(const char *filename, size_t limit) {
     FILE *fp = fopen(filename, "rb");
     size_t filelen = 0;

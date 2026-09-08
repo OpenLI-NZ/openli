@@ -40,6 +40,18 @@ typedef struct alushimhdr {
     uint32_t sessionid;
 } PACKED alushimhdr_t;
 
+static inline openli_cc_prefix_filter_t *alushim_lookup_cc_prefix_filter(
+        colthread_local_t *loc, char *liid) {
+
+    cc_prefix_exclusion_map_t *found;
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    if (found) {
+        return found->cc_exclude;
+    }
+    return NULL;
+}
+
 static inline uint32_t alushim_get_interceptid(alushimhdr_t *aluhdr) {
     uint32_t intid = ntohl(aluhdr->interceptid);
 
@@ -162,10 +174,10 @@ int check_alu_intercept(colthread_local_t *loc,
     vendmirror_intercept_t *alu, *tmp;
     vendmirror_intercept_list_t *vmilist;
     uint32_t rem = 0, shimintid, cin, bodylen;
-    uint64_t packet_mask;
     void *l3;
     uint8_t *payload = NULL;
     uint8_t direction;
+    openli_cc_prefix_filter_t *cc_exclude;
 
     if ((cs = match_packet_to_coreserver(alusources, pinfo, 1)) == NULL) {
         return 0;
@@ -193,9 +205,6 @@ int check_alu_intercept(colthread_local_t *loc,
         return 0;
     }
 
-    packet_mask = openli_cc_prefix_filter_match_l3(
-            loc->ipcc_prefix_filter, l3, bodylen);
-
     /* Direction 0 = ingress (i.e. coming from the subscriber) */
 
     /* Use the session ID from the shim as the CIN */
@@ -210,9 +219,11 @@ int check_alu_intercept(colthread_local_t *loc,
             continue;
         }
 
-        if (packet_mask != 0 &&
-                (packet_mask & alu->cc_exclude_mask) != 0) {
-            continue;
+        cc_exclude = alushim_lookup_cc_prefix_filter(loc, alu->common.liid);
+        if (cc_exclude) {
+            if (openli_cc_prefix_filter_match_l3(cc_exclude, l3, bodylen)) {
+                continue;
+            }
         }
 
         /* Create an appropriate IPCC and export it */

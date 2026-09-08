@@ -99,6 +99,36 @@ static void parse_xid_list(intercept_common_t *common, yaml_document_t *doc,
     }
 }
 
+static void add_ipcc_prefixes(ipcc_prefix_filter_t *pfxflt,
+        yaml_document_t *doc, yaml_node_t *pfxlist) {
+    yaml_node_item_t *item;
+    for (item = pfxlist->data.sequence.items.start;
+            item != pfxlist->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+
+        if (node->type != YAML_SCALAR_NODE) {
+            logger(LOG_INFO,
+                    "OpenLI: IPCC filter prefixes must be configured as a sequence of scalar types");
+            continue;
+        }
+        char *cidr = (char *)node->data.scalar.value;
+        uint8_t pfxlen;
+        uint8_t addr[INET6_ADDRSTRLEN];
+        int family;
+
+        if (parse_ipcc_prefix(cidr, &family, addr, &pfxlen) < 0) {
+            logger(LOG_INFO,
+                    "OpenLI: invalid prefix in IPCC filter, ignoring: '%s'",
+                    cidr);
+            continue;
+        }
+
+        pfxflt->pfx_count ++;
+        pfxflt->pfx_cidrs = realloc(pfxflt->pfx_cidrs,
+                pfxflt->pfx_count * sizeof(char *));
+        pfxflt->pfx_cidrs[pfxflt->pfx_count - 1] = strdup(cidr);
+    }
+}
 
 static void parse_email_targets(email_target_t **targets, yaml_document_t *doc,
         yaml_node_t *tgtconf) {
@@ -620,6 +650,55 @@ static int parse_integrity_check_options(liagency_t *newag,
     return 0;
 }
 
+static int parse_ipcc_prefix_filters(prov_intercept_conf_t *state,
+        yaml_document_t *doc, yaml_node_t *inputs) {
+
+    yaml_node_item_t *item;
+
+    for (item = inputs->data.sequence.items.start;
+            item != inputs->data.sequence.items.top; item ++) {
+        yaml_node_t *node = yaml_document_get_node(doc, *item);
+        yaml_node_pair_t *pair;
+        ipcc_prefix_filter_t *pfxflt = calloc(1, sizeof(ipcc_prefix_filter_t));
+
+        for (pair = node->data.mapping.pairs.start;
+                pair < node->data.mapping.pairs.top; pair ++) {
+            yaml_node_t *key, *value;
+            key = yaml_document_get_node(doc, pair->key);
+            value = yaml_document_get_node(doc, pair->value);
+
+            if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SCALAR_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "name") == 0) {
+                SET_CONFIG_STRING_OPTION(pfxflt->group_name, value);
+
+            } else if (key->type == YAML_SCALAR_NODE &&
+                    value->type == YAML_SEQUENCE_NODE &&
+                    strcasecmp((char *)key->data.scalar.value,
+                            "prefixes") == 0) {
+                add_ipcc_prefixes(pfxflt, doc, value);
+            }
+        }
+
+        if (pfxflt->group_name && pfxflt->pfx_count > 0) {
+            ipcc_prefix_filter_t *found = NULL;
+            HASH_FIND(hh, state->ipcc_filters, pfxflt->group_name,
+                    strlen(pfxflt->group_name), found);
+            if (found) {
+                logger(LOG_INFO, "OpenLI: '%s' appears multiple times in the IPCC prefix filter configuration? Ignoring subsequent entries...",
+                        pfxflt->group_name);
+                destroy_ipcc_prefix_filter(pfxflt);
+                continue;
+            }
+            HASH_ADD_KEYPTR(hh, state->ipcc_filters, pfxflt->group_name,
+                    strlen(pfxflt->group_name), pfxflt);
+        } else {
+            destroy_ipcc_prefix_filter(pfxflt);
+        }
+    }
+    return 0;
+}
 
 static int parse_agency_list(prov_intercept_conf_t *state, yaml_document_t *doc,
         yaml_node_t *inputs) {
@@ -1206,7 +1285,9 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
         newcept->statics = NULL;
         newcept->cc_exclude_groups = NULL;
         newcept->cc_exclude_group_count = 0;
-        newcept->cc_exclude_mask = 0;
+        newcept->cc_exclude_cidrs = NULL;
+        newcept->cc_exclude_count = 0;
+        newcept->cc_exclude_tries = NULL;
         newcept->options = 0;
 
         /* Mappings describe the parameters for each intercept */
@@ -1237,10 +1318,15 @@ static int parse_ipintercept_list(ipintercept_t **ipints, yaml_document_t *doc,
                         groupitem++) {
                     yaml_node_t *group = yaml_document_get_node(doc,
                             *groupitem);
-                    if (group->type != YAML_SCALAR_NODE ||
-                            add_ipintercept_cc_exclude_group(newcept,
-                            (char *)group->data.scalar.value,
-                            group->data.scalar.length) < 0) {
+                    if (group->type != YAML_SCALAR_NODE) {
+                        logger(LOG_INFO,
+                                "OpenLI: invalid cc_exclude_groups entry in IP intercept configuration");
+                        free_single_ipintercept(newcept);
+                        return -1;
+                    }
+
+                    if (add_ipintercept_cc_exclude_group_name(newcept,
+                            (char *)group->data.scalar.value) < 0) {
                         logger(LOG_INFO,
                                 "OpenLI: invalid or duplicate cc_exclude_groups entry in IP intercept configuration");
                         free_single_ipintercept(newcept);
@@ -1401,6 +1487,14 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
         yaml_node_t *key, yaml_node_t *value) {
 
     prov_intercept_conf_t *state = (prov_intercept_conf_t *)arg;
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SEQUENCE_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "ipcc_prefix_filters") == 0) {
+        if (parse_ipcc_prefix_filters(state, doc, value) == -1) {
+            return -1;
+        }
+    }
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SEQUENCE_NODE &&
@@ -1649,6 +1743,16 @@ static int provisioning_parser(void *arg, yaml_document_t *doc UNUSED,
     return 0;
 }
 
+static void resolve_ipcc_prefix_filters(prov_intercept_conf_t *conf) {
+
+    ipintercept_t *ipint, *ipinttmp;
+
+    HASH_ITER(hh_liid, conf->ipintercepts, ipint, ipinttmp) {
+        resolve_ipcc_prefix_filter_for_ipintercept(conf, ipint);
+    }
+
+}
+
 static void apply_agency_config_to_intercepts(prov_intercept_conf_t *conf) {
     prov_agency_t *ag;
     emailintercept_t *em, *emtmp;
@@ -1705,6 +1809,8 @@ int parse_intercept_config(char *configfile, prov_intercept_conf_t *conf,
             encpassfile);
 
     apply_agency_config_to_intercepts(conf);
+
+    resolve_ipcc_prefix_filters(conf);
 
     if (result == 0) {
         conf->was_encrypted = 0;

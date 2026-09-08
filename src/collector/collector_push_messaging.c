@@ -330,7 +330,6 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
     }
 
     update_intercept_common(&(found->common), &(toup->common));
-    found->cc_exclude_mask = toup->cc_exclude_mask;
     return 1;
 }
 
@@ -400,7 +399,6 @@ static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
     }
 
     update_intercept_common(&(found->common), &(toup->common));
-    found->cc_exclude_mask = toup->cc_exclude_mask;
     return 1;
 }
 
@@ -626,6 +624,49 @@ void handle_remove_coreserver(colthread_local_t *loc, coreserver_t *cs) {
     free_single_coreserver(cs);
 }
 
+void handle_update_ipcc_filters(colthread_local_t *loc,
+        openli_cc_prefix_filter_t *cc_exclude) {
+
+    cc_prefix_exclusion_map_t *found = NULL;
+    if (cc_exclude == NULL || cc_exclude->liid == NULL) {
+        openli_cc_prefix_filter_release(cc_exclude);
+        return;
+    }
+
+    HASH_FIND(hh, loc->ipcc_filters, cc_exclude->liid,
+            strlen(cc_exclude->liid), found);
+    if (found) {
+        HASH_DELETE(hh, loc->ipcc_filters, found);
+        openli_cc_prefix_filter_release(found->cc_exclude);
+        free(found);
+    }
+
+    found = calloc(1, sizeof(cc_prefix_exclusion_map_t));
+    found->liid = cc_exclude->liid;
+    found->cc_exclude = cc_exclude;
+
+    HASH_ADD_KEYPTR(hh, loc->ipcc_filters, found->liid,
+            strlen(found->liid), found);
+
+}
+
+void handle_remove_ipcc_filters(colthread_local_t *loc, char *liid) {
+    cc_prefix_exclusion_map_t *found = NULL;
+
+    if (!liid) {
+        return;
+    }
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    if (found) {
+        HASH_DELETE(hh, loc->ipcc_filters, found);
+        openli_cc_prefix_filter_release(found->cc_exclude);
+        free(found);
+    }
+
+    free(liid);
+}
+
 void handle_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
 
     staticipsession_t *ipr_exist;
@@ -814,7 +855,6 @@ void handle_change_vendmirror_intercept(colthread_local_t *loc,
     }
 
     update_intercept_common(&(found->common), &(vend->common));
-    found->cc_exclude_mask = vend->cc_exclude_mask;
     free_single_vendmirror_intercept(vend);
 }
 
@@ -827,7 +867,6 @@ void handle_change_iprange_intercept(colthread_local_t *loc,
             sessrec);
     if (sessrec) {
         update_intercept_common(&(sessrec->common), &(ipr->common));
-        sessrec->cc_exclude_mask = ipr->cc_exclude_mask;
     }
 
     free_single_staticipsession(ipr);

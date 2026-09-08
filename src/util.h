@@ -74,6 +74,8 @@ typedef struct string_set {
 char *load_file_into_string(const char *filename, size_t limit);
 
 int validate_openli_liid(const char *liidstr, char *errbuf, size_t errlen);
+int parse_ipcc_prefix(const char *text, int *family, void *address,
+        uint8_t *prefix_length);
 
 int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
         uint8_t setkeepalive);

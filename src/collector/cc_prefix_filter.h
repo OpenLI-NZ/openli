@@ -16,9 +16,9 @@
 #include <stdint.h>
 #include <sys/socket.h>
 
-#define OPENLI_CC_PREFIX_FILTER_MAX_GROUPS 64
+#include "intercept.h"
 
-typedef struct openli_cc_prefix_filter openli_cc_prefix_filter_t;
+#define OPENLI_CC_PREFIX_FILTER_MAX_GROUPS 64
 
 typedef enum openli_cc_prefix_filter_result {
     OPENLI_CC_PREFIX_FILTER_OK = 0,
@@ -32,14 +32,37 @@ typedef enum openli_cc_prefix_filter_result {
 /*
  * Allocate an empty prefix filter. Prefixes may be added until
  * openli_cc_prefix_filter_finalise() is called.
+ *
+ * Parameter 'shared' is the value that will used as the initial
+ * reference count (i.e. the number of threads that will have
+ * access to this set of filters.
  */
-openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(void);
+openli_cc_prefix_filter_t *openli_cc_prefix_filter_create(char *liid,
+        int shared);
 
 /*
- * Destroy a filter. The filter must no longer be referenced by packet
- * processing threads when this function is called.
+ * Destroy the filter group, regardless of its reference count. Do NOT
+ * call this if you've pushed the filter group to worker threads; only
+ * use to clean up memory if an error occurs while populating the
+ * filter group.
  */
 void openli_cc_prefix_filter_destroy(openli_cc_prefix_filter_t *filter);
+
+/*
+ * Reduces the reference counter for a filter group. If the counter
+ * reaches zero, this method will also destroy the filter group
+ * automatically.
+ */
+void openli_cc_prefix_filter_release(openli_cc_prefix_filter_t *filter);
+
+/* Add a IPv4 or IPv6 prefix, expressed as CIDR string, to a filter group.
+ *
+ * The inserted prefix must not overlap with any prefixes already in the
+ * filter group. Re-adding the exact same prefix to the same group returns
+ * OPENLI_CC_PREFIX_FILTER_DUPLICATE.
+ */
+openli_cc_prefix_filter_result_t openli_cc_prefix_filter_add_cidr(
+        openli_cc_prefix_filter_t *filter, char *cidr);
 
 /*
  * Add a binary IPv4 or IPv6 prefix to a filter group.

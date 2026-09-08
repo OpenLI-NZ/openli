@@ -79,6 +79,8 @@ enum {
     OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT=16,
     OPENLI_PUSH_UPDATE_VOIPINTERCEPT=17,
     OPENLI_PUSH_HUP_RELOAD=18,
+    OPENLI_PUSH_UPDATE_IPCC_FILTERS=19,
+    OPENLI_PUSH_REMOVE_IPCC_FILTERS=20,
 };
 
 enum {
@@ -137,6 +139,8 @@ typedef struct openli_ii_msg {
         char *rtpstreamkey;
         coreserver_t *coreserver;
         staticipsession_t *iprange;
+        openli_cc_prefix_filter_t *cc_exclude;
+        char *liid;
     } data;
 
 } PACKED openli_pushed_t;
@@ -224,9 +228,17 @@ typedef struct staticip_cacheentry {
     UT_hash_handle hh;
 } static_ipcache_t;
 
+typedef struct cc_prefix_exclusion_map {
+    char *liid;
+    openli_cc_prefix_filter_t *cc_exclude;
+    UT_hash_handle hh;
+} cc_prefix_exclusion_map_t;
+
 typedef struct colthread_local {
 
     char *localname;
+
+    cc_prefix_exclusion_map_t *ipcc_filters;
 
     /* Message queue for pushing updates to sync IP thread */
     void *tosyncq_ip;
@@ -314,8 +326,6 @@ typedef struct colthread_local {
     patricia_tree_t *dynamicv6ranges;
     static_ipcache_t *staticcache;
 
-    const openli_cc_prefix_filter_t *ipcc_prefix_filter;
-
     ipfrag_reassembler_t *fragreass;
 
     uint64_t accepted;
@@ -389,11 +399,6 @@ struct collector_global {
     coreserver_t *alumirrors;
     coreserver_t *jmirrors;
     coreserver_t *ciscomirrors;
-
-    openli_cc_prefix_filter_t *ipcc_prefix_filter;
-    char *ipcc_prefix_group_names[OPENLI_CC_PREFIX_FILTER_MAX_GROUPS];
-    char *ipcc_prefix_config;
-    uint8_t ipcc_prefix_group_count;
 
     pthread_t seqproxy_tid;
 

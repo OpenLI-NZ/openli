@@ -284,6 +284,13 @@ typedef struct prov_mediator {
     UT_hash_handle hh;
 } prov_mediator_t;
 
+typedef struct ipcc_prefix_filter {
+    char *group_name;
+    uint32_t pfx_count;
+    char **pfx_cidrs;
+    UT_hash_handle hh;
+} ipcc_prefix_filter_t;
+
 typedef struct udp_sink_intercept_mapping {
     char *udpsink;
     char *liid;
@@ -316,6 +323,8 @@ typedef struct prov_intercept_conf {
     liid_hash_t *liid_map;
     /** A set of default RADIUS user names */
     default_radius_user_t *defradusers;
+
+    ipcc_prefix_filter_t *ipcc_filters;
 
     /** A map that ensures each UDP sink only is responsible for a single
      *  intercept.
@@ -433,6 +442,7 @@ typedef struct prov_state {
     /** The SSL configuration, including the SSL context pointer */
     openli_ssl_config_t sslconf;
 
+
 } provision_state_t;
 
 /** Socket state information for a single client */
@@ -478,6 +488,9 @@ void start_mhd_daemon(provision_state_t *state);
 void clear_intercept_state(prov_intercept_conf_t *conf);
 void init_intercept_config(prov_intercept_conf_t *conf);
 int map_intercepts_to_leas(prov_intercept_conf_t *conf);
+void destroy_ipcc_prefix_filter(ipcc_prefix_filter_t *pfxflt);
+void resolve_ipcc_prefix_filter_for_ipintercept(prov_intercept_conf_t *conf,
+        ipintercept_t *ipint);
 
 /* Implemented in configparser_provisioner.c */
 size_t read_encryption_password_file(const char *encpassfile, uint8_t *space);

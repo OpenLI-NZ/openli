@@ -31,6 +31,7 @@
 #include "logger.h"
 #include "intercept.h"
 #include "configparser_common.h"
+#include "collector/cc_prefix_filter.h"
 
 const char *cepttype_strings[] =
         {"Unknown", "IP", "VoIP", "Email"};
@@ -224,6 +225,29 @@ int compare_intercept_encrypt_configuration(intercept_common_t *a,
     }
 
     return memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len);
+
+}
+
+int compare_ipcc_prefix_filters(ipintercept_t *a, ipintercept_t *b) {
+
+    size_t i, j;
+    uint8_t found = 0;
+
+    if (a->cc_exclude_count != b->cc_exclude_count) {
+        return 1;
+    }
+
+    for (i = 0; i < a->cc_exclude_count; i++) {
+        found = 0;
+        for (j = 0; j < b->cc_exclude_count; j++) {
+            if (strcmp(a->cc_exclude_cidrs[i], b->cc_exclude_cidrs[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return 1;
+    }
+    return 0;
 
 }
 
@@ -708,6 +732,24 @@ void remove_all_intercept_udp_sinks(ipintercept_t *cept) {
     }
 }
 
+void clear_ipintercept_cc_exclude_cidrs(ipintercept_t *cept) {
+    size_t i;
+
+    if (cept == NULL) {
+        return;
+    }
+    if (cept->cc_exclude_cidrs) {
+        for (i = 0; i < cept->cc_exclude_count; i++) {
+            if (cept->cc_exclude_cidrs[i]) {
+                free(cept->cc_exclude_cidrs[i]);
+            }
+            cept->cc_exclude_cidrs[i] = NULL;
+        }
+        free(cept->cc_exclude_cidrs);
+    }
+    cept->cc_exclude_cidrs = NULL;
+    cept->cc_exclude_count = 0;
+}
 
 void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
     size_t i;
@@ -715,46 +757,69 @@ void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
     if (cept == NULL) {
         return;
     }
-    for (i = 0; i < cept->cc_exclude_group_count; i++) {
-        free(cept->cc_exclude_groups[i]);
+    clear_ipintercept_cc_exclude_cidrs(cept);
+
+    if (cept->cc_exclude_groups) {
+        for (i = 0; i < cept->cc_exclude_group_count; i++) {
+            if (cept->cc_exclude_groups[i]) {
+                free(cept->cc_exclude_groups[i]);
+            }
+            cept->cc_exclude_groups[i] = NULL;
+        }
+        free(cept->cc_exclude_groups);
     }
-    free(cept->cc_exclude_groups);
+    cept->cc_exclude_cidrs = NULL;
+    cept->cc_exclude_count = 0;
     cept->cc_exclude_groups = NULL;
     cept->cc_exclude_group_count = 0;
-    cept->cc_exclude_mask = 0;
+
 }
 
-int add_ipintercept_cc_exclude_group(ipintercept_t *cept,
-        const char *group, size_t group_len) {
+int add_ipintercept_cc_exclude_group_name(ipintercept_t *cept, char *group) {
     char **updated;
-    char *copy;
     size_t i;
 
-    if (cept == NULL || group == NULL || group_len == 0 ||
-            cept->cc_exclude_group_count >= 64) {
+    if (cept == NULL || group == NULL) {
         return -1;
     }
+
     for (i = 0; i < cept->cc_exclude_group_count; i++) {
-        if (strlen(cept->cc_exclude_groups[i]) == group_len &&
-                memcmp(cept->cc_exclude_groups[i], group, group_len) == 0) {
-            return -1;
+        if (strcmp(group, cept->cc_exclude_groups[i]) == 0) {
+            return 0;
         }
     }
-    copy = malloc(group_len + 1);
-    if (copy == NULL) {
-        return -1;
-    }
-    memcpy(copy, group, group_len);
-    copy[group_len] = '\0';
 
     updated = realloc(cept->cc_exclude_groups,
             (cept->cc_exclude_group_count + 1) * sizeof(char *));
     if (updated == NULL) {
-        free(copy);
         return -1;
     }
     cept->cc_exclude_groups = updated;
-    cept->cc_exclude_groups[cept->cc_exclude_group_count++] = copy;
+    cept->cc_exclude_groups[cept->cc_exclude_group_count ++] = strdup(group);
+    return 0;
+}
+
+int add_ipintercept_cc_exclude_cidr(ipintercept_t *cept, char *cidr) {
+    char **updated;
+    size_t i;
+
+    if (cept == NULL || cidr == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        if (strcmp(cidr, cept->cc_exclude_cidrs[i]) == 0) {
+            return 0;
+        }
+    }
+
+    updated = realloc(cept->cc_exclude_cidrs,
+            (cept->cc_exclude_count + 1) * sizeof(char *));
+    if (updated == NULL) {
+        return -1;
+    }
+    cept->cc_exclude_cidrs = updated;
+    cept->cc_exclude_cidrs[cept->cc_exclude_count ++] = strdup(cidr);
     return 0;
 }
 
@@ -762,8 +827,8 @@ size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept) {
     size_t total = 0;
     size_t i;
 
-    for (i = 0; i < cept->cc_exclude_group_count; i++) {
-        total += strlen(cept->cc_exclude_groups[i]) + 4;
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        total += strlen(cept->cc_exclude_cidrs[i]) + 4;
     }
     return total;
 }
@@ -783,6 +848,9 @@ void free_single_ipintercept(ipintercept_t *cept) {
 
     free_all_staticipranges(&(cept->statics));
     clear_ipintercept_cc_exclude_groups(cept);
+    if (cept->cc_exclude_tries) {
+        openli_cc_prefix_filter_release(cept->cc_exclude_tries);
+    }
     free(cept);
 }
 
@@ -1213,7 +1281,6 @@ vendmirror_intercept_t *create_vendmirror_intercept(ipintercept_t *ipint) {
     }
 
     jm->sessionid = ipint->vendmirrorid;
-    jm->cc_exclude_mask = ipint->cc_exclude_mask;
     copy_intercept_common(&(ipint->common), &(jm->common));
 
     return jm;
@@ -1259,7 +1326,6 @@ staticipsession_t *create_staticipsession(ipintercept_t *ipint, char *rangestr,
     statint->references = 0;
     statint->cin = cin;
     statint->nextseqno = 0;
-    statint->cc_exclude_mask = ipint->cc_exclude_mask;
     copy_intercept_common(&(ipint->common), &(statint->common));
     statint->key = (char *)calloc(1, 128);
     snprintf(statint->key, 127, "%s-%u", ipint->common.liid, cin);
@@ -1320,7 +1386,6 @@ ipsession_t *create_ipsession(ipintercept_t *ipint, uint32_t cin,
     }
     memcpy(ipsess->targetip, assignedip, sizeof(struct sockaddr_storage));
     ipsess->accesstype = ipint->accesstype;
-    ipsess->cc_exclude_mask = ipint->cc_exclude_mask;
 
     copy_intercept_common(&(ipint->common), &(ipsess->common));
 

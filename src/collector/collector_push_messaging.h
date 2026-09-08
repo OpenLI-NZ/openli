@@ -60,5 +60,8 @@ void handle_change_vendmirror_intercept(colthread_local_t *loc,
 void handle_change_iprange_intercept(colthread_local_t *loc,
         staticipsession_t *ipr);
 void handle_change_ipint_intercept(colthread_local_t *loc, ipsession_t *sess);
+void handle_update_ipcc_filters(colthread_local_t *loc,
+        openli_cc_prefix_filter_t *cc_exclude);
+void handle_remove_ipcc_filters(colthread_local_t *loc, char *liid);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

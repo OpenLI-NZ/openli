@@ -791,10 +791,10 @@ static int push_ipintercept_cc_exclude_groups(net_buffer_t *nb,
         const ipintercept_t *ipint) {
     size_t i;
 
-    for (i = 0; i < ipint->cc_exclude_group_count; i++) {
-        if (push_tlv(nb, OPENLI_PROTO_FIELD_IPCC_EXCLUDE_GROUP,
-                (uint8_t *)ipint->cc_exclude_groups[i],
-                strlen(ipint->cc_exclude_groups[i])) == -1) {
+    for (i = 0; i < ipint->cc_exclude_count; i++) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_IPCC_EXCLUDE_PREFIX,
+                (uint8_t *)ipint->cc_exclude_cidrs[i],
+                strlen(ipint->cc_exclude_cidrs[i])) == -1) {
             return -1;
         }
     }
@@ -2348,7 +2348,9 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->options = 0;
     ipint->cc_exclude_groups = NULL;
     ipint->cc_exclude_group_count = 0;
-    ipint->cc_exclude_mask = 0;
+    ipint->cc_exclude_cidrs = NULL;
+    ipint->cc_exclude_count = 0;
+    ipint->cc_exclude_tries = NULL;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
 
     init_decoded_intercept_common(&(ipint->common));
@@ -2383,11 +2385,13 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->mobileident = *((openli_mobile_identifier_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
             ipint->options = *((uint32_t *)valptr);
-        } else if (f == OPENLI_PROTO_FIELD_IPCC_EXCLUDE_GROUP) {
-            if (add_ipintercept_cc_exclude_group(ipint,
-                    (char *)valptr, vallen) < 0) {
+        } else if (f == OPENLI_PROTO_FIELD_IPCC_EXCLUDE_PREFIX) {
+            char *tmp = NULL;
+            DECODE_STRING_FIELD(tmp, valptr, vallen);
+            if (add_ipintercept_cc_exclude_cidr(ipint, tmp) < 0) {
                 return -1;
             }
+            free(tmp);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {

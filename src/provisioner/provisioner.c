@@ -178,6 +178,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->udp_sink_intercept_mappings = NULL;
     state->destroy_pending = 0;
     state->was_encrypted = 0;
+    state->ipcc_filters = NULL;
     state->default_email_deliver_compress =
             OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
     pthread_mutex_init(&(state->safelock), NULL);
@@ -192,6 +193,53 @@ static int liid_hash_sort(liid_hash_t *a, liid_hash_t *b) {
         return x;
     }
     return strcmp(a->liid, b->liid);
+}
+
+void resolve_ipcc_prefix_filter_for_ipintercept(prov_intercept_conf_t *conf,
+        ipintercept_t *ipint) {
+
+    size_t i, j;
+    ipcc_prefix_filter_t *found;
+
+    i = 0;
+    clear_ipintercept_cc_exclude_cidrs(ipint);
+
+    while (i < ipint->cc_exclude_group_count) {
+        char *name = ipint->cc_exclude_groups[i];
+        if (name == NULL) {
+            i++;
+            continue;
+        }
+        HASH_FIND(hh, conf->ipcc_filters, name, strlen(name), found);
+
+        if (!found) {
+            size_t k;
+            logger(LOG_INFO, "OpenLI: WARNING, IPCC prefix filter group '%s' was configured for IP intercept '%s', but no such group exists?",
+                    name, ipint->common.liid);
+            // remove the group from the intercept, so that we don't have
+            // dangling references -- compress the existing array rather
+            // than leaving a hole as this ends up being cleaner in other
+            // contexts (e.g. an accurate cc_exclude_group_count value)
+            free(ipint->cc_exclude_groups[i]);
+            for (k = i; k < ipint->cc_exclude_group_count - 1; k++) {
+                ipint->cc_exclude_groups[k] =
+                    ipint->cc_exclude_groups[k + 1];
+            }
+            ipint->cc_exclude_group_count--;
+            continue;
+        }
+
+        for (j = 0; j < found->pfx_count; j++) {
+            if (found->pfx_cidrs[j]) {
+                if (add_ipintercept_cc_exclude_cidr(ipint,
+                            found->pfx_cidrs[j]) < 0) {
+                    logger(LOG_INFO, "OpenLI: ERROR, unable to add %s to the set of filtered CIDRs for IP intercept '%s'",
+                            found->pfx_cidrs[j], ipint->common.liid);
+                }
+            }
+        }
+        i++;
+    }
 }
 
 int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
@@ -264,6 +312,26 @@ int map_intercepts_to_leas(prov_intercept_conf_t *conf) {
     return failed;
 
 }
+
+void destroy_ipcc_prefix_filter(ipcc_prefix_filter_t *pfxflt) {
+    uint32_t i;
+
+    if (!pfxflt) return;
+
+    if (pfxflt->pfx_cidrs) {
+        for (i = 0; i < pfxflt->pfx_count; i++) {
+            if (pfxflt->pfx_cidrs[i]) {
+                free(pfxflt->pfx_cidrs[i]);
+            }
+        }
+        free(pfxflt->pfx_cidrs);
+    }
+    if (pfxflt->group_name) {
+        free(pfxflt->group_name);
+    }
+    free(pfxflt);
+}
+
 
 static void free_openli_mediator(openli_mediator_t *med) {
     if (!med) {
@@ -740,6 +808,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     prov_agency_t *h2, *tmp2;
     default_radius_user_t *h3, *tmp3;
     udp_sink_intercept_mapping_t *h4, *tmp4;
+    ipcc_prefix_filter_t *flt, *fltmp;
 
     pthread_mutex_lock(&(conf->safelock));
     conf->destroy_pending = 1;
@@ -748,6 +817,11 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     HASH_ITER(hh, conf->liid_map, h, tmp) {
         HASH_DEL(conf->liid_map, h);
         free(h);
+    }
+
+    HASH_ITER(hh, conf->ipcc_filters, flt, fltmp) {
+        HASH_DELETE(hh, conf->ipcc_filters, flt);
+        destroy_ipcc_prefix_filter(flt);
     }
 
     HASH_ITER(hh, conf->defradusers, h3, tmp3) {
@@ -784,6 +858,7 @@ void clear_intercept_state(prov_intercept_conf_t *conf) {
     free_coreserver_list(conf->imapservers);
     free_coreserver_list(conf->pop3servers);
     free_coreserver_list(conf->sipservers);
+
 
     pthread_mutex_destroy(&(conf->safelock));
 }

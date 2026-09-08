@@ -51,11 +51,6 @@
 #include "collector_util.h"
 #include "collector_integrity_check.h"
 
-static int resolve_ipintercept_cc_exclude_mask(collector_sync_t *sync,
-        ipintercept_t *ipint);
-static void move_ipintercept_cc_exclude_policy(ipintercept_t *destination,
-        ipintercept_t *source);
-
 collector_sync_t *init_sync_data(collector_global_t *glob) {
 
     int zero = 0, hwm = 2000;
@@ -66,8 +61,6 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->allusers = NULL;
     sync->x2x3_queues = NULL;
     sync->ipintercepts = NULL;
-    sync->ipcc_prefix_group_names = glob->ipcc_prefix_group_names;
-    sync->ipcc_prefix_group_count = glob->ipcc_prefix_group_count;
     sync->knownvoips = NULL;
     sync->userintercepts = NULL;
     sync->coreservers = NULL;
@@ -1950,6 +1943,38 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
     pthread_mutex_unlock(sync->glob->stats_mutex);
 }
 
+static void push_cc_exclude_withdraw(collector_sync_t *sync,
+        ipintercept_t *cept) {
+
+    sync_sendq_t *tmp, *sendq;
+    openli_pushed_t msg;
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_REMOVE_IPCC_FILTERS;
+        msg.data.liid = strdup(cept->common.liid);
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+}
+
+static void push_cc_exclude_tries(collector_sync_t *sync,
+        ipintercept_t *cept) {
+
+    sync_sendq_t *tmp, *sendq;
+    openli_pushed_t msg;
+
+    if (cept->cc_exclude_tries == NULL) {
+        return;
+    }
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_UPDATE_IPCC_FILTERS;
+        msg.data.cc_exclude = cept->cc_exclude_tries;
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+}
+
 static void push_existing_user_sessions(collector_sync_t *sync,
         ipintercept_t *cept) {
 
@@ -1972,6 +1997,42 @@ static void push_existing_user_sessions(collector_sync_t *sync,
         }
     }
 
+}
+
+static openli_cc_prefix_filter_t *construct_openli_cc_prefix_filter(
+        ipintercept_t *cept, int colqueues) {
+
+    openli_cc_prefix_filter_t *tries;
+    size_t i;
+    openli_cc_prefix_filter_result_t res;
+
+    tries = openli_cc_prefix_filter_create(cept->common.liid, 1 + colqueues);
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        res = openli_cc_prefix_filter_add_cidr(tries, cept->cc_exclude_cidrs[i]);
+        if (res == OPENLI_CC_PREFIX_FILTER_DUPLICATE) {
+            continue;
+        }
+        if (res != OPENLI_CC_PREFIX_FILTER_OK) {
+            logger(LOG_INFO,
+                    "OpenLI collector: unable to add IPCC filter prefix '%s' to LIID %s: %s",
+                    cept->cc_exclude_cidrs[i], cept->common.liid,
+                    openli_cc_prefix_filter_result_string(res));
+            openli_cc_prefix_filter_destroy(tries);
+            return NULL;
+        }
+    }
+
+    res = openli_cc_prefix_filter_finalise(tries);
+    if (res != OPENLI_CC_PREFIX_FILTER_OK) {
+        logger(LOG_INFO,
+                "OpenLI collector: unable to finalise IPCC filter for LIID %s: %s",
+                cept->common.liid,
+                openli_cc_prefix_filter_result_string(res));
+        openli_cc_prefix_filter_destroy(tries);
+        return NULL;
+    }
+
+    return tries;
 }
 
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
@@ -2026,6 +2087,14 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
             OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
+    if (cept->cc_exclude_count > 0) {
+        cept->cc_exclude_tries = construct_openli_cc_prefix_filter(cept,
+                HASH_CNT(hh, (sync_sendq_t *)sync->glob->collector_queues));
+        if (cept->cc_exclude_tries) {
+            push_cc_exclude_tries(sync, cept);
+        }
+    }
+
     if (cept->username) {
         push_existing_user_sessions(sync, cept);
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
@@ -2067,6 +2136,7 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     }
 
     push_ipintercept_halt_to_threads(sync, ipint);
+    push_cc_exclude_withdraw(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
     if (ipint->username) {
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
@@ -2159,6 +2229,41 @@ static int update_modified_intercept(collector_sync_t *sync,
         }
     }
 
+    if (compare_ipcc_prefix_filters(ipint, modified) != 0) {
+        char **tmp_cidrs;
+        size_t tmp_count;
+        openli_cc_prefix_filter_t *replace = NULL;
+
+        tmp_count = ipint->cc_exclude_count;
+        tmp_cidrs = ipint->cc_exclude_cidrs;
+
+        ipint->cc_exclude_cidrs = modified->cc_exclude_cidrs;
+        ipint->cc_exclude_count = modified->cc_exclude_count;
+
+        modified->cc_exclude_cidrs = tmp_cidrs;
+        modified->cc_exclude_count = tmp_count;
+
+        if (ipint->cc_exclude_count == 0) {
+            // tell collector local threads to remove the filter without
+            // replacement
+            if (ipint->cc_exclude_tries) {
+                openli_cc_prefix_filter_release(ipint->cc_exclude_tries);
+                ipint->cc_exclude_tries = NULL;
+            }
+            push_cc_exclude_withdraw(sync, ipint);
+        } else {
+            replace = construct_openli_cc_prefix_filter(ipint,
+                    HASH_CNT(hh, (sync_sendq_t *)sync->glob->collector_queues));
+            if (replace) {
+                if (ipint->cc_exclude_tries) {
+                    openli_cc_prefix_filter_release(ipint->cc_exclude_tries);
+                }
+                ipint->cc_exclude_tries = replace;
+                push_cc_exclude_tries(sync, ipint);
+            }
+        }
+    }
+
     update_intercept_time_event(&(sync->upcoming_intercept_events),
             ipint, &(ipint->common), &(modified->common));
     /* Note: this will replace the values in 'ipint' with the new ones
@@ -2177,11 +2282,6 @@ static int update_modified_intercept(collector_sync_t *sync,
         ipint->accesstype = modified->accesstype;
         changed = 1;
     }
-
-    if (ipint->cc_exclude_mask != modified->cc_exclude_mask) {
-        changed = 1;
-    }
-    move_ipintercept_cc_exclude_policy(ipint, modified);
 
     if (encodingchanged) {
         expmsg = create_intercept_details_msg(&(ipint->common),
@@ -2233,11 +2333,6 @@ static int modify_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
             logger(LOG_INFO,
                     "OpenLI: received invalid IP intercept modification from provisioner.");
         }
-        return -1;
-    }
-
-    if (resolve_ipintercept_cc_exclude_mask(sync, modified) < 0) {
-        free_single_ipintercept(modified);
         return -1;
     }
 
@@ -2728,42 +2823,6 @@ static int withdraw_x2x3_listener(collector_sync_t *sync, uint8_t *provmsg,
     return 1;
 }
 
-static int resolve_ipintercept_cc_exclude_mask(collector_sync_t *sync,
-        ipintercept_t *ipint) {
-    uint64_t mask = 0;
-    size_t i;
-    uint8_t j;
-
-    for (i = 0; i < ipint->cc_exclude_group_count; i++) {
-        for (j = 0; j < sync->ipcc_prefix_group_count; j++) {
-            if (strcmp(ipint->cc_exclude_groups[i],
-                    sync->ipcc_prefix_group_names[j]) == 0) {
-                mask |= UINT64_C(1) << j;
-                break;
-            }
-        }
-        if (j == sync->ipcc_prefix_group_count) {
-            logger(LOG_INFO,
-                    "OpenLI: IP intercept %s refers to unknown IPCC prefix exclusion group '%s'",
-                    ipint->common.liid, ipint->cc_exclude_groups[i]);
-            return -1;
-        }
-    }
-    ipint->cc_exclude_mask = mask;
-    return 0;
-}
-
-static void move_ipintercept_cc_exclude_policy(ipintercept_t *destination,
-        ipintercept_t *source) {
-    clear_ipintercept_cc_exclude_groups(destination);
-    destination->cc_exclude_groups = source->cc_exclude_groups;
-    destination->cc_exclude_group_count = source->cc_exclude_group_count;
-    destination->cc_exclude_mask = source->cc_exclude_mask;
-    source->cc_exclude_groups = NULL;
-    source->cc_exclude_group_count = 0;
-    source->cc_exclude_mask = 0;
-}
-
 static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
         uint16_t msglen) {
 
@@ -2776,11 +2835,6 @@ static int new_ipintercept(collector_sync_t *sync, uint8_t *intmsg,
                     "OpenLI: received invalid IP intercept from provisioner.");
         }
         free(cept);
-        return -1;
-    }
-
-    if (resolve_ipintercept_cc_exclude_mask(sync, cept) < 0) {
-        free_single_ipintercept(cept);
         return -1;
     }
 
