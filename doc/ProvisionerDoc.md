@@ -267,7 +267,8 @@ not be encoded and delivered to the receiving LEA. This feature is intended to
 allow operators to exclude certain bandwidth-heavy services (e.g. media
 streaming platforms) from interception to reduce the workload on their
 collectors and the amount of (uninteresting) traffic that they deliver to
-the requesting agency.
+the requesting agency. You should ALWAYS confirm with the agency first before
+applying any filtering to an intercept!
 
 For mobile IP intercepts, there are some slight differences. The Access type
 must be set to "mobile" to tell OpenLI to detect IP sessions using mobile
