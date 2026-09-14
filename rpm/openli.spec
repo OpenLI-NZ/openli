@@ -272,7 +272,9 @@ fi
 %post collector
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
+fi
 
+if [ ! -f /var/lib/openli/cinstate.db ]; then
         # Create cinstate database
         mkdir -p /var/lib/openli/
         mkdir -p /etc/openli/
