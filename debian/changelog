@@ -45,8 +45,9 @@ openli (1.1.21-1) unstable; urgency=medium
     LIID in a pcap output filename.
   * Collector: fix bug where encrypted intercepts would randomly produce no
     records for VoIP intercepts.
+  * Replace deprecated init.d scripts with systemd service files.
 
- -- Shane Alcock <salcock@searchlight.nz>  Wed, 2 Sep 2026 17:23:10 +1200
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 16 Sep 2026 10:45:29 +1200
 
 openli (1.1.20-1) unstable; urgency=medium
 
