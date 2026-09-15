@@ -93,6 +93,7 @@ enum {
     OPENLI_EXPORT_AGENCY_DIGEST_CONFIG = 30,
     OPENLI_EXPORT_CIN_CLOSE = 31,
     OPENLI_EXPORT_CIN_RESET = 32,
+    OPENLI_EXPORT_GSM_SMS_IRI = 33,
 };
 
 typedef struct openli_ipcc_job {
@@ -188,6 +189,20 @@ typedef struct openli_mobiri_job {
     etsili_generic_t *customparams;
 }  openli_mobiri_job_t;
 
+typedef struct openli_gsmsms_iri_job {
+    char *liid;
+    char *authcc;
+    char *delivcc;
+    uint32_t cin;
+    uint8_t target_imsi[8];
+    uint8_t target_msisdn[9];
+    uint8_t target_msisdn_len;
+    uint8_t initiator;
+    uint8_t sms_initiator;
+    uint8_t transfer_status;
+    uint8_t *tpdu;
+    uint32_t tpdu_len;
+} openli_gsmsms_iri_job_t;
 
 typedef struct openli_ipiri_job {
     char *liid;
@@ -234,6 +249,18 @@ enum {
     OPENLI_IPIRI_IPMETHOD_STATIC,
     OPENLI_IPIRI_IPMETHOD_DYNAMIC,
     OPENLI_IPIRI_IPMETHOD_UNKNOWN,
+};
+
+enum {
+    OPENLI_GSMSMS_INITIATOR_TARGET = 0,
+    OPENLI_GSMSMS_INITIATOR_SERVER = 1,
+    OPENLI_GSMSMS_INITIATOR_UNDEFINED = 2,
+};
+
+enum {
+    OPENLI_GSMSMS_TRANSFER_SUCCESS = 0,
+    OPENLI_GSMSMS_TRANSFER_FAIL = 1,
+    OPENLI_GSMSMS_TRANSFER_UNDEFINED = 2,
 };
 
 enum {
@@ -300,6 +327,7 @@ struct openli_export_recv {
         openli_rawip_job_t rawip;
         openli_emailiri_job_t emailiri;
         openli_emailcc_job_t emailcc;
+        openli_gsmsms_iri_job_t gsmsms;
         udp_sink_worker_args_t udpargs;
         liagency_digest_config_t digest;
     	halt_info_t *haltinfo;

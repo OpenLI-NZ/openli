@@ -7,8 +7,12 @@ After=network.target
 Type=simple
 ExecStart=/usr/bin/openlicollector -c /etc/openli/collector-config.yaml
 ExecReload=/bin/kill -s HUP $MAINPID
-ExecStop=/bin/kill -s TERM $MAINPID
 Restart=on-abnormal
+RestartSec=5s
+
+PrivateTmp=yes
+ProtectSystem=yes
+ProtectHome=yes
 
 [Install]
 WantedBy=multi-user.target

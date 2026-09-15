@@ -405,14 +405,21 @@ static int consume_available_rmq_records(handover_t *ho,
     /* If we have records in the buffer already, try to send and
      * acknowledge those.
      */
-    if ((r = send_available_rmq_records(ho, state)) == 1) {
-        ho->disconnect_msg = 0;
-        return 0;
-    } else if (r == -2) {
+    r = send_available_rmq_records(ho, state);
+    if (r == -2) {
         reset_handover_rmq(ho);
         return 0;
     } else if (r == -1) {
         return -1;
+    }
+
+    /* There is still data in the buffer, but we can't send any more
+     * right now. Just return and wait for the next EPOLLOUT event to
+     * fire so we know when we can send more.
+     */
+    if (get_buffered_amount(&(ho->ho_state->buf)) > 0) {
+        ho->disconnect_msg = 0;
+        return 0;
     }
 
     r = 0;
@@ -425,7 +432,7 @@ static int consume_available_rmq_records(handover_t *ho,
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming CC messages from internal queue by agency %s", state->agencyid);
             return 0;
-        } else if (r > 0) {
+        } else if (r > 0 && ho->ho_state->next_rmq_ack > 0) {
             ho->ho_state->valid_rmq_ack = 1;
         }
     } else if (ho->handover_type == HANDOVER_HI2) {
@@ -436,7 +443,7 @@ static int consume_available_rmq_records(handover_t *ho,
             reset_handover_rmq(ho);
             logger(LOG_INFO, "OpenLI Mediator: error while consuming IRI messages from internal queue by agency %s", state->agencyid);
             return 0;
-        } else if (r > 0) {
+        } else if (r > 0 && ho->ho_state->next_rmq_ack > 0) {
             ho->ho_state->valid_rmq_ack = 1;
         }
     }
@@ -1174,10 +1181,6 @@ static void *run_agency_thread(void *params) {
                     state->epoll_fd, state->handover_id + 1,
                     state->agency.handover_retry);
 
-            if (r_hi2 < 0 || r_hi3 < 0) {
-                break;
-            }
-
             if (r_hi2 > 0 && r_hi3 > 0) {
                 is_connected = 1;
             }
@@ -1220,15 +1223,9 @@ static void *run_agency_thread(void *params) {
         /* epoll main loop for a LEA send thread */
         timerexpired = 0;
         while (!timerexpired && !is_halted) {
-            nfds = epoll_wait(state->epoll_fd, evs, 64, 100);
+            nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
 
             if (nfds == 0) {
-                if (state->agency.hi2->outev) {
-                    consume_available_rmq_records(state->agency.hi2, state);
-                }
-                if (state->agency.hi3->outev) {
-                    consume_available_rmq_records(state->agency.hi3, state);
-                }
                 continue;
             }
 

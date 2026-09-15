@@ -31,6 +31,7 @@
 #include "logger.h"
 #include "intercept.h"
 #include "configparser_common.h"
+#include "collector/cc_prefix_filter.h"
 
 const char *cepttype_strings[] =
         {"Unknown", "IP", "VoIP", "Email"};
@@ -106,9 +107,7 @@ void openli_free_encryptkey_ptr(uint8_t **pp, size_t len) {
 int openli_parse_liid_string(char *liidstr, char **storage,
         openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize) {
 
-    if (liidstr == NULL || strlen(liidstr) == 0) {
-        snprintf(errorstring, errorstringsize,
-                "'liid' must be not be null or have zero length");
+    if (validate_openli_liid(liidstr, errorstring, errorstringsize) < 0) {
         return -1;
     }
 
@@ -161,8 +160,17 @@ static inline void copy_intercept_common(intercept_common_t *src,
 
     dest->liid = strdup(src->liid);
     dest->liid_format = src->liid_format;
-    dest->authcc = strdup(src->authcc);
-    dest->delivcc = strdup(src->delivcc);
+    if (src->authcc) {
+        dest->authcc = strdup(src->authcc);
+    } else {
+        dest->authcc = NULL;
+    }
+
+    if (src->delivcc) {
+        dest->delivcc = strdup(src->delivcc);
+    } else {
+        dest->delivcc = NULL;
+    }
 
     if (src->targetagency) {
         dest->targetagency = strdup(src->targetagency);
@@ -217,6 +225,29 @@ int compare_intercept_encrypt_configuration(intercept_common_t *a,
     }
 
     return memcmp(a->encryptkey, b->encryptkey, a->encryptkey_len);
+
+}
+
+int compare_ipcc_prefix_filters(ipintercept_t *a, ipintercept_t *b) {
+
+    size_t i, j;
+    uint8_t found = 0;
+
+    if (a->cc_exclude_count != b->cc_exclude_count) {
+        return 1;
+    }
+
+    for (i = 0; i < a->cc_exclude_count; i++) {
+        found = 0;
+        for (j = 0; j < b->cc_exclude_count; j++) {
+            if (strcmp(a->cc_exclude_cidrs[i], b->cc_exclude_cidrs[j]) == 0) {
+                found = 1;
+                break;
+            }
+        }
+        if (!found) return 1;
+    }
+    return 0;
 
 }
 
@@ -421,6 +452,10 @@ void intercept_encryption_mode_as_string(payload_encryption_method_t method,
 sipregister_t *create_sipregister(voipintercept_t *vint, char *callid,
         uint32_t cin, time_t created) {
     sipregister_t *newreg;
+
+    if (callid == NULL) {
+        return NULL;
+    }
 
     newreg = (sipregister_t *)calloc(1, sizeof(sipregister_t));
 
@@ -697,6 +732,107 @@ void remove_all_intercept_udp_sinks(ipintercept_t *cept) {
     }
 }
 
+void clear_ipintercept_cc_exclude_cidrs(ipintercept_t *cept) {
+    size_t i;
+
+    if (cept == NULL) {
+        return;
+    }
+    if (cept->cc_exclude_cidrs) {
+        for (i = 0; i < cept->cc_exclude_count; i++) {
+            if (cept->cc_exclude_cidrs[i]) {
+                free(cept->cc_exclude_cidrs[i]);
+            }
+            cept->cc_exclude_cidrs[i] = NULL;
+        }
+        free(cept->cc_exclude_cidrs);
+    }
+    cept->cc_exclude_cidrs = NULL;
+    cept->cc_exclude_count = 0;
+}
+
+void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept) {
+    size_t i;
+
+    if (cept == NULL) {
+        return;
+    }
+    clear_ipintercept_cc_exclude_cidrs(cept);
+
+    if (cept->cc_exclude_groups) {
+        for (i = 0; i < cept->cc_exclude_group_count; i++) {
+            if (cept->cc_exclude_groups[i]) {
+                free(cept->cc_exclude_groups[i]);
+            }
+            cept->cc_exclude_groups[i] = NULL;
+        }
+        free(cept->cc_exclude_groups);
+    }
+    cept->cc_exclude_cidrs = NULL;
+    cept->cc_exclude_count = 0;
+    cept->cc_exclude_groups = NULL;
+    cept->cc_exclude_group_count = 0;
+
+}
+
+int add_ipintercept_cc_exclude_group_name(ipintercept_t *cept, char *group) {
+    char **updated;
+    size_t i;
+
+    if (cept == NULL || group == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < cept->cc_exclude_group_count; i++) {
+        if (strcmp(group, cept->cc_exclude_groups[i]) == 0) {
+            return 0;
+        }
+    }
+
+    updated = realloc(cept->cc_exclude_groups,
+            (cept->cc_exclude_group_count + 1) * sizeof(char *));
+    if (updated == NULL) {
+        return -1;
+    }
+    cept->cc_exclude_groups = updated;
+    cept->cc_exclude_groups[cept->cc_exclude_group_count ++] = strdup(group);
+    return 0;
+}
+
+int add_ipintercept_cc_exclude_cidr(ipintercept_t *cept, char *cidr) {
+    char **updated;
+    size_t i;
+
+    if (cept == NULL || cidr == NULL) {
+        return -1;
+    }
+
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        if (strcmp(cidr, cept->cc_exclude_cidrs[i]) == 0) {
+            return 0;
+        }
+    }
+
+    updated = realloc(cept->cc_exclude_cidrs,
+            (cept->cc_exclude_count + 1) * sizeof(char *));
+    if (updated == NULL) {
+        return -1;
+    }
+    cept->cc_exclude_cidrs = updated;
+    cept->cc_exclude_cidrs[cept->cc_exclude_count ++] = strdup(cidr);
+    return 0;
+}
+
+size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept) {
+    size_t total = 0;
+    size_t i;
+
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        total += strlen(cept->cc_exclude_cidrs[i]) + 4;
+    }
+    return total;
+}
+
 void free_single_ipintercept(ipintercept_t *cept) {
     intercept_udp_sink_t *sink, *tmp;
 
@@ -711,6 +847,10 @@ void free_single_ipintercept(ipintercept_t *cept) {
     }
 
     free_all_staticipranges(&(cept->statics));
+    clear_ipintercept_cc_exclude_groups(cept);
+    if (cept->cc_exclude_tries) {
+        openli_cc_prefix_filter_release(cept->cc_exclude_tries);
+    }
     free(cept);
 }
 

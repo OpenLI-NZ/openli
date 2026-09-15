@@ -52,7 +52,7 @@
  *
  */
 
-#define MAX_SAVED_RECEIVED_DATA 1024
+#define MAX_SAVED_RECEIVED_DATA 32768
 
 /** Types of messages that can be sent between the main mediator thread and a
  *  collector receive thread.
@@ -100,6 +100,26 @@ typedef struct col_thread_msg {
     uint64_t arg;
 } col_thread_msg_t;
 
+
+typedef struct saved_received_data {
+    char *liid;
+    uint8_t *msgbody;
+    uint16_t msglen;
+    uint64_t delivtag;
+    openli_proto_msgtype_t msgtype;
+} saved_received_data_t;
+
+#define COL_SAVED_QUEUE_CAPACITY (65536)
+#define COL_MAX_SAVED_QUEUE_CAPACITY (1024 * 1024 * 1024)
+
+typedef struct col_saved_queue {
+    saved_received_data_t *slots;
+    uint32_t capacity;
+    uint32_t head;
+    uint32_t tail;
+    uint32_t count;
+} col_saved_queue_t;
+
 /** Structure for keeping track of the LIIDs that a collector receive thread
  *  has seen
  */
@@ -130,6 +150,10 @@ typedef struct col_known_liid {
 
     uint8_t provisioner_withdrawn;
 
+    col_saved_queue_t cc_queue;
+    col_saved_queue_t iri_queue;
+    col_saved_queue_t raw_queue;
+
     UT_hash_handle hh;
 } col_known_liid_t;
 
@@ -157,14 +181,6 @@ typedef struct mediator_collector_config {
 
 } mediator_collector_config_t;
 
-
-typedef struct saved_received_data {
-    char *liid;
-    uint8_t *msgbody;
-    uint16_t msglen;
-    uint64_t delivtag;
-    openli_proto_msgtype_t msgtype;
-} saved_received_data_t;
 
 /** State associated with a single collector connection */
 typedef struct single_coll_receiver coll_recv_t;
@@ -294,18 +310,6 @@ struct single_coll_receiver {
      */
     uint8_t queue_full;
 
-    saved_received_data_t saved_iri_msgs[MAX_SAVED_RECEIVED_DATA];
-    size_t saved_iri_msg_cnt;
-    size_t iris_published;
-
-    saved_received_data_t saved_cc_msgs[MAX_SAVED_RECEIVED_DATA];
-    size_t saved_cc_msg_cnt;
-    size_t ccs_published;
-
-    saved_received_data_t saved_raw_msgs[MAX_SAVED_RECEIVED_DATA];
-    size_t saved_raw_msg_cnt;
-    size_t raw_published;
-
     /** Pointer to the next receive thread for this collector, i.e. in
      *  cases where the collector has multiple forwarding threads */
     coll_recv_t *next;
@@ -318,6 +322,14 @@ struct single_coll_receiver {
     coll_recv_t *head;
     /** Pointer to the last receive thread in the list for this collector */
     coll_recv_t *tail;
+
+    uint32_t total_cc_unacked;
+    uint32_t total_iri_unacked;
+    uint32_t total_raw_unacked;
+
+    size_t iris_published;
+    size_t ccs_published;
+    size_t raw_published;
 
     UT_hash_handle hh;
     UT_hash_handle hh_ssf;
@@ -428,9 +440,6 @@ void mediator_disconnect_all_collectors(mediator_collector_t *medcol);
  *  to do the bulk of the "cleaning" work with a single iteration.
  */
 void mediator_clean_collectors(mediator_collector_t *medcol);
-
-int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
-        uint8_t *msgbody, uint16_t msglen, openli_proto_msgtype_t msgtype);
 
 /* defined in mediator_encryption.c */
 payload_encryption_method_t check_encryption_requirements(

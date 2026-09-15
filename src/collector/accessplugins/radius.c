@@ -1185,8 +1185,10 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
             radius_v6_prefix_attr_t *prefattr;
             prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
 
-            add_new_session_ip(sess, prefattr->address, AF_INET6,
-                    prefattr->preflength, attr->att_len - 2);
+            if (attr->att_len > 2) {
+                add_new_session_ip(sess, prefattr->address, AF_INET6,
+                        prefattr->preflength, attr->att_len - 2);
+            }
 
             return;
         }

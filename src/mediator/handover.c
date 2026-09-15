@@ -913,6 +913,7 @@ void reset_handover_rmq(handover_t *ho) {
     ho->rmq_consumer = NULL;
     ho->rmq_registered = 0;
     ho->ho_state->valid_rmq_ack = 0;
+    ho->ho_state->next_rmq_ack = 0;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

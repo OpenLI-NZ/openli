@@ -29,8 +29,8 @@
 
 #include "config.h"
 #include <libwandder.h>
-#include <libwandder_etsili.h>
 #include <Judy.h>
+#include <libwandder_etsili.h>
 #include "netcomms.h"
 #include "collector/collector_publish.h"
 
@@ -56,40 +56,40 @@ typedef struct encoder_result {
     openli_export_recv_t *origreq;
 } PACKED openli_encoded_result_t;
 
+#define EXPORT_BLOCK_SIZE (16U * 1024 * 1024)
+#define EXPORT_BLOCK_DEFAULT_LIMIT (16U * 1024 * 1024 * 1024)
 
-typedef struct export_buffer {
-    uint8_t *bufhead;
-    uint8_t *buftail;
-    uint64_t alloced;
-
-    /* all data prior to this offset can be considered "successfully written" */
-    uint64_t deadfront;
-
-    /* offset pointing to the first record that has not been sent */
-    uint64_t writeoffset;
-
-    /* offset pointing to where a previous partial write ended */
-    uint64_t partialfront;
-
-    /* number of bytes remaining to be written following a previous partial
-     * write */
-    uint64_t partialrem;
-
-    uint64_t nextwarn;
-
-    /* number of subsequent bytes that must be sent before data in the buffer
-     * can be considered "sent"
-     */
-    uint64_t deadwindow;
+typedef struct export_block {
+    uint8_t *data;
+    uint32_t write_pos;
+    uint32_t read_pos;
+    uint32_t dead_pos;
 
     Pvoid_t record_offsets;
-    uint64_t since_last_saved_offset;
+
+    struct export_block *next;
+} export_block_t;
+
+
+typedef struct export_buffer {
+    export_block_t *head;
+    export_block_t *reader;
+    export_block_t *tail;
+
+    uint64_t total_alloced;
+    uint64_t total_buffered;
+    uint64_t max_total_bytes;
+
+    uint64_t retained_sent_bytes;
+    uint64_t deadwindow;
+    uint64_t nextwarn;
 } export_buffer_t;
 
 
 void init_export_buffer(export_buffer_t *buf);
 void reset_export_buffer(export_buffer_t *buf);
 void release_export_buffer(export_buffer_t *buf);
+void rewind_export_buffer(export_buffer_t *buf);
 uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_encoded_result_t *msg, uint64_t beensent);

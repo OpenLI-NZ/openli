@@ -220,8 +220,7 @@ static int setup_zmq_sockets(openli_sip_worker_t *sipworker) {
 }
 
 static size_t setup_pollset(openli_sip_worker_t *sipworker,
-        zmq_pollitem_t **topoll, size_t *topoll_size, int timerfd,
-        struct rtpstreaminf ***expiring) {
+        zmq_pollitem_t **topoll, size_t *topoll_size, int timerfd) {
 
     size_t topoll_req, i;
     sync_epoll_t *syncev, *tmp;
@@ -229,10 +228,7 @@ static size_t setup_pollset(openli_sip_worker_t *sipworker,
     topoll_req = 4 + HASH_CNT(hh, sipworker->timeouts);
     if (topoll_req > *topoll_size) {
         free(*topoll);
-        free(*expiring);
         *topoll = calloc(topoll_req + 32, sizeof(zmq_pollitem_t));
-        *expiring = calloc(topoll_req + 32,
-                sizeof(struct rtpstreaminf *));
         *topoll_size = topoll_req + 32;
     }
 
@@ -254,7 +250,6 @@ static size_t setup_pollset(openli_sip_worker_t *sipworker,
         (*topoll)[i].socket = NULL;
         (*topoll)[i].fd = syncev->fd;
         (*topoll)[i].events = ZMQ_POLLIN;
-        (*expiring)[i] = (struct rtpstreaminf *)(syncev->ptr);
         i++;
     }
 
@@ -265,11 +260,22 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *rtp) {
     voipintercept_t *vint;
 
-    if (!rtp) {
+    if (!rtp || !rtp->streamkey) {
         return 0;
     }
 
     vint = rtp->parent;
+
+    // check if this RTP stream has already been removed by some other
+    // action (e.g. a provisioner withdrawal)
+    if (vint && vint->active_cins) {
+        rtpstreaminf_t *found = NULL;
+        HASH_FIND(hh, vint->active_cins, rtp->streamkey, strlen(rtp->streamkey),
+                found);
+        if (!found || found != rtp) {
+            return 0;
+        }
+    }
 
     if (rtp->timeout_ev) {
         sync_epoll_t *timerev = (sync_epoll_t *)(rtp->timeout_ev);
@@ -320,8 +326,13 @@ static int halt_expired_rtpstream(openli_sip_worker_t *sipworker,
 void sip_worker_conclude_sip_call(openli_sip_worker_t *sipworker,
         rtpstreaminf_t *thisrtp) {
 
-    sync_epoll_t *timeout = (sync_epoll_t *)calloc(1, sizeof(sync_epoll_t));
+    sync_epoll_t *timeout;
     struct itimerspec its;
+
+    if (thisrtp == NULL || thisrtp->byematched || thisrtp->timeout_ev != NULL) {
+        return;
+    }
+    timeout = (sync_epoll_t *)calloc(1, sizeof(sync_epoll_t));
 
     thisrtp->byematched = 1;
     its.it_value.tv_sec = 30;
@@ -803,10 +814,12 @@ static void sip_worker_push_intercept_halt(openli_sip_worker_t *sipworker,
             msg.type = OPENLI_PUSH_HALT_IPMMINTERCEPT;
             msg.data.rtpstreamkey = streamdup;
 
-            pthread_mutex_lock(sipworker->stats_mutex);
-            sipworker->stats->voipsessions_ended_diff ++;
-            sipworker->stats->voipsessions_ended_total ++;
-            pthread_mutex_unlock(sipworker->stats_mutex);
+            if (sendq == sipworker->collector_queues) {
+                pthread_mutex_lock(sipworker->stats_mutex);
+                sipworker->stats->voipsessions_ended_diff ++;
+                sipworker->stats->voipsessions_ended_total ++;
+                pthread_mutex_unlock(sipworker->stats_mutex);
+            }
 
             libtrace_message_queue_put(sendq->q, (void *)(&msg));
 
@@ -1352,11 +1365,9 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
     zmq_pollitem_t *topoll;
     size_t topoll_size, topoll_cnt, i;
     struct itimerspec its;
-    struct rtpstreaminf **expiringstreams;
     int x, rc;
 
     topoll = calloc(128, sizeof(zmq_pollitem_t));
-    expiringstreams = calloc(128, sizeof(struct rtpstreaminf *));
     topoll_size = 128;
 
     its.it_value.tv_sec = 5;
@@ -1370,7 +1381,7 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
 
     while (1) {
         topoll_cnt = setup_pollset(sipworker, &topoll, &topoll_size,
-                purgetimer.fd, &expiringstreams);
+                purgetimer.fd);
 
         if (topoll_cnt < 1) {
             break;
@@ -1388,7 +1399,14 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
          */
         for (i = 4; i < topoll_cnt; i++) {
             if (topoll[i].revents & ZMQ_POLLIN) {
-                halt_expired_rtpstream(sipworker, expiringstreams[i]);
+                sync_epoll_t *syncev = NULL;
+
+                HASH_FIND(hh, sipworker->timeouts, &(topoll[i].fd),
+                        sizeof(int), syncev);
+                if (syncev && syncev->ptr) {
+                    halt_expired_rtpstream(sipworker,
+                            (rtpstreaminf_t *)(syncev->ptr));
+                }
             }
         }
 
@@ -1446,7 +1464,6 @@ static void sip_worker_main(openli_sip_worker_t *sipworker) {
 
     }
     free(topoll);
-    free(expiringstreams);
 }
 
 void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
@@ -1499,8 +1516,12 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
     copy->destid = vint->common.destid;
     copy->data.ipmmiri.iritype = iritype;
     copy->data.ipmmiri.cin = cin;
-    copy->data.ipmmiri.authcc = strdup(vint->common.authcc);
-    copy->data.ipmmiri.delivcc = strdup(vint->common.delivcc);
+    if (vint->common.authcc) {
+        copy->data.ipmmiri.authcc = strdup(vint->common.authcc);
+    }
+    if (vint->common.delivcc) {
+        copy->data.ipmmiri.delivcc = strdup(vint->common.delivcc);
+    }
     copy->data.ipmmiri.dir = dir;
 
     pthread_rwlock_rdlock(sipworker->shared_mutex);

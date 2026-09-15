@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
+#include <arpa/inet.h>
 
 #include <errno.h>
 #include <libtrace/message_queue.h>
@@ -610,6 +611,8 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             key, value, "email worker", 0)) return 0;
     if (parse_col_thread_count(&(glob->gtp_threads), "gtpthreads",
             key, value, "GTP worker", 0)) return 0;
+    if (parse_col_thread_count(&(glob->sctp_threads), "sctpthreads",
+            key, value, "SCTP worker", 0)) return 0;
     if (parse_col_thread_count(&(glob->sip_threads), "smsthreads",
             key, value, "SIP worker", 1)) return 0;
     if (parse_col_thread_count(&(glob->sip_threads), "sipthreads",
@@ -872,7 +875,14 @@ static int collector_parser(void *arg, yaml_document_t *doc,
 }
 
 int parse_collector_config(char *configfile, collector_global_t *glob) {
-    return config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
+    int result;
+
+    result = config_yaml_parser(configfile, glob, collector_parser, 0, NULL);
+    if (result < 0) {
+        return result;
+    }
+
+    return 0;
 }
 
 char *collector_config_to_json(collector_global_t *glob) {

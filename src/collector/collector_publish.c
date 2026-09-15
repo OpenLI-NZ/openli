@@ -278,6 +278,19 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.cininfo.liid) {
             free(msg->data.cininfo.liid);
         }
+    } else if (msg->type == OPENLI_EXPORT_GSM_SMS_IRI) {
+        if (msg->data.gsmsms.liid) {
+            free(msg->data.gsmsms.liid);
+        }
+        if (msg->data.gsmsms.authcc) {
+            free(msg->data.gsmsms.authcc);
+        }
+        if (msg->data.gsmsms.delivcc) {
+            free(msg->data.gsmsms.delivcc);
+        }
+        if (msg->data.gsmsms.tpdu) {
+            free(msg->data.gsmsms.tpdu);
+        }
     }
 
     free(msg);

@@ -1,3 +1,54 @@
+openli (1.1.21-1) unstable; urgency=medium
+
+  * Add ability to configure specific IP prefixes that should be
+    automatically excluded from IP CC interception (credit for this
+    feature goes to Pawel Jablonski).
+  * IMAP: fix segmentation faults due to bad pointer arithmetic in the
+    IMAP protocol parser.
+  * Email: fix buffer overflow bug when decoding authentication tokens.
+  * Collector: fix bug where uninitialized memory was inadvertently being
+    used for calculating CC payload digests instead of the actual CC content.
+  * REST API: don't return an error if no collectors are currently connected
+    to the provisioner when a GET request is issued to the collectors/
+    endpoint -- instead, return an empty array.
+  * SIP: fix segfault in cases where a session contains multiple BYE commands.
+  * SIP: fix crash if the authcc or delivcc for an intercept happens to be
+    NULL.
+  * SIP: fix erroneous "VoIP sessions ended" statistics caused by completed
+    sessions being counted multiple times.
+  * Collector: improve performance by trying to send more data to the
+    mediator for each transmit attempt.
+  * Collector: fix deadlock when trying to exit while under heavy load.
+  * Fix bugs that were causing TLS sessions between OpenLI components to
+    break down under certain specific circumstances.
+  * Mediator: fix bug where a producer thread would repeatedly disconnect
+    from the internal RabbitMQ if it encountered a temporary issue (e.g.
+    the queue buffer was full).
+  * Mediator: increase maximum size of buffer for receiving data from the
+    collectors, which should improve performance under heavy load.
+  * Mediator: fix bug where an LEA handover thread would not properly
+    reset its internal RabbitMQ acknowledgement when reconnecting to the
+    internal RabbitMQ, leading to repeated failures to acknowledge new data.
+  * Mediator: fixed bug where an LEA handover thread would permanently
+    shut down if a connection attempt failed in a way that was erroneously
+    deemed to be unresolvable.
+  * Mediator: reduce CPU usage of the pcap thread when it is idle.
+  * Mediator: reduce CPU usage of LEA handover threads when idle.
+  * Mediator: improved performance of collector receiver threads through
+    more efficient and dynamic management of intercept records held in
+    memory.
+  * Fix death spiral that can occur if a collector or mediator has to expand
+    an export buffer to accommodate a large volume of traffic.
+  * Collector: add worker threads for processing packets using SCTP for
+    transport (e.g. SIGTRAN).
+  * Mediator: replace any '/' or '\' characters in an LIID before using the
+    LIID in a pcap output filename.
+  * Collector: fix bug where encrypted intercepts would randomly produce no
+    records for VoIP intercepts.
+  * Replace deprecated init.d scripts with systemd service files.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Wed, 16 Sep 2026 10:45:29 +1200
+
 openli (1.1.20-1) unstable; urgency=medium
 
   * Collector: fix bugs in IP fragment reassembly code that would cause

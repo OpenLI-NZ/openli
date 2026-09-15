@@ -69,11 +69,13 @@ typedef struct colsync_data {
     size_t emailcount;
     size_t gtpcount;
     size_t sipcount;
+    size_t sctpcount;
 
     void **zmq_pubsocks;
     void **zmq_fwdctrlsocks;
     void **zmq_emailsocks;
     void **zmq_gtpsocks;
+    void **zmq_sctpsocks;
     void **zmq_sipsocks;
     void *zmq_colsock;
 

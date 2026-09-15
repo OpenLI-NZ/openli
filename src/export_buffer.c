@@ -39,25 +39,54 @@
 #define BUF_OFFSET_FREQUENCY (UINT64_C(1024) * 256)
 
 
-static inline uint64_t get_tail_offset(const export_buffer_t *buf) {
-    if (buf->bufhead == NULL) {
-        return 0;
+static export_block_t *create_export_block(void) {
+    export_block_t *block;
+    int rcint;
+
+    block = calloc(1, sizeof(export_block_t));
+    if (block == NULL) {
+        logger(LOG_INFO, "OpenLI: OOM when allocating new export buffer block");
+        return NULL;
     }
-    return (uint64_t)(buf->buftail - buf->bufhead);
+
+    block->data = malloc(EXPORT_BLOCK_SIZE);
+    if (block->data == NULL) {
+        logger(LOG_INFO, "OpenLI: OOM while allocating new export buffer block");
+        free(block);
+        return NULL;
+    }
+    J1S(rcint, block->record_offsets, 0);
+
+    return block;
+}
+
+static void free_export_block(export_block_t *block) {
+    int rcint;
+
+    if (!block) return;
+
+    if (block->data) {
+        free(block->data);
+    }
+
+    J1FA(rcint, block->record_offsets);
+    free(block);
 }
 
 void init_export_buffer(export_buffer_t *buf) {
-    buf->bufhead = NULL;
-    buf->buftail = NULL;
-    buf->alloced = 0;
-    buf->partialfront = 0;
-    buf->partialrem = 0;
-    buf->deadfront = 0;
-    buf->writeoffset = 0;
-    buf->nextwarn = BUFFER_WARNING_THRESH;
-    buf->record_offsets = NULL;
-    buf->since_last_saved_offset = 0;
+    buf->head = NULL;
+    buf->tail = NULL;
+    buf->reader = NULL;
+
+    buf->total_alloced = 0;
+    buf->total_buffered = 0;
+    buf->max_total_bytes = 0;
     buf->deadwindow = 0;
+    buf->nextwarn = BUFFER_WARNING_THRESH;
+}
+
+void set_export_buffer_max_bytes(export_buffer_t *buf, uint64_t size_limit) {
+    buf->max_total_bytes = size_limit;
 }
 
 void set_export_buffer_ack_window(export_buffer_t *buf, uint64_t window) {
@@ -65,198 +94,160 @@ void set_export_buffer_ack_window(export_buffer_t *buf, uint64_t window) {
 }
 
 void release_export_buffer(export_buffer_t *buf) {
-    Word_t rc;
-    J1FA(rc, buf->record_offsets);
-    free(buf->bufhead);
+    export_block_t *block = buf->head;
+    export_block_t *tmp;
+
+    while (block) {
+        tmp = block;
+        block = block->next;
+        free_export_block(tmp);
+    }
+
+    init_export_buffer(buf);
 }
 
 uint64_t get_buffered_amount(export_buffer_t *buf) {
-    uint64_t tail = get_tail_offset(buf);
-
-    assert(buf->deadfront <= buf->writeoffset);
-    assert(buf->writeoffset <= tail);
-    assert(tail <= buf->alloced);
-    return tail - buf->writeoffset;
+    return buf->total_buffered;
 }
 
 uint8_t *get_buffered_head(export_buffer_t *buf, uint64_t *rem) {
-    *rem = get_buffered_amount(buf);
+
+    while (buf->reader != NULL &&
+            buf->reader->read_pos == buf->reader->write_pos &&
+            buf->reader != buf->tail) {
+        buf->reader = buf->reader->next;
+    }
+
+    if (buf->reader == NULL) {
+        return NULL;
+    }
+    *rem = (buf->reader->write_pos - buf->reader->read_pos);
     if (*rem == 0) {
         return NULL;
     }
-    return (buf->bufhead + buf->writeoffset);
+    return (buf->reader->data + buf->reader->read_pos);
 }
 
 void reset_export_buffer(export_buffer_t *buf) {
-    buf->writeoffset = buf->deadfront;
-    buf->partialfront = 0;
-    buf->partialrem = 0;
+    export_block_t *blk;
+    uint64_t rem = 0;
+
+    if (buf == NULL || buf->head == NULL) {
+        return;
+    }
+
+    buf->reader = buf->head;
+
+    for (blk = buf->head; blk != NULL; blk = blk->next) {
+        blk->read_pos = blk->dead_pos;
+        rem += (blk->write_pos - blk->read_pos);
+    }
+    buf->total_buffered = rem;
+    buf->retained_sent_bytes = 0;
+
 }
 
-static inline void dump_buffer_offsets(export_buffer_t *buf) {
-
-    Word_t index = 0;
+void rewind_export_buffer(export_buffer_t *buf) {
     int rcint;
+    Word_t index;
+    uint32_t amount = 0;
 
-    J1F(rcint, buf->record_offsets, index);
-    fprintf(stderr, "Offsets: ");
-    while(rcint) {
-        fprintf(stderr, "%lu ", index);
-        J1N(rcint, buf->record_offsets, index);
-    }
-    fprintf(stderr, "\n");
-}
-
-static inline int slide_buffer(export_buffer_t *buf, uint8_t *start,
-        uint64_t amount) {
-
-    uint64_t slide = start - buf->bufhead;
-    Word_t index = 0;
-    int rcint, x;
-
-    if (amount == 0) {
-        J1FA(rcint, buf->record_offsets);
-        return 0;
+    if (buf == NULL || buf->reader == NULL ||
+            buf->reader->read_pos == buf->reader->write_pos) {
+        return;
     }
 
-    memmove(buf->bufhead, start, amount);
+    index = (Word_t)buf->reader->read_pos;
+    J1T(rcint, buf->reader->record_offsets, index);
+    if (rcint == 0) {
+        J1P(rcint, buf->reader->record_offsets, index);
 
-    J1F(rcint, buf->record_offsets, index);
-    while (rcint) {
-        J1U(x, buf->record_offsets, index);
-        if (index >= slide) {
-            J1S(x, buf->record_offsets, index - slide);
+        if (rcint != 0) {
+            amount = buf->reader->read_pos - (uint32_t)index;
+            buf->reader->read_pos = (uint32_t)index;
+            buf->total_buffered += amount;
         }
-        J1N(rcint, buf->record_offsets, index);
     }
-    return 0;
 }
 
-static inline uint64_t extend_buffer(export_buffer_t *buf) {
-
-    /* Add some space to the buffer */
-    uint8_t *space = NULL;
-    uint64_t bufused = get_tail_offset(buf) - buf->deadfront;
-    uint64_t writeroffset = buf->writeoffset - buf->deadfront;
-
-    if (buf->deadfront > 0) {
-        slide_buffer(buf, buf->bufhead + buf->deadfront, bufused);
-    }
-
-    if (buf->alloced > SIZE_MAX - BUFFER_ALLOC_SIZE) {
-        logger(LOG_INFO, "OpenLI: export buffer size overflow");
+static inline int add_new_block_to_export_buffer(export_buffer_t *buf) {
+    export_block_t *blk = create_export_block();
+    if (blk == NULL) {
         return 0;
     }
 
-    space = (uint8_t *)realloc(buf->bufhead,
-            (size_t)(buf->alloced + BUFFER_ALLOC_SIZE));
-
-    if (space == NULL) {
-        /* OOM -- bad! */
-        /* TODO: maybe dump to disk at this point? */
-        logger(LOG_INFO, "OpenLI: no more free memory to use as buffer space!");
-        logger(LOG_INFO, "OpenLI: fix the connection between your collector and your mediator.");
-        return 0;
+    if (buf->tail) {
+        buf->tail->next = blk;
+    } else {
+        buf->head = blk;
+        buf->reader = blk;
     }
-
-
-    buf->deadfront = 0;
-    buf->writeoffset = writeroffset;
-    buf->bufhead = space;
-    buf->buftail = space + bufused;
-    buf->alloced = buf->alloced + BUFFER_ALLOC_SIZE;
-
-    if (buf->alloced - BUFFER_ALLOC_SIZE < buf->nextwarn &&
-            buf->alloced >= buf->nextwarn) {
-        /* TODO add email alerts */
-        logger(LOG_INFO, "OpenLI: buffer space for missing mediator has exceeded warning threshold %lu.", buf->nextwarn);
-        buf->nextwarn += BUFFER_WARNING_THRESH;
-    }
-
-    return buf->alloced - bufused;
+    buf->tail = blk;
+    buf->total_alloced += EXPORT_BLOCK_SIZE;
+    return 1;
 }
 
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
-        uint8_t *pdustart, uint32_t pdulen, uint64_t beensent) {
+        uint8_t *pdustart, uint32_t pdulen, uint64_t beensent UNUSED) {
 
-    uint64_t bufused = get_tail_offset(buf);
-    uint64_t spaceleft = buf->alloced - bufused;
     int rcint;
-
-    if (bufused == 0) {
-        buf->partialfront = beensent;
-    }
-
-    while (spaceleft < pdulen) {
-        spaceleft = extend_buffer(buf);
-        if (spaceleft == 0) {
+    if (buf->tail == NULL ||
+            (EXPORT_BLOCK_SIZE - buf->tail->write_pos < pdulen)) {
+        if (add_new_block_to_export_buffer(buf) == 0) {
             return 0;
         }
     }
 
-    memcpy(buf->buftail, (void *)pdustart, pdulen);
+    memcpy(buf->tail->data + buf->tail->write_pos, (void *)pdustart, pdulen);
 
-    if (buf->since_last_saved_offset + pdulen >= BUF_OFFSET_FREQUENCY) {
-        J1S(rcint, buf->record_offsets, bufused);
-        buf->since_last_saved_offset = 0;
-    }
-
-    buf->since_last_saved_offset += pdulen;
-    buf->buftail += pdulen;
-    return (buf->buftail - buf->bufhead);
+    J1S(rcint, buf->tail->record_offsets, buf->tail->write_pos);
+    buf->tail->write_pos += pdulen;
+    buf->total_buffered += pdulen;
+    return (buf->total_buffered);
 
 }
 
 uint64_t append_message_to_buffer(export_buffer_t *buf,
-        openli_encoded_result_t *res, uint64_t beensent) {
+        openli_encoded_result_t *res, uint64_t beensent UNUSED) {
 
     uint32_t enclen = res->msgbody->len - res->ipclen;
-    uint64_t bufused = get_tail_offset(buf);
-    uint64_t spaceleft = buf->alloced - bufused;
-    uint64_t added = 0;
+    uint64_t added = 0, start;
     int rcint;
 
-    if (bufused == 0) {
-        buf->partialfront = beensent;
-    }
-
-    while (spaceleft < res->msgbody->len + sizeof(res->header)) {
-        /* Add some space to the buffer */
-        spaceleft = extend_buffer(buf);
-        if (spaceleft == 0) {
+    if (buf->tail == NULL ||
+            (EXPORT_BLOCK_SIZE - buf->tail->write_pos < res->msgbody->len + sizeof(res->header))) {
+        if (add_new_block_to_export_buffer(buf) == 0) {
             return 0;
         }
     }
 
-    memcpy(buf->buftail, &res->header, sizeof(res->header));
-    buf->buftail += sizeof(res->header);
+    start = buf->tail->write_pos;
+
+    memcpy(buf->tail->data + buf->tail->write_pos, &res->header,
+            sizeof(res->header));
+    buf->tail->write_pos += sizeof(res->header);
     added += sizeof(res->header);
 
     if (enclen > 0) {
-        memcpy(buf->buftail, res->msgbody->encoded, enclen);
-        buf->buftail += enclen;
+        memcpy(buf->tail->data + buf->tail->write_pos, res->msgbody->encoded,
+                enclen);
+        buf->tail->write_pos += enclen;
     }
 
     if (res->ipclen > 0) {
-        memcpy(buf->buftail, res->ipcontents, res->ipclen);
-        buf->buftail += res->ipclen;
+        memcpy(buf->tail->data + buf->tail->write_pos, res->ipcontents,
+                res->ipclen);
+        buf->tail->write_pos += res->ipclen;
     }
     added += res->msgbody->len;
 
-    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
-        J1S(rcint, buf->record_offsets, bufused);
-        buf->since_last_saved_offset = 0;
-    }
-    buf->since_last_saved_offset += added;
-    return (buf->buftail - buf->bufhead);
+    J1S(rcint, buf->tail->record_offsets, start);
+    buf->total_buffered += added;
+    return (buf->total_buffered);
 }
 
 uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
     ii_header_t hbeat;
-
-    uint64_t bufused = get_tail_offset(buf);
-    uint64_t spaceleft = buf->alloced - bufused;
-    uint64_t added = 0;
     int rcint;
 
     hbeat.magic = htonl(OPENLI_PROTO_MAGIC);
@@ -264,146 +255,140 @@ uint64_t append_heartbeat_to_buffer(export_buffer_t *buf) {
     hbeat.intercepttype = htons((uint16_t)OPENLI_PROTO_HEARTBEAT);
     hbeat.internalid = 0;
 
-    if (bufused == 0) {
-        buf->partialfront = 0;
-    }
-
-    while (spaceleft < sizeof(hbeat)) {
-        /* Add some space to the buffer */
-        spaceleft = extend_buffer(buf);
-        if (spaceleft == 0) {
+    if (buf->tail == NULL ||
+            (EXPORT_BLOCK_SIZE - buf->tail->write_pos < sizeof(hbeat))) {
+        if (add_new_block_to_export_buffer(buf) == 0) {
             return 0;
         }
     }
 
-    memcpy(buf->buftail, &hbeat, sizeof(hbeat));
-    buf->buftail += sizeof(hbeat);
-    added += sizeof(hbeat);
+    memcpy(buf->tail->data + buf->tail->write_pos, &hbeat, sizeof(hbeat));
 
-    if (buf->since_last_saved_offset + added >= BUF_OFFSET_FREQUENCY) {
-        J1S(rcint, buf->record_offsets, bufused);
-        buf->since_last_saved_offset = 0;
-    }
-    buf->since_last_saved_offset += added;
-    return (buf->buftail - buf->bufhead);
+    J1S(rcint, buf->tail->record_offsets, buf->tail->write_pos);
+    buf->total_buffered += sizeof(hbeat);
+    buf->tail->write_pos += sizeof(hbeat);
+
+    return (buf->total_buffered);
 }
 
 static inline void post_transmit(export_buffer_t *buf) {
+    uint64_t excess;
+    uint32_t in_head;
 
-    uint64_t rem = 0;
-    uint8_t *newbuf = NULL;
-    uint64_t resize = 0;
-    uint64_t writeoff = buf->writeoffset - buf->deadfront;
-    uint64_t tail = get_tail_offset(buf);
+    while (buf->head != NULL && buf->head != buf->tail &&
+            buf->retained_sent_bytes > buf->deadwindow) {
 
-    assert(buf->deadfront <= buf->writeoffset);
-    assert(buf->writeoffset <= tail);
-    assert(tail <= buf->alloced);
-    assert(buf->deadfront <= tail);
-    rem = (buf->buftail - (buf->bufhead + buf->deadfront));
+        excess = buf->retained_sent_bytes - buf->deadwindow;
+        in_head = buf->head->write_pos - buf->head->dead_pos;
 
-    /* Consider shrinking buffer if it is now way too large */
-    if (rem < buf->alloced / 2 && buf->alloced > 10 * BUFFER_ALLOC_SIZE) {
-
-        resize = ((rem / BUFFER_ALLOC_SIZE) + 1) * BUFFER_ALLOC_SIZE;
-        slide_buffer(buf, buf->bufhead + buf->deadfront,
-                rem);
-        newbuf = (uint8_t *)realloc(buf->bufhead, (size_t)resize);
-        if (newbuf != NULL) {
-            buf->bufhead = newbuf;
-            buf->alloced = resize;
+        if (excess >= in_head) {
+            export_block_t *blk = buf->head;
+            buf->head = buf->head->next;
+            buf->total_alloced -= EXPORT_BLOCK_SIZE;
+            buf->retained_sent_bytes -= in_head;
+            free_export_block(blk);
+        } else {
+            buf->head->dead_pos += (uint32_t) excess;
+            buf->retained_sent_bytes -= excess;
+            break;
         }
-        /* slide_buffer() already moved the live data to offset zero.  If the
-         * shrink realloc failed, the old allocation is still valid. */
-        buf->buftail = buf->bufhead + rem;
-        buf->writeoffset = writeoff;
-        buf->deadfront = 0;
-    } else if (buf->alloced - (buf->buftail - buf->bufhead) <
-            0.25 * buf->alloced && buf->deadfront >= 0.25 * buf->alloced) {
-        slide_buffer(buf, buf->bufhead + buf->deadfront,
-                rem);
-        buf->buftail = buf->bufhead + rem;
-        assert(buf->buftail < buf->bufhead + buf->alloced);
-        buf->deadfront = 0;
-        buf->writeoffset = writeoff;
     }
 
-    buf->partialfront = 0;
-    buf->partialrem = 0;
+    if (buf->head && buf->head == buf->tail) {
+        if (buf->deadwindow == 0) {
+            buf->head->dead_pos = buf->head->read_pos;
+            buf->retained_sent_bytes = 0;
+        } else if (buf->retained_sent_bytes > buf->deadwindow) {
+            excess = buf->retained_sent_bytes - buf->deadwindow;
+            buf->head->dead_pos += (uint32_t)excess;
+            buf->retained_sent_bytes -= excess;
+        }
+    }
+
 }
 
 int transmit_buffered_records(export_buffer_t *buf, int fd,
         uint64_t bytelimit, SSL *ssl) {
 
-    uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->writeoffset;
-    uint64_t offset = buf->partialfront;
-    int ret, rcint;
-    Word_t index = 0;
+    uint64_t total_sent = 0;
+    uint64_t remaining_limit = bytelimit;
 
-    if (buf->partialrem > 0) {
-        sent = buf->partialrem;
-    } else {
-        sent = (buf->buftail - (bhead + offset));
+    while (get_buffered_amount(buf) > 0) {
+        uint64_t sent = 0;
+        uint8_t *bhead = buf->reader->data + buf->reader->read_pos;
+        int ret, rcint;
+        Word_t index = 0;
 
-        if (sent > bytelimit) {
-            index = bytelimit + 1 + buf->writeoffset;
-            J1P(rcint, buf->record_offsets, index);
-            if (rcint == 0) {
-                assert(rcint != 0);
-                return 0;
-            }
-            sent = index - buf->writeoffset;
+        sent = buf->reader->write_pos - buf->reader->read_pos;
+
+        if (sent == 0 && buf->reader == buf->tail) {
+            break;
         }
-        buf->partialrem = sent;
-    }
 
-    if (sent != 0) {
+        if (sent == 0) {
+            buf->reader = buf->reader->next;
+            continue;
+        }
+
+        remaining_limit = bytelimit - total_sent;
+        if (sent > remaining_limit) {
+            index = buf->reader->read_pos + remaining_limit;
+            J1P(rcint, buf->reader->record_offsets, index);
+            if (rcint != 0 && index > buf->reader->read_pos) {
+                sent = (uint64_t) index - buf->reader->read_pos;
+            } else {
+                sent = remaining_limit;
+            }
+        }
+
         if (ssl != NULL) {
-            ret = SSL_write(ssl, bhead + offset, (int)sent);
+            ret = SSL_write(ssl, bhead, (int)sent);
 
             if (ret <= 0) {
                 char errstring[128];
                 int errr = SSL_get_error(ssl, ret);
                 if (errr == SSL_ERROR_WANT_WRITE ||
                         errr == SSL_ERROR_WANT_READ) {
-                    return 0;
+                    return (int)total_sent;
                 }
                 logger(LOG_INFO,
                         "OpenLI: ssl_write error (%d) in export_buffer: %s",
                         errr, ERR_error_string(ERR_get_error(), errstring));
                 return -1;
             }
-        }
-        else {
-            ret = send(fd, bhead + offset, (int)sent, MSG_DONTWAIT);
-        }
+        } else {
+            ret = send(fd, bhead, (int)sent, MSG_DONTWAIT);
 
-        if (ret < 0) {
-            if (errno != EAGAIN) {
-                return -1;
+            if (ret < 0) {
+                if (errno != EAGAIN && errno != EWOULDBLOCK) {
+                    return -1;
+                }
+                return (int)total_sent;
             }
-            return 0;
-        } else if ((uint64_t)ret < sent) {
-            /* Partial send, move partialfront ahead by whatever we did send. */
-            buf->partialfront += (uint64_t)ret;
-            buf->partialrem -= (uint64_t)ret;
-            return ret;
         }
-        buf->writeoffset += ((uint64_t)ret + buf->partialfront);
-        if (buf->deadwindow != 0 && buf->writeoffset > buf->deadwindow) {
-            int rcint;
-            Word_t index = buf->writeoffset - buf->deadwindow;
-            J1P(rcint, buf->record_offsets, index);
 
-            buf->deadfront = (uint64_t)index;
-        } else if (buf->deadwindow == 0) {
-            buf->deadfront = buf->writeoffset;
+        buf->reader->read_pos += (uint64_t)ret;
+        total_sent += (uint64_t)ret;
+        buf->total_buffered -= (uint64_t) ret;
+
+        if ((uint64_t)ret < sent) {
+            /* Partial send, something must have filled up */
+        }
+
+        buf->retained_sent_bytes += (uint64_t)ret;
+
+        if (buf->reader->read_pos == buf->reader->write_pos &&
+                buf->reader != buf->tail) {
+            buf->reader = buf->reader->next;
+        }
+
+        post_transmit(buf);
+        if (total_sent >= bytelimit) {
+            break;
         }
     }
 
-    post_transmit(buf);
-    return sent;
+    return (int)total_sent;
 }
 
 int check_rmq_connection_block_status(amqp_connection_state_t amqp_state,
@@ -474,17 +459,30 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         uint64_t bytelimit, uint8_t *is_blocked) {
 
     uint64_t sent = 0;
-    uint8_t *bhead = buf->bufhead + buf->writeoffset;
-    int ret, x, elapsed, timeout;
+    int pub_ret, ret, x, elapsed = 0, timeout = 3;
     amqp_frame_t frame;
     amqp_bytes_t message_bytes;
     amqp_basic_properties_t props;
+    uint32_t unsent;
     struct timeval tv;
 
-    sent = (buf->buftail - (bhead));
+    while (buf->reader != NULL &&
+            buf->reader->read_pos == buf->reader->write_pos &&
+            buf->reader != buf->tail) {
+        buf->reader = buf->reader->next;
+    }
 
-    if (sent > bytelimit) {
+
+    if (buf->reader == NULL || buf->reader->read_pos >= buf->reader->write_pos)
+    {
+        return 0;
+    }
+
+    unsent = buf->reader->write_pos - buf->reader->read_pos;
+    if (unsent > bytelimit) {
         sent = bytelimit;
+    } else {
+        sent = unsent;
     }
 
     if (sent == 0) {
@@ -492,7 +490,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
     }
 
     message_bytes.len = sent;
-    message_bytes.bytes = bhead;
+    message_bytes.bytes = buf->reader->data + buf->reader->read_pos;
 
     props._flags = AMQP_BASIC_DELIVERY_MODE_FLAG;
     props.delivery_mode = 2;        /* persistent mode */
@@ -506,7 +504,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         return 0;
     }
 
-    int pub_ret = amqp_basic_publish(
+    pub_ret = amqp_basic_publish(
             amqp_state,
             channel,
             exchange,
@@ -520,12 +518,7 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
         logger(LOG_INFO,
                 "OpenLI: RMQ publish error %d", pub_ret);
         return -1;
-    } else {
-        ret = sent;
     }
-
-    elapsed = 0;
-    timeout = 3;
 
     while (1) {
         tv.tv_sec = 1; tv.tv_usec = 0;
@@ -581,28 +574,45 @@ int transmit_buffered_records_RMQ(export_buffer_t *buf,
      * broker (or we got no feedback from the broker and have to assume
      * a successful publication...)
      */
-    buf->writeoffset += sent;
-    if (buf->writeoffset > buf->deadwindow) {
-        buf->deadfront = buf->writeoffset - buf->deadwindow;
+    buf->reader->read_pos += sent;
+    buf->total_buffered -= sent;
+    buf->retained_sent_bytes += sent;
+
+    if (buf->reader->read_pos == buf->reader->write_pos &&
+            buf->reader != buf->tail) {
+        buf->reader = buf->reader->next;
     }
+
     post_transmit(buf);
     return 1;
 }
 
 int advance_export_buffer_head(export_buffer_t *buf, uint64_t amount) {
 
-    uint64_t rem = get_buffered_amount(buf);
+    uint64_t avail = 0;
 
-    if (amount > rem) {
-        amount = rem;
+    if (buf->reader == NULL) {
+        return 0;
+    }
+
+    avail = buf->reader->write_pos - buf->reader->read_pos;
+
+    if (amount > avail) {
+        amount = avail;
     }
 
     /* This is only used in the pcap output context, so there's no real
      * need to maintain a retransmit window, so just set deadfront to
      * match the write offset.
      */
-    buf->writeoffset += amount;
-    buf->deadfront = buf->writeoffset;
+    buf->reader->read_pos += amount;
+    buf->reader->dead_pos = buf->reader->read_pos;
+    buf->total_buffered -= amount;
+
+    if (buf->reader->read_pos == buf->reader->write_pos &&
+            buf->reader != buf->tail) {
+        buf->reader = buf->reader->next;
+    }
     post_transmit(buf);
     return 0;
 }

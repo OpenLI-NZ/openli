@@ -680,8 +680,8 @@ loginparsefail:
 static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
         emailsession_t *sess) {
 
-    char decoded[2048];
-    char reencoded[2048];
+    char *decoded = NULL;
+    char reencoded[4096];
     char *ptr;
     int cnt, r;
     char *crlf;
@@ -713,9 +713,11 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
         return 0;
     }
 
+    decoded = calloc(strlen(authmsg) + 1, sizeof(char));
     base64_init_decodestate(&s);
     cnt = base64_decode_block(authmsg, strlen(authmsg), decoded, &s);
     if (cnt == 0) {
+        free(decoded);
         return 0;
     }
     decoded[cnt] = '\0';
@@ -729,6 +731,7 @@ static int decode_plain_auth_content(char *authmsg, imap_session_t *imapsess,
      * separated by null bytes (e.g. <mailbox> \0 <username> \0 <password>)
      */
     imapsess->mailbox = strdup(ptr);
+    if (decoded) free(decoded);
 
     /* add "mailbox" as a recipient for this session */
     add_email_participant(sess, imapsess->mailbox, 0);
@@ -1384,9 +1387,11 @@ static int find_next_crlf(imap_session_t *sess, size_t start_index) {
                  */
                 char *endptr = NULL;
                 unsigned long toskip;
+                size_t bytes_left;
                 toskip = strtoul((char *)(curly + 1), &endptr, 10);
 
-                if (toskip >= rem) {
+                bytes_left = sess->contbufused - ((uint8_t *)endptr - sess->contbuffer);
+                if (toskip >= bytes_left) {
                     /* The whole section is not here yet, so we can't
                      * skip it until it arrives */
                     found = NULL;

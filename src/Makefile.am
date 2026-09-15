@@ -23,10 +23,11 @@ openliprovisioner_SOURCES=provisioner/provisioner.c provisioner/provisioner.h \
                 provisioner/updateserver_jsoncreation.c \
                 provisioner/hup_reload.c \
 				provisioner/clientdb.c provisioner/integrity_sign.c \
-                provisioner/intercept_timers.c provisioner/intercept_timers.h
+                provisioner/intercept_timers.c provisioner/intercept_timers.h \
+                collector/cc_prefix_filter.c collector/cc_prefix_filter.h
 
-openliprovisioner_LDFLAGS = -lpthread @PROVISIONER_LIBS@
-openliprovisioner_LDADD = @ADD_LIBS@
+openliprovisioner_LDFLAGS = -lpthread -lpatricia @PROVISIONER_LIBS@
+openliprovisioner_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
 openliprovisioner_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ @PROVISIONER_CFLAGS@ -Werror -Wall -Wextra
 
 dist_sbin_SCRIPTS += provisioner/authsetup/openli-prov-authsetup.sh \
@@ -58,6 +59,8 @@ openlicollector_SOURCES=collector/collector.c \
 		collector/ipmmiri.h \
                 collector/internetaccess.c collector/internetaccess.h \
 		collector/ipcc.c collector/ipcc.h \
+		collector/cc_prefix_filter.c \
+		collector/cc_prefix_filter.h \
                 coreserver.h coreserver.c collector/collector_push_messaging.c \
                 collector/collector_push_messaging.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
@@ -87,11 +90,13 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/etsiencoding/ipmmcc.c \
                 collector/etsiencoding/templating.c \
                 collector/etsiencoding/tripayload.c \
+                collector/etsiencoding/gsmsmsiri.c \
                 collector/etsiencoding/epsiri.c collector/epsiri.h \
                 collector/etsiencoding/epscc.c collector/epscc.h \
                 collector/sip_worker.c collector/sip_worker.h \
 				collector/sip_update_state.c \
                 collector/gtp_worker.c collector/gtp_worker.h \
+                collector/sctp_worker.c collector/sctp_worker.h \
 				collector/gtp.h collector/sms_masking.c \
                 collector/location.c collector/location.h \
                 collector/collector_util.c collector/collector_util.h \
@@ -159,9 +164,10 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 collector/etsiencoding/hi1notification.c \
                 collector/etsiencoding/encryptcontainer.c \
                 collector/etsiencoding/templating.c \
+                collector/cc_prefix_filter.c collector/cc_prefix_filter.h \
                 coreserver.c coreserver.h
-openlimediator_LDADD = @ADD_LIBS@
-openlimediator_LDFLAGS=-lpthread @MEDIATOR_LIBS@
+openlimediator_LDADD = @ADD_LIBS@ -L$(abs_top_srcdir)/extlib/libpatricia/.libs
+openlimediator_LDFLAGS=-lpthread -lpatricia @MEDIATOR_LIBS@
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 

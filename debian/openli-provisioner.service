@@ -1,16 +1,21 @@
 [Unit]
 Description=OpenLI provisioner daemon
+Documentation=http://github.com/OpenLI-NZ/openli/wiki
 After=network.target
 
 [Service]
-Type=forking
-ExecStart=/etc/init.d/openli-provisioner start
-ExecStop=/etc/init.d/openli-provisioner stop
-ExecReload=/etc/init.d/openli-provisioner reload
+User=openli
+Group=openli
+Type=simple
+ExecStart=/usr/bin/openliprovisioner -c /etc/openli/provisioner-config.yaml -K default
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-abnormal
+RestartSec=5s
+
 PrivateTmp=yes
-PrivateDevices=yes
 ProtectSystem=yes
 ProtectHome=yes
+PrivateDevices=yes
 
 [Install]
 WantedBy=multi-user.target

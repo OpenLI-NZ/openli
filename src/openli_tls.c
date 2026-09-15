@@ -95,6 +95,11 @@ static SSL_CTX * ssl_init(openli_ssl_config_t *sslconf) {
     /* Enforce use of TLSv1_3 */
     SSL_CTX_set_min_proto_version(ctx, TLS1_3_VERSION);
 
+    /* Allow buffer reallocations or movement of write pointers between
+     * retries */
+    SSL_CTX_set_mode(ctx, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+            SSL_MODE_ENABLE_PARTIAL_WRITE);
+
     if (sslconf->tlsgroups) {
         if (SSL_CTX_set1_groups_list(ctx, sslconf->tlsgroups) != 1) {
             logger(LOG_INFO, "OpenLI: unable to set TLS key exchange groups to {%s}",
@@ -237,6 +242,8 @@ int listen_ssl_socket(openli_ssl_config_t *sslconf, SSL **ssl, int newfd) {
     }
 
     *ssl = SSL_new(sslconf->ctx);
+    SSL_set_mode(*ssl, SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER |
+            SSL_MODE_ENABLE_PARTIAL_WRITE);
     SSL_set_fd(*ssl, newfd);
 
     err = SSL_accept(*ssl);

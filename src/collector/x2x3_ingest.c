@@ -920,6 +920,11 @@ static int parse_received_x2x3_msg(x_input_t *xinp, x_input_client_t *client) {
     hlen = ntohl(hdr->hdrlength);
     plen = ntohl(hdr->payloadlength);
 
+    if (hlen + plen < hlen || hlen + plen < plen) {
+        // integer overflow -- lengths are probably bogus
+        goto parsingfailure;
+    }
+
     if (bufavail < hlen + plen) {
         // not enough content for the whole message
         return 0;
@@ -1300,7 +1305,7 @@ static int x2x3_process_sync_thread_message(x_input_t *xinp) {
     return 1;
 }
 
-#define X2X3_CLIENT_BUFSIZE (32 * 1024)        // TODO make this larger ;)
+#define X2X3_CLIENT_BUFSIZE (512 * 1024)
 
 static int add_new_x2x3_client(x_input_t *xinp, SSL *newssl, int newfd,
         char *clientip) {

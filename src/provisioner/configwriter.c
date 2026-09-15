@@ -865,11 +865,81 @@ static int emit_voipintercepts(voipintercept_t *vints, yaml_emitter_t *emitter)
     return 0;
 }
 
+static int emit_ipcc_prefix_filters(ipcc_prefix_filter_t *filters,
+        yaml_emitter_t *emitter) {
+    yaml_event_t event;
+    ipcc_prefix_filter_t *flt, *tmp;
+    uint32_t i;
+
+    yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+            (yaml_char_t *)"ipcc-exclude-prefix-groups",
+            strlen("ipcc-exclude-prefix-groups"), 1, 0,
+            YAML_PLAIN_SCALAR_STYLE);
+
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    yaml_sequence_start_event_initialize(&event, NULL,
+            (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    HASH_ITER(hh, filters, flt, tmp) {
+        yaml_mapping_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_MAP_TAG, 1, YAML_ANY_MAPPING_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (flt->group_name == NULL) {
+            logger(LOG_INFO, "OpenLI: cannot emit an IPCC prefix filter without a group name!");
+            continue;
+        }
+
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"name", strlen("name"), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)flt->group_name, strlen(flt->group_name), 1, 0,
+                YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"prefixes",
+                strlen("prefixes"), 1, 0, YAML_PLAIN_SCALAR_STYLE);
+
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        yaml_sequence_start_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_SEQ_TAG, 1, YAML_ANY_SEQUENCE_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        for (i = 0; i < flt->pfx_count; i++) {
+            if (flt->pfx_cidrs[i] == NULL) {
+                continue;
+            }
+            yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)flt->pfx_cidrs[i], strlen(flt->pfx_cidrs[i]),
+                    1, 0, YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
+        yaml_sequence_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+        yaml_mapping_end_event_initialize(&event);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+
+    yaml_sequence_end_event_initialize(&event);
+    if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    return 0;
+}
+
 static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
     yaml_event_t event;
     ipintercept_t *ipint, *tmp;
     char buffer[64];
     const char *accesstype;
+    size_t i;
 
     yaml_scalar_event_initialize(&event, NULL, (yaml_char_t *)YAML_STR_TAG,
             (yaml_char_t *)"ipintercepts", strlen("ipintercepts"), 1, 0,
@@ -907,6 +977,32 @@ static int emit_ipintercepts(ipintercept_t *ipints, yaml_emitter_t *emitter) {
                 (yaml_char_t *)ipint->username, strlen(ipint->username), 1, 0,
                 YAML_PLAIN_SCALAR_STYLE);
         if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (ipint->cc_exclude_group_count > 0) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"cc_exclude_groups",
+                    strlen("cc_exclude_groups"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            yaml_sequence_start_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_SEQ_TAG, 1,
+                    YAML_ANY_SEQUENCE_STYLE);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+            for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+                yaml_scalar_event_initialize(&event, NULL,
+                        (yaml_char_t *)YAML_STR_TAG,
+                        (yaml_char_t *)ipint->cc_exclude_groups[i],
+                        strlen(ipint->cc_exclude_groups[i]), 1, 0,
+                        YAML_PLAIN_SCALAR_STYLE);
+                if (!yaml_emitter_emit(emitter, &event)) return -1;
+            }
+
+            yaml_sequence_end_event_initialize(&event);
+            if (!yaml_emitter_emit(emitter, &event)) return -1;
+        }
 
         if (ipint->accesstype != INTERNET_ACCESS_TYPE_UNDEFINED) {
             yaml_scalar_event_initialize(&event, NULL,
@@ -1312,6 +1408,10 @@ int emit_intercept_config(char *configfile, const char *encpassfile,
     }
 
     if (emit_voipintercepts(conf->voipintercepts, &emitter) < 0) {
+        goto error;
+    }
+
+    if (emit_ipcc_prefix_filters(conf->ipcc_filters, &emitter) < 0) {
         goto error;
     }
 

@@ -624,6 +624,49 @@ void handle_remove_coreserver(colthread_local_t *loc, coreserver_t *cs) {
     free_single_coreserver(cs);
 }
 
+void handle_update_ipcc_filters(colthread_local_t *loc,
+        openli_cc_prefix_filter_t *cc_exclude) {
+
+    cc_prefix_exclusion_map_t *found = NULL;
+    if (cc_exclude == NULL || cc_exclude->liid == NULL) {
+        openli_cc_prefix_filter_release(cc_exclude);
+        return;
+    }
+
+    HASH_FIND(hh, loc->ipcc_filters, cc_exclude->liid,
+            strlen(cc_exclude->liid), found);
+    if (found) {
+        HASH_DELETE(hh, loc->ipcc_filters, found);
+        openli_cc_prefix_filter_release(found->cc_exclude);
+        free(found);
+    }
+
+    found = calloc(1, sizeof(cc_prefix_exclusion_map_t));
+    found->liid = cc_exclude->liid;
+    found->cc_exclude = cc_exclude;
+
+    HASH_ADD_KEYPTR(hh, loc->ipcc_filters, found->liid,
+            strlen(found->liid), found);
+
+}
+
+void handle_remove_ipcc_filters(colthread_local_t *loc, char *liid) {
+    cc_prefix_exclusion_map_t *found = NULL;
+
+    if (!liid) {
+        return;
+    }
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    if (found) {
+        HASH_DELETE(hh, loc->ipcc_filters, found);
+        openli_cc_prefix_filter_release(found->cc_exclude);
+        free(found);
+    }
+
+    free(liid);
+}
+
 void handle_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
 
     staticipsession_t *ipr_exist;

@@ -38,6 +38,18 @@ typedef struct ciscomirror_hdr {
     uint32_t interceptid;
 } PACKED ciscomirror_hdr_t;
 
+static inline openli_cc_prefix_filter_t *cisco_lookup_cc_prefix_filter(
+        colthread_local_t *loc, char *liid) {
+
+    cc_prefix_exclusion_map_t *found;
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    if (found) {
+        return found->cc_exclude;
+    }
+    return NULL;
+}
+
 static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {
 
     return ntohl(hdr->interceptid);
@@ -93,6 +105,7 @@ int generate_cc_from_cisco(colthread_local_t *loc,
     uint32_t rem, cept_id, bodylen;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
+    openli_cc_prefix_filter_t *cc_exclude;
 
     payload = get_udp_payload(packet, &rem, NULL, NULL);
     l3 = decode_cisco_from_udp_payload(payload, rem, &cept_id, &bodylen);
@@ -113,6 +126,14 @@ int generate_cc_from_cisco(colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
+
+        cc_exclude = cisco_lookup_cc_prefix_filter(loc, cept->common.liid);
+        if (cc_exclude) {
+            if (openli_cc_prefix_filter_match_l3(cc_exclude, l3, bodylen)) {
+                continue;
+            }
+        }
+
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),

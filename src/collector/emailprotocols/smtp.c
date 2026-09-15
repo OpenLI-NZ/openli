@@ -1251,7 +1251,7 @@ static int extract_sender_from_auth_creds(emailsession_t *sess,
         uint8_t authed) {
 
     base64_decodestate s;
-    char decoded[2048];
+    char *decoded = NULL;
     int cnt, newlen;
     char *ptr = NULL;
     char *sender = NULL;
@@ -1264,6 +1264,7 @@ static int extract_sender_from_auth_creds(emailsession_t *sess,
             smtpsess->auth_method == SMTP_AUTH_METHOD_PLAIN ||
             smtpsess->auth_method == SMTP_AUTH_METHOD_CRAMMD5) {
 
+        decoded = calloc(strlen(smtpsess->auth_creds) + 1, sizeof(char));
         base64_init_decodestate(&s);
         cnt = base64_decode_block(smtpsess->auth_creds,
                 strlen(smtpsess->auth_creds), decoded, &s);
@@ -1303,6 +1304,7 @@ static int extract_sender_from_auth_creds(emailsession_t *sess,
         /* format is username <space> digest */
         char *token = strtok(ptr, " \t\r\n");
         if (token == NULL) {
+            if (decoded) free(decoded);
             return -1;
         }
         if (strchr(token, '@') == NULL) {
@@ -1313,6 +1315,8 @@ static int extract_sender_from_auth_creds(emailsession_t *sess,
             sender = strdup(token);
         }
     }
+
+    if (decoded) free(decoded);
 
     if (sender) {
         *sendername = sender;

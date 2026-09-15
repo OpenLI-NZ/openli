@@ -1,6 +1,6 @@
 /*
  *
- * Copyright (c) 2024 SearchLight Ltd, New Zealand.
+ * Copyright (c) 2026 SearchLight Ltd, New Zealand.
  * All rights reserved.
  *
  * This file is part of OpenLI.
@@ -24,22 +24,18 @@
  *
  */
 
-#ifndef OPENLI_COLLECTOR_UTIL_H_
-#define OPENLI_COLLECTOR_UTIL_H_
+#ifndef OPENLI_SCTP_WORKER_H
+#define OPENLI_SCTP_WORKER_H
 
-#include "export_buffer.h"
+#include "intercept.h"
+#include "collector_base.h"
 
-int init_zmq_socket_array(void **zmq_socks, int sockcount,
-        const char *basename, void *zmq_ctxt, int sendtimeo);
-void clear_zmq_socket_array(void **zmq_socks, int sockcount);
-int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
-		halt_info_t *haltinfo);
-void *init_zmq_colthread_recv_consumer(void *zmq_ctxt, const char *label,
-        const int workerid);
-void *init_zmq_ii_consumer(void *zmq_ctxt, const char *label,
-        const int workerid);
-void *init_zmq_packet_return_publish(void *zmq_ctxt, const char *label,
-        const int workerid);
+void start_sctp_worker_thread(openli_sctp_worker_t *sctp, int workerid,
+        void *globalstate);
+
+uint8_t *parse_m2pa_header_for_sccp(uint8_t *m2pa, uint16_t len,
+        uint16_t *sccp_len, uint32_t *opc, uint32_t *dpc);
+uint8_t *parse_m3ua_header_for_sccp(uint8_t *m3ua, uint16_t len,
+        uint16_t *sccp_len, uint32_t *opc, uint32_t *dpc);
 
 #endif
-// vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

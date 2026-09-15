@@ -35,29 +35,29 @@ save_original_packages() {
 
 case "$1" in
     configure)
-        mkdir -p /var/run/openli
 
         adduser --quiet --system --group --no-create-home \
                 --home /etc/openli ${USER}
 
         chown -R ${USER}: /etc/openli
-        chown -R ${USER}: /var/run/openli
         chmod 2750 /etc/openli
 
         save_original_packages
 
-        if systemctl is-active --quiet "rabbitmq-server"; then
-            echo ""
+        if [ -d /run/systemd/system ]; then
+            if ! systemctl is-active --quiet "rabbitmq-server"; then
+                systemctl start rabbitmq-server
+            fi
         else
-            service rabbitmq-server start
+            service rabbitmq-server status >/dev/null 2>&1 || service rabbitmq-server start || true
         fi
 
-        EXISTS=`rabbitmqctl list_vhosts | grep "^OpenLI-med$" | wc -l`
+        EXISTS=`rabbitmqctl list_vhosts 2>/dev/null | grep "^OpenLI-med$" | wc -l`
         if [ "$EXISTS" -eq "0" ]; then
                 rabbitmqctl add_vhost "OpenLI-med"
         fi
 
-        EXISTS=`rabbitmqctl list_users | grep "^openli.nz\b" | wc -l`
+        EXISTS=`rabbitmqctl list_users 2>/dev/null | grep "^openli.nz\b" | wc -l`
         if [ "$EXISTS" -eq "0" ]; then
                 s=""
                 until s="$s$(dd bs=24 count=1 if=/dev/urandom 2>/dev/null | LC_ALL=C tr -cd 'a-zA-Z0-9')"
@@ -83,7 +83,12 @@ EOF
                 chown rabbitmq:rabbitmq /etc/rabbitmq/rabbitmq.conf
             fi
         fi
-        service rabbitmq-server restart
+
+        if [ -d /run/systemd/system ]; then
+            systemctl restart rabbitmq-server
+        else
+            service rabbitmq-server restart || true
+        fi
 
         ;;
     abort-upgrade|abort-remove|abort-deconfigure)

@@ -498,6 +498,87 @@ typedef struct encoder_state {
     uint8_t halted;
 } openli_encoder_t;
 
+typedef struct gsm_invoke_saved {
+    int32_t id;
+    uint8_t map_opcode;
+    uint8_t sender_msisdn[9];
+    uint8_t sender_msisdn_len;
+
+    uint8_t *content;
+    uint32_t content_len;
+
+    uint8_t tpdu_flags;
+    uint8_t receiving_msisdn[9];
+    uint8_t receiving_msisdn_len;
+
+    uint8_t saved_imsi[8];
+
+} gsm_invoke_saved_t;
+
+typedef struct gsm_tx_key {
+    uint8_t global_title[24];
+    uint8_t gt_len;
+    uint32_t tid;
+} gsm_tx_key_t;
+
+typedef struct gsm_transaction {
+    gsm_tx_key_t tx_key;
+    time_t timestamp;
+    uint8_t active_invoke_slots;
+    gsm_invoke_saved_t inv_slots[8];
+
+    UT_hash_handle hh;
+} gsm_transaction_t;
+
+typedef struct imsi_msisdn_mapping {
+    uint8_t imsi[8];
+    uint8_t msisdn[9];
+    uint8_t msisdn_len;
+    time_t ts;
+
+    UT_hash_handle hh;
+} gsm_identity_record_t;
+
+
+typedef struct imsi_ident_shard {
+    pthread_rwlock_t rwlock;
+    gsm_identity_record_t *rec;
+    uint16_t ident;
+} gsm_identity_shard_t;
+
+typedef struct imsi_identity_map {
+    gsm_identity_shard_t *shards;
+    uint16_t shardcount;
+} gsm_identity_map_t;
+
+typedef struct sctp_thread_state {
+
+    void *zmq_ctxt;
+    const char *worker_threadname;
+    int workerid;
+    int tracker_threads;
+    int sip_worker_threads;
+    pthread_t threadid;
+
+    void *zmq_ii_sock;
+    void **zmq_pubsocks;
+    void *zmq_colthread_recvsock;
+
+    voipintercept_t *voipintercepts;
+
+    /* Shared state used to track how many worker threads have halted */
+    halt_info_t *haltinfo;
+
+    // transaction ID map
+    gsm_transaction_t *active_transactions;
+
+    // global shared identity cache map
+    gsm_identity_map_t *imsi_identities;
+
+    void *zmq_packet_return;
+
+} openli_sctp_worker_t;
+
 void destroy_encoder_worker(openli_encoder_t *enc);
 void *run_encoder_worker(void *encstate);
 

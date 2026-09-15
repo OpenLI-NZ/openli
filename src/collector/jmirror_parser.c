@@ -44,6 +44,18 @@ static inline uint32_t jmirror_get_interceptid(jmirrorhdr_t *header) {
     return (ntohl(header->interceptid) & 0x3fffffff);
 }
 
+static inline openli_cc_prefix_filter_t *jmirror_lookup_cc_prefix_filter(
+        colthread_local_t *loc, char *liid) {
+
+    cc_prefix_exclusion_map_t *found;
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    if (found) {
+        return found->cc_exclude;
+    }
+    return NULL;
+}
+
 uint8_t *decode_jmirror_from_udp_payload(uint8_t *payload, uint32_t plen,
         uint32_t *cin, uint32_t *shimintid, uint32_t *bodylen) {
 
@@ -79,6 +91,7 @@ int check_jmirror_intercept(colthread_local_t *loc,
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
     uint8_t *l3, *start;
+    openli_cc_prefix_filter_t *cc_exclude;
 
     if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1)) == NULL) {
         return 0;
@@ -104,7 +117,14 @@ int check_jmirror_intercept(colthread_local_t *loc,
                 cept->common.toend_time < pinfo->tv.tv_sec) {
             continue;
         }
-                /* Create an appropriate IPCC and export it */
+        cc_exclude = jmirror_lookup_cc_prefix_filter(loc, cept->common.liid);
+        if (cc_exclude) {
+            if (openli_cc_prefix_filter_match_l3(cc_exclude, l3, bodylen)) {
+                continue;
+            }
+        }
+
+        /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
                 trace_get_timeval(packet), cin, ETSI_DIR_INDETERMINATE,

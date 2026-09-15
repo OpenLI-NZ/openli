@@ -1593,6 +1593,9 @@ int main(int argc, char *argv[]) {
 
     if (todaemon) {
         daemonise(argv[0], pidfile);
+    } else if (getenv("INVOCATION_ID") != NULL) {
+        // systemd is controlling us, so try to force syslog
+        open_daemonlog(argv[0]);
     }
 
     sigemptyset(&sigblock);

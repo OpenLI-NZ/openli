@@ -35,6 +35,8 @@
 #include <Judy.h>
 #include <uuid/uuid.h>
 
+#include "patricia.h"
+
 #define ETSI_DIR_FROM_TARGET 0
 #define ETSI_DIR_TO_TARGET 1
 #define ETSI_DIR_INDETERMINATE 2
@@ -220,6 +222,15 @@ typedef struct intercept_udp_sink {
 
 } intercept_udp_sink_t;
 
+typedef struct cc_exclude_tries {
+    patricia_tree_t *ipv4;
+    patricia_tree_t *ipv6;
+    size_t ipv4_count;
+    size_t ipv6_count;
+    int refcnt;
+    char *liid;
+} openli_cc_prefix_filter_t;
+
 typedef struct ipintercept {
     intercept_common_t common;
 
@@ -239,6 +250,14 @@ typedef struct ipintercept {
     intercept_udp_sink_t *udp_sinks;
 
     static_ipranges_t *statics;
+
+    char **cc_exclude_groups;
+    size_t cc_exclude_group_count;
+
+    char **cc_exclude_cidrs;
+    size_t cc_exclude_count;
+
+    openli_cc_prefix_filter_t *cc_exclude_tries;
 
     openli_mobile_identifier_t mobileident;
     uint8_t awaitingconfirm;
@@ -622,6 +641,11 @@ void free_single_register(sipregister_t *sipr);
 void free_single_voip_cinmap_entry(voipcinmap_t *c);
 void free_voip_cinmap(voipcinmap_t *cins);
 void free_single_ipintercept(ipintercept_t *cept);
+void clear_ipintercept_cc_exclude_groups(ipintercept_t *cept);
+void clear_ipintercept_cc_exclude_cidrs(ipintercept_t *cept);
+int add_ipintercept_cc_exclude_cidr(ipintercept_t *cept, char *cidr);
+int add_ipintercept_cc_exclude_group_name(ipintercept_t *cept, char *group);
+size_t ipintercept_cc_exclude_encoded_length(const ipintercept_t *cept);
 void free_single_voipintercept(voipintercept_t *v);
 void free_single_emailintercept(emailintercept_t *m);
 void free_single_ipsession(ipsession_t *sess);
@@ -632,6 +656,7 @@ void free_single_staticipsession(staticipsession_t *statint);
 void free_single_staticiprange(static_ipranges_t *ipr);
 void free_single_email_target(email_target_t *tgt);
 
+int compare_ipcc_prefix_filters(ipintercept_t *a, ipintercept_t *b);
 int compare_intercept_encrypt_configuration(intercept_common_t *a,
         intercept_common_t *b);
 int compare_xid_list(intercept_common_t *a, intercept_common_t *b);

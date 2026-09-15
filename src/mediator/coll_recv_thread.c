@@ -36,10 +36,6 @@
 #include "openli_epoll.h"
 #include "etsili_core.h"
 
-#define COLL_OUTSTANDING_PUB_CONFIRMS(col) \
-    (col->saved_iri_msg_cnt > 0 || col->saved_cc_msg_cnt > 0 || \
-            col->saved_raw_msg_cnt > 0)
-
 /** This file implements a "collector receive" thread for the OpenLI mediator.
  *  Each OpenLI collector that reports to a mediator will be handled using
  *  a separate instance of one of these threads.
@@ -75,6 +71,10 @@
  *  possible so we need to handle that case.
  */
 #define AGENCY_MAPPING_CHECK_FREQ (5)
+
+#define COLL_OUTSTANDING_PUB_CONFIRMS(col) \
+    ((col)->total_cc_unacked > 0 || (col)->total_iri_unacked > 0 || \
+     (col)->total_raw_unacked > 0)
 
 /** Initialises the shared configuration for the collectors managed by a
  *  mediator.
@@ -165,6 +165,178 @@ void unlock_med_collector_config(mediator_collector_config_t *config) {
     pthread_mutex_unlock(&(config->mutex));
 }
 
+static inline int has_outstanding_pub_confirms(coll_recv_t *col) {
+    col_known_liid_t *known, *tmp;
+
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        if (known->cc_queue.count > 0 || known->iri_queue.count > 0 ||
+                known->raw_queue.count > 0) {
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static void init_liid_saved_queue(col_saved_queue_t *q) {
+    q->capacity = COL_SAVED_QUEUE_CAPACITY;
+    q->slots = malloc(q->capacity * sizeof(saved_received_data_t));
+    q->head = 0;
+    q->tail = 0;
+    q->count = 0;
+}
+
+static void destroy_liid_saved_queue(col_saved_queue_t *q) {
+    uint32_t i, idx;
+
+    if (q->slots) {
+        for (i = 0; i < q->count; i++) {
+            idx = (q->head + i) % q->capacity;
+            if (q->slots[idx].msgbody) {
+                free(q->slots[idx].msgbody);
+            }
+        }
+        free(q->slots);
+        q->slots = NULL;
+    }
+}
+
+static int expand_liid_saved_queue(col_saved_queue_t *q, unsigned char *liid) {
+    uint32_t newcap = q->capacity * 2;
+    saved_received_data_t *new_slots;
+
+    if (newcap >= COL_MAX_SAVED_QUEUE_CAPACITY) {
+        logger(LOG_INFO, "OpenLI mediator: coll_recv_thread buffering has reached maximum capacity for LIID %s, now dropping intercept records", liid);
+        return -1;
+    }
+
+    new_slots = calloc(newcap, sizeof(saved_received_data_t));
+    if (new_slots == NULL) {
+        logger(LOG_INFO, "OpenLI mediator: OOM in expand_liid_saved_queue");
+        return -1;
+    }
+
+    if (q->head < q->tail) {
+        memcpy(new_slots, q->slots + q->head,
+                q->count * sizeof(saved_received_data_t));
+    } else if (q->count > 0) {
+        uint32_t first = q->capacity - q->head;
+        memcpy(new_slots, q->slots + q->head,
+                first * sizeof(saved_received_data_t));
+        memcpy(new_slots + first, q->slots,
+                q->tail * sizeof(saved_received_data_t));
+    }
+
+    free(q->slots);
+    q->slots = new_slots;
+    q->head = 0;
+    q->tail = q->count;
+    q->capacity = newcap;
+
+    logger(LOG_INFO, "OpenLI mediator: coll_recv_thread has expanded buffer for LIID %s to %u slots", liid, newcap);
+    return 0;
+}
+
+static inline int enqueue_liid_saved_queue(col_saved_queue_t *q,
+        unsigned char *liid,
+        uint8_t *msgbody, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+
+    saved_received_data_t *slot;
+    if (q->count >= q->capacity) {
+        if (expand_liid_saved_queue(q, liid) < 0) {
+            return -1;
+        }
+    }
+
+    slot = &(q->slots[q->tail]);
+    slot->msgbody = malloc(msglen);
+    if (slot->msgbody == NULL) {
+        return -1;
+    }
+    memcpy(slot->msgbody, msgbody, msglen);
+    slot->msglen = msglen;
+    slot->delivtag = 0;
+    slot->msgtype = msgtype;
+
+    q->tail = (q->tail + 1) % q->capacity;
+    q->count ++;
+    return 0;
+}
+
+static inline uint32_t pop_batch_from_saved_queue(col_saved_queue_t *q,
+        openli_cc_batch_record_t *records, uint32_t maxrecs) {
+    uint32_t batchcnt = 0;
+    uint32_t idx = q->head;
+
+    while (batchcnt < maxrecs && batchcnt < q->count) {
+        records[batchcnt].body = q->slots[idx].msgbody;
+        records[batchcnt].len = q->slots[idx].msglen;
+        idx = (idx + 1) % q->capacity;
+        batchcnt ++;
+    }
+
+    return batchcnt;
+}
+
+static inline void shrink_liid_saved_queue(col_saved_queue_t *q) {
+    if (q->count == 0 && q->capacity > COL_SAVED_QUEUE_CAPACITY) {
+        saved_received_data_t *shrunk = realloc(q->slots,
+                COL_SAVED_QUEUE_CAPACITY * sizeof(saved_received_data_t));
+        if (shrunk) {
+            q->slots = shrunk;
+            q->capacity = COL_SAVED_QUEUE_CAPACITY;
+            q->head = 0;
+            q->tail = 0;
+        }
+    }
+}
+
+static inline void advance_saved_queue_head(col_saved_queue_t *q,
+        uint32_t advance) {
+
+    if (advance > q->count) {
+        advance = q->count;
+    }
+    q->head = (q->head + advance) % q->capacity;
+    q->count -= advance;
+    shrink_liid_saved_queue(q);
+}
+
+static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
+        unsigned char *liidstr) {
+
+    col_known_liid_t *found;
+    char qname[1024];
+    /* This is an LIID that we haven't seen before (or recently), so
+     * make sure we have a set of internal mediator RMQ queues for it.
+     */
+    found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
+    found->liid = strdup((const char *)liidstr);
+    found->liidlen = strlen(found->liid);
+    found->lastseen = 0;
+    found->declared_raw_rmq = 0;
+    found->declared_int_rmq = 0;
+    found->provisioner_withdrawn = 0;
+
+    snprintf(qname, 1024, "%s-iri", found->liid);
+    found->queuenames[0] = strdup(qname);
+    snprintf(qname, 1024, "%s-cc", found->liid);
+    found->queuenames[1] = strdup(qname);
+    snprintf(qname, 1024, "%s-rawip", found->liid);
+    found->queuenames[2] = strdup(qname);
+
+    init_liid_saved_queue(&(found->cc_queue));
+    init_liid_saved_queue(&(found->iri_queue));
+    init_liid_saved_queue(&(found->raw_queue));
+
+    HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
+            found);
+    logger(LOG_INFO,
+            "OpenLI Mediator: LIID %s has been seen coming from collector %s",
+            found->liid, col->ipaddr);
+
+    return found;
+}
+
 /** Removes any local state for LIIDs which our collector has not sent
  *  any data for recently.
  *
@@ -199,7 +371,9 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
         }
-
+        destroy_liid_saved_queue(&(known->cc_queue));
+        destroy_liid_saved_queue(&(known->iri_queue));
+        destroy_liid_saved_queue(&(known->raw_queue));
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -220,50 +394,32 @@ static void destroy_rmq_colev(coll_recv_t *col) {
 }
 
 int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
-        uint8_t *msgbody, uint16_t msglen, openli_proto_msgtype_t msgtype) {
+        uint16_t liidlen, uint8_t *msgbody, uint16_t msglen,
+        openli_proto_msgtype_t msgtype) {
 
-    saved_received_data_t *sav;
-    size_t *nexttag;
+    col_known_liid_t *known = NULL;
+
+    HASH_FIND(hh, col->known_liids, liid, liidlen, known);
+    if (!known) {
+        known = create_new_known_liid(col, liid);
+    }
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
-        if (col->saved_iri_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
+        if (enqueue_liid_saved_queue(&(known->iri_queue), liid,
+                    msgbody, msglen, msgtype) < 0) {
             return -1;
         }
-        sav = &(col->saved_iri_msgs[col->saved_iri_msg_cnt]);
-        nexttag = &(col->iris_published);
-        col->saved_iri_msg_cnt ++;
     } else if (msgtype == OPENLI_PROTO_ETSI_CC) {
-        if (col->saved_cc_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
+        if (enqueue_liid_saved_queue(&(known->cc_queue), liid,
+                    msgbody, msglen, msgtype) < 0) {
             return -1;
         }
-        sav = &(col->saved_cc_msgs[col->saved_cc_msg_cnt]);
-        nexttag = NULL;
-        col->saved_cc_msg_cnt ++;
     } else {
-        if (col->saved_raw_msg_cnt == MAX_SAVED_RECEIVED_DATA) {
+        if (enqueue_liid_saved_queue(&(known->raw_queue), liid,
+                    msgbody, msglen, msgtype) < 0) {
             return -1;
         }
-        sav = &(col->saved_raw_msgs[col->saved_raw_msg_cnt]);
-        nexttag = NULL;
-        col->saved_raw_msg_cnt ++;
     }
-
-    /* TODO replace constant calloc/free with "retained" buffers that get
-     * expanded if necessary but otherwise recycled
-     */
-    sav->liid = strdup((const char *)liid);
-    sav->msglen = msglen;
-    sav->msgtype = msgtype;
-    if (nexttag) {
-        (*nexttag)++;
-        sav->delivtag = *nexttag;
-    } else {
-        /* CC and RAWIP get a delivery tag when their batch is published. */
-        sav->delivtag = 0;
-    }
-    sav->msgbody = calloc(sav->msglen, sizeof(uint8_t));
-
-    memcpy(sav->msgbody, msgbody, msglen);
 
     return 0;
 }
@@ -496,38 +652,6 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
     return 1;
 }
 
-static col_known_liid_t *create_new_known_liid(coll_recv_t *col,
-        unsigned char *liidstr) {
-
-    col_known_liid_t *found;
-    char qname[1024];
-    /* This is an LIID that we haven't seen before (or recently), so
-     * make sure we have a set of internal mediator RMQ queues for it.
-     */
-    found = (col_known_liid_t *)calloc(1, sizeof(col_known_liid_t));
-    found->liid = strdup((const char *)liidstr);
-    found->liidlen = strlen(found->liid);
-    found->lastseen = 0;
-    found->declared_raw_rmq = 0;
-    found->declared_int_rmq = 0;
-    found->provisioner_withdrawn = 0;
-
-    snprintf(qname, 1024, "%s-iri", found->liid);
-    found->queuenames[0] = strdup(qname);
-    snprintf(qname, 1024, "%s-cc", found->liid);
-    found->queuenames[1] = strdup(qname);
-    snprintf(qname, 1024, "%s-rawip", found->liid);
-    found->queuenames[2] = strdup(qname);
-
-    HASH_ADD_KEYPTR(hh, col->known_liids, found->liid, found->liidlen,
-            found);
-    logger(LOG_INFO,
-            "OpenLI Mediator: LIID %s has been seen coming from collector %s",
-            found->liid, col->ipaddr);
-
-    return found;
-}
-
 static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
         uint16_t msglen, openli_proto_msgtype_t msgtype, unsigned char *liidstr,
         uint16_t liidlen) {
@@ -595,7 +719,10 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
                 logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has disconnected from local RMQ instance after failing to publish an IRI", col->ipaddr);
                 disconnect_mediator_producer_RMQ(col);
                 r = 0;
+            } else {
+                col->total_iri_unacked ++;
             }
+
         } else {
             increment_col_drop_counter(col);
             r = 0;
@@ -633,209 +760,200 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
 static int publish_pending_cc_batches(coll_recv_t *col) {
     openli_cc_batch_record_t records[OPENLI_CC_BATCH_MAX_RECORDS];
-    size_t indexes[OPENLI_CC_BATCH_MAX_RECORDS];
-    size_t i;
+    col_known_liid_t *known, *tmp;
 
-    for (i = 0; i < col->saved_cc_msg_cnt; i++) {
-        saved_received_data_t *first = &(col->saved_cc_msgs[i]);
-        col_known_liid_t *known = NULL;
-        size_t bodylen = 8;
-        uint16_t count = 0;
-        size_t j;
-        int r;
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        col_saved_queue_t *q = &(known->cc_queue);
+        uint32_t checked = 0;
+        uint32_t idx = 0, tag_idx;
 
-        if (first->msgbody == NULL || first->delivtag != 0) {
+        if (q->count == 0 || !known->declared_int_rmq) {
             continue;
         }
+        idx = q->head;
+        while (checked < q->count) {
+            size_t bodylen = 8;
+            uint16_t count = 0;
+            uint32_t start_index = 0;
+            int r;
 
-        HASH_FIND(hh, col->known_liids, first->liid, strlen(first->liid),
-                known);
-        if (known == NULL || !known->declared_int_rmq) {
-            return 0;
-        }
+            while (checked < q->count && count < OPENLI_CC_BATCH_MAX_RECORDS) {
+                saved_received_data_t *slot = &(q->slots[idx]);
+                if (slot->delivtag != 0 || slot->msgbody == NULL) {
+                    idx = (idx + 1) % q->capacity;
+                    checked ++;
+                    continue;
+                }
 
-        for (j = i; j < col->saved_cc_msg_cnt &&
-                count < OPENLI_CC_BATCH_MAX_RECORDS; j++) {
-            saved_received_data_t *candidate = &(col->saved_cc_msgs[j]);
+                if (bodylen > OPENLI_CC_BATCH_MAX_BYTES - 2U - slot->msglen) {
+                    break;
+                }
 
-            if (candidate->msgbody == NULL || candidate->delivtag != 0 ||
-                    strcmp(candidate->liid, first->liid) != 0) {
-                continue;
+                if (count == 0) {
+                    start_index = idx;
+                }
+
+                records[count].body = slot->msgbody;
+                records[count].len = slot->msglen;
+                bodylen += 2U + slot->msglen;
+                idx = (idx + 1) % q->capacity;
+                count ++;
+                checked ++;
             }
-            if (bodylen > OPENLI_CC_BATCH_MAX_BYTES - 2U -
-                    candidate->msglen) {
+
+            if (count == 0) {
                 break;
             }
 
-            records[count].body = candidate->msgbody;
-            records[count].len = candidate->msglen;
-            indexes[count] = j;
-            bodylen += 2U + candidate->msglen;
-            count++;
-        }
-
-        if (count == 0) {
-            return 0;
-        }
-
-        r = publish_cc_batch_on_mediator_liid_RMQ_queue(
-                col->amqp_producer_state, records, count, first->liid,
-                known->queuenames[1], &(col->rmq_blocked));
-        if (r <= 0) {
-            return r;
-        }
-
-
-        col->ccs_published++;
-        for (j = 0; j < count; j++) {
-            col->saved_cc_msgs[indexes[j]].delivtag = col->ccs_published;
+            r = publish_cc_batch_on_mediator_liid_RMQ_queue(
+                    col->amqp_producer_state, records, count, known->liid,
+                    known->queuenames[1], &(col->rmq_blocked));
+            if (r <= 0) {
+                return r;
+            }
+            col->ccs_published ++;
+            tag_idx = start_index;
+            for (size_t i = 0; i < count; i++) {
+                q->slots[tag_idx].delivtag = col->ccs_published;
+                tag_idx = (tag_idx + 1) % q->capacity;
+            }
+            col->total_cc_unacked += count;
         }
     }
 
     return 1;
+
 }
 
 static int publish_pending_raw_batches(coll_recv_t *col) {
     openli_rawip_batch_record_t records[OPENLI_RAWIP_BATCH_MAX_RECORDS];
-    size_t indexes[OPENLI_RAWIP_BATCH_MAX_RECORDS];
-    size_t i;
+    col_known_liid_t *known, *tmp;
 
-    for (i = 0; i < col->saved_raw_msg_cnt; i++) {
-        saved_received_data_t *first = &(col->saved_raw_msgs[i]);
-        col_known_liid_t *known = NULL;
-        size_t bodylen = 8;
-        uint16_t count = 0;
-        size_t j;
-        int r;
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        col_saved_queue_t *q = &(known->raw_queue);
+        uint32_t checked = 0;
+        uint32_t idx = 0, tag_idx;
 
-        if (first->msgbody == NULL || first->delivtag != 0) {
+        if (q->count == 0 || !known->declared_int_rmq) {
             continue;
         }
+        idx = q->head;
+        while (checked < q->count) {
+            size_t bodylen = 8;
+            uint16_t count = 0;
+            uint32_t start_index = 0;
+            int r;
 
-        HASH_FIND(hh, col->known_liids, first->liid, strlen(first->liid),
-                known);
-        if (known == NULL || !known->declared_raw_rmq) {
-            return 0;
-        }
+            while (checked < q->count &&
+                    count < OPENLI_RAWIP_BATCH_MAX_RECORDS) {
+                saved_received_data_t *slot = &(q->slots[idx]);
+                if (slot->delivtag != 0 || slot->msgbody == NULL) {
+                    idx = (idx + 1) % q->capacity;
+                    checked ++;
+                    continue;
+                }
 
-        for (j = i; j < col->saved_raw_msg_cnt &&
-                count < OPENLI_RAWIP_BATCH_MAX_RECORDS; j++) {
-            saved_received_data_t *candidate = &(col->saved_raw_msgs[j]);
+                if (bodylen >
+                        OPENLI_RAWIP_BATCH_MAX_BYTES - 2U - slot->msglen) {
+                    break;
+                }
 
-            if (candidate->msgbody == NULL || candidate->delivtag != 0 ||
-                    strcmp(candidate->liid, first->liid) != 0) {
-                continue;
+                if (count == 0) {
+                    start_index = idx;
+                }
+
+                records[count].body = slot->msgbody;
+                records[count].len = slot->msglen;
+                bodylen += 2U + slot->msglen;
+                idx = (idx + 1) % q->capacity;
+                count ++;
+                checked ++;
             }
-            if (bodylen > OPENLI_RAWIP_BATCH_MAX_BYTES - 2U -
-                    candidate->msglen) {
+
+            if (count == 0) {
                 break;
             }
 
-            records[count].body = candidate->msgbody;
-            records[count].len = candidate->msglen;
-            indexes[count] = j;
-            bodylen += 2U + candidate->msglen;
-            count++;
-        }
-
-        if (count == 0) {
-            return 0;
-        }
-
-        r = publish_rawip_batch_on_mediator_liid_RMQ_queue(
-                col->amqp_producer_state, records, count, first->liid,
-                known->queuenames[2], &(col->rmq_blocked));
-        if (r <= 0) {
-            return r;
-        }
-
-
-        col->raw_published++;
-        for (j = 0; j < count; j++) {
-            col->saved_raw_msgs[indexes[j]].delivtag = col->raw_published;
+            r = publish_rawip_batch_on_mediator_liid_RMQ_queue(
+                    col->amqp_producer_state, records, count, known->liid,
+                    known->queuenames[2], &(col->rmq_blocked));
+            if (r <= 0) {
+                return r;
+            }
+            col->raw_published ++;
+            tag_idx = start_index;
+            for (size_t i = 0; i < count; i++) {
+                q->slots[tag_idx].delivtag = col->raw_published;
+                tag_idx = (tag_idx + 1) % q->capacity;
+            }
+            col->total_raw_unacked += count;
         }
     }
 
-    return 1;
-}
-
-static int process_saved_messages(coll_recv_t *col,
-        saved_received_data_t *msgs, size_t *msgcnt, size_t *nexttag) {
-    size_t i;
-    int r;
-
-    for (i = 0; i < *msgcnt; i++) {
-        if (msgs[i].msgbody == NULL) {
-            continue;
-        }
-
-        if ((r = _process_received_data(col, msgs[i].msgbody,
-                        msgs[i].msglen, msgs[i].msgtype,
-                        (unsigned char *)msgs[i].liid,
-                        strlen(msgs[i].liid))) < 0) {
-            return -1;
-        }
-        if (r == 0) {
-            // RMQ died again while we were trying to re-send this batch
-            // of messages.
-            // we could try a memmove to shuffle the remaining messages to
-            // the front, but it's probably not necessary
-            return 0;
-        }
-        (*nexttag)++;
-
-        // delivery tags have been reset, so we need to adjust accordingly
-        msgs[i].delivtag = *nexttag;
-    }
     return 1;
 }
 
 static int process_all_saved_messages(coll_recv_t *col) {
+    col_known_liid_t *known, *tmp;
     int r;
-    compact_saved_messages(col->saved_iri_msgs, &(col->saved_iri_msg_cnt));
-    compact_saved_messages(col->saved_cc_msgs, &(col->saved_cc_msg_cnt));
-    compact_saved_messages(col->saved_raw_msgs, &(col->saved_raw_msg_cnt));
-    if (col->saved_iri_msg_cnt > 0) {
-        if ((r = process_saved_messages(col, col->saved_iri_msgs,
-                &(col->saved_iri_msg_cnt), &(col->iris_published))) <= 0) {
-            return r;
-        }
-    }
+    uint32_t idx, i;
 
-    if (col->saved_cc_msg_cnt > 0) {
-        size_t i;
-        for (i = 0; i < col->saved_cc_msg_cnt; i++) {
-            if (col->saved_cc_msgs[i].msgbody) {
-                col->saved_cc_msgs[i].delivtag = 0;
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        col_saved_queue_t *iriq = &(known->iri_queue);
+        col_saved_queue_t *ccq = &(known->cc_queue);
+        col_saved_queue_t *rawq = &(known->raw_queue);
+
+        if (iriq->count > 0 && known->declared_int_rmq) {
+            idx = iriq->head;
+            for (i = 0; i < iriq->count; i++) {
+                saved_received_data_t *slot = &(iriq->slots[idx]);
+                if (slot->msgbody) {
+                    r = publish_iri_on_mediator_liid_RMQ_queue(
+                            col->amqp_producer_state, slot->msgbody,
+                            slot->msglen, known->liid, known->queuenames[0],
+                            &(col->rmq_blocked));
+                    if (r < 0) {
+                        disconnect_mediator_producer_RMQ(col);
+                        return r;
+                    }
+                    col->iris_published ++;
+                    slot->delivtag = col->iris_published;
+                }
+                idx = (idx + 1) % iriq->capacity;
             }
         }
-        col->ccs_published = 0;
-        if ((r = publish_pending_cc_batches(col)) <= 0) {
-            return r;
-        }
-    }
 
-    if (col->saved_raw_msg_cnt > 0) {
-        size_t i;
-        for (i = 0; i < col->saved_raw_msg_cnt; i++) {
-            if (col->saved_raw_msgs[i].msgbody) {
-                col->saved_raw_msgs[i].delivtag = 0;
+        if (ccq->count > 0) {
+            idx = ccq->head;
+            for (i = 0; i < ccq->count; i++) {
+                if (ccq->slots[idx].msgbody) {
+                    ccq->slots[idx].delivtag = 0;
+                }
+                idx = (idx + 1) % ccq->capacity;
             }
         }
-        col->raw_published = 0;
-        if ((r = publish_pending_raw_batches(col)) <= 0) {
-            return r;
+
+        if (rawq->count > 0) {
+            idx = rawq->head;
+            for (i = 0; i < rawq->count; i++) {
+                if (rawq->slots[idx].msgbody) {
+                    rawq->slots[idx].delivtag = 0;
+                }
+                idx = (idx + 1) % rawq->capacity;
+            }
         }
     }
 
-    /* Unfortunately, publisher confirms are not guaranteed when
-     * republishing messages that the broker may have seen in a previous
-     * lifetime. So that means we just re-publish and hope, rather than
-     * relying on ACKs to confirm that the messages got persisted
-     */
-    col->saved_iri_msg_cnt = 0;
-    col->saved_cc_msg_cnt = 0;
-    col->saved_raw_msg_cnt = 0;
+    col->ccs_published = 0;
+    if ((r = publish_pending_cc_batches(col)) <= 0) {
+        return r;
+    }
+
+    col->raw_published = 0;
+    if ((r = publish_pending_raw_batches(col)) <= 0) {
+        return r;
+    }
+
     col->queue_full = 0;
     return 1;
 }
@@ -870,7 +988,8 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         msglen -= (liidlen + 2);
     }
 
-    if (collrecv_save_message(col, liidstr, msgbody, msglen, msgtype) < 0) {
+    if (collrecv_save_message(col, liidstr, liidlen, msgbody, msglen,
+            msgtype) < 0) {
         increment_col_drop_counter(col);
         col->queue_full = 1;
         return 0;
@@ -975,21 +1094,19 @@ static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
                 break;
         }
     } while (force_break == 0 && msgtype != OPENLI_PROTO_NO_MESSAGE &&
-                    total_recvd < MAX_COLL_RECV &&
-                    col->saved_iri_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
-                    col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
-                    col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA);
+                    total_recvd < MAX_COLL_RECV && !col->queue_full);
 
 
 processacks:
-    if (col->amqp_producer_state && col->saved_cc_msg_cnt > 0 &&
-            publish_pending_cc_batches(col) <= 0) {
-        disconnect_mediator_producer_RMQ(col);
+    if (col->amqp_producer_state) {
+        if (publish_pending_cc_batches(col) < 0) {
+            disconnect_mediator_producer_RMQ(col);
+        }
     }
-
-    if (col->amqp_producer_state && col->saved_raw_msg_cnt > 0 &&
-            publish_pending_raw_batches(col) <= 0) {
-        disconnect_mediator_producer_RMQ(col);
+    if (col->amqp_producer_state) {
+        if (publish_pending_raw_batches(col) < 0) {
+            disconnect_mediator_producer_RMQ(col);
+        }
     }
 
     if (col->amqp_producer_state &&
@@ -1091,7 +1208,6 @@ static int collector_thread_epoll_event(coll_recv_t *col,
  */
 static void cleanup_collector_thread(coll_recv_t *col) {
     col_known_liid_t *known, *tmp;
-    size_t i;
 
     if (col->colev) {
         remove_openli_fdevent(col->colev);
@@ -1101,32 +1217,6 @@ static void cleanup_collector_thread(coll_recv_t *col) {
     }
     if (col->amqp_producer_state) {
         amqp_destroy_connection(col->amqp_producer_state);
-    }
-    for (i = 0; i < col->saved_cc_msg_cnt; i++) {
-        if (col->saved_cc_msgs[i].msgbody) {
-            free(col->saved_cc_msgs[i].msgbody);
-        }
-        if (col->saved_cc_msgs[i].liid) {
-            free(col->saved_cc_msgs[i].liid);
-        }
-    }
-
-    for (i = 0; i < col->saved_iri_msg_cnt; i++) {
-        if (col->saved_iri_msgs[i].msgbody) {
-            free(col->saved_iri_msgs[i].msgbody);
-        }
-        if (col->saved_iri_msgs[i].liid) {
-            free(col->saved_iri_msgs[i].liid);
-        }
-    }
-
-    for (i = 0; i < col->saved_raw_msg_cnt; i++) {
-        if (col->saved_raw_msgs[i].msgbody) {
-            free(col->saved_raw_msgs[i].msgbody);
-        }
-        if (col->saved_raw_msgs[i].liid) {
-            free(col->saved_raw_msgs[i].liid);
-        }
     }
 
     destroy_rmq_colev(col);
@@ -1150,6 +1240,9 @@ static void cleanup_collector_thread(coll_recv_t *col) {
         if (known->queuenames[2]) {
             free((void *)known->queuenames[2]);
         }
+        destroy_liid_saved_queue(&known->cc_queue);
+        destroy_liid_saved_queue(&known->iri_queue);
+        destroy_liid_saved_queue(&known->raw_queue);
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -1347,6 +1440,7 @@ static void *start_collector_thread(void *params) {
         if (col->amqp_producer_state == NULL) {
             if (join_mediator_RMQ_as_producer(col) == NULL) {
                 col->disabled_log = 1;
+                usleep(100000);
                 continue;
             }
             col->iris_published = 0;
@@ -1451,6 +1545,13 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->rmq_queuename = NULL;
     newcol->creation = tv.tv_sec;
     newcol->epoll_fd = -1;
+    newcol->total_iri_unacked = 0;
+    newcol->total_cc_unacked = 0;
+    newcol->total_raw_unacked = 0;
+
+    newcol->iris_published = 0;
+    newcol->ccs_published = 0;
+    newcol->raw_published = 0;
 
     if (head) {
         newcol->head = head;
@@ -1465,16 +1566,6 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     }
     newcol->tail = newcol;
 
-
-    memset(newcol->saved_raw_msgs, 0, sizeof(saved_received_data_t) *
-                    MAX_SAVED_RECEIVED_DATA);
-    newcol->saved_raw_msg_cnt = 0;
-    memset(newcol->saved_iri_msgs, 0, sizeof(saved_received_data_t) *
-                    MAX_SAVED_RECEIVED_DATA);
-    newcol->saved_iri_msg_cnt = 0;
-    memset(newcol->saved_cc_msgs, 0, sizeof(saved_received_data_t) *
-                    MAX_SAVED_RECEIVED_DATA);
-    newcol->saved_cc_msg_cnt = 0;
 
     libtrace_message_queue_init(&(newcol->in_main),
             sizeof(col_thread_msg_t));

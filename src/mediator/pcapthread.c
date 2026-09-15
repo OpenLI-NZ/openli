@@ -41,7 +41,7 @@
  */
 #define PCAP_RMQ_BATCH_SIZE 4096
 #define PCAP_DRAIN_BUDGET_NS (UINT64_C(20) * 1000 * 1000)
-#define PCAP_IDLE_POLL_MS 50
+#define PCAP_IDLE_POLL_MS 1000
 
 #include "mediator_rmq.h"
 #include <libtrace.h>
@@ -101,6 +101,25 @@ static char *stradd(const char *str, char *bufp, char *buflim) {
     return bufp;
 }
 
+static void sanitize_liid_for_filename(const char *src, char *dst, size_t len) {
+    size_t i = 0;
+
+    if (!src || !dst || len == 0) {
+        return;
+    }
+
+    while (src[i] != '\0' && i < len - 1) {
+        char c = src[i];
+        if (c == '/' || c == '\\') {
+            dst[i] = '_';
+        } else {
+            dst[i] = c;
+        }
+        i++;
+    }
+    dst[i] = '\0';
+}
+
 /** Constructs the pcap filename URI for an output file.
  *
  *  @param state            The LEA send thread state for this pcap thread
@@ -122,6 +141,7 @@ static int populate_pcap_uri(lea_thread_state_t *state,
     char scratch[9500];
     char *w = scratch;
     char *end = scratch + urispacelen;
+    char sanitized[256];
 
     /* Build the URI in 'scratch', then copy it into urispace only if we
      * manage to build it successfully
@@ -141,7 +161,9 @@ static int populate_pcap_uri(lea_thread_state_t *state,
                     break;
                 case 'L':
                     /* '%L' is replaced with the LIID for the intercept */
-                    w = stradd(act->liid, w, end);
+                    sanitize_liid_for_filename(act->liid, sanitized,
+                            sizeof(sanitized));
+                    w = stradd(sanitized, w, end);
                     continue;
                 case 's':
                     /* '%s' is replaced with the unix timestamp in seconds */
@@ -238,19 +260,21 @@ static int open_pcap_output_file(lea_thread_state_t *state,
     }
 
     if (state->pcap_outtemplate == NULL) {
+        char sanitized[256];
 
         /* Name the file after the LIID and current timestamp -- this ensures we
          * will have files that have unique and meaningful names, even if we
          * have multiple intercepts that last over multiple rotation periods.
          */
+        sanitize_liid_for_filename(act->liid, sanitized, sizeof(sanitized));
         gettimeofday(&tv, NULL);
 
         if (state->pcap_compress_level > 0) {
             snprintf(uri, 4096, "pcapfile:%s/openli_%s_%lu.pcap.gz",
-                state->pcap_dir, act->liid, tv.tv_sec);
+                state->pcap_dir, sanitized, tv.tv_sec);
         } else {
             snprintf(uri, 4096, "pcapfile:%s/openli_%s_%lu.pcap",
-                state->pcap_dir, act->liid, tv.tv_sec);
+                state->pcap_dir, sanitized, tv.tv_sec);
         }
     } else {
         if (populate_pcap_uri(state, uri, 4096, act) == 0) {
@@ -988,7 +1012,7 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
             break;
         case OPENLI_EPOLL_HANDOVER_RMQ:
             /* Packets are available to be read from RMQ */
-            ret = 1;
+            ret = 2;
             break;
         case OPENLI_EPOLL_PCAP_TIMER:
             /* halt the timer
@@ -1034,7 +1058,7 @@ static void *run_pcap_thread(void *params) {
     lea_thread_state_t *state = (lea_thread_state_t *)params;
     openli_epoll_ev_t *flushtimer = NULL;
     struct epoll_event evs[64];
-    int i, nfds, timerexpired = 0;
+    int i, nfds, timerexpired = 0, rmq_active = 0;
     int is_halted = 0;
     pcap_thread_state_t pstate;
     uint32_t firstflush;
@@ -1108,11 +1132,18 @@ static void *run_pcap_thread(void *params) {
             }
 
             for (i = 0; i < nfds; i++) {
-                timerexpired = pcap_thread_epoll_event(state, &pstate,
+                int status = 0;
+                status = pcap_thread_epoll_event(state, &pstate,
                         &(evs[i]));
-                if (timerexpired == -1) {
+                if (status == -1) {
                     is_halted = 1;
                     break;
+                }
+                if (status == 2) {
+                    rmq_active = 1;
+                    timerexpired = 1;
+                } else if (status == 1) {
+                    timerexpired = 1;
                 }
                 if (timerexpired) {
                     break;
@@ -1125,20 +1156,22 @@ static void *run_pcap_thread(void *params) {
 
         /* Drain multiple batches after one wake-up. A monotonic time budget
          * keeps the thread responsive to control, rotation and halt events. */
-        drain_started = monotonic_now_ns();
-        do {
-            drain_result = consume_pcap_packets(pstate.rawip_handover,
-                    &pstate);
-            if (drain_result <= 0) {
-                break;
-            }
+        if (rmq_active && !is_halted) {
+            drain_started = monotonic_now_ns();
+            do {
+                drain_result = consume_pcap_packets(pstate.rawip_handover,
+                        &pstate);
+                if (drain_result <= 0) {
+                    break;
+                }
 
-            drain_now = monotonic_now_ns();
-            if (drain_started != 0 && drain_now != 0 &&
-                    drain_now - drain_started >= PCAP_DRAIN_BUDGET_NS) {
-                break;
-            }
-        } while (1);
+                drain_now = monotonic_now_ns();
+                if (drain_started != 0 && drain_now != 0 &&
+                        drain_now - drain_started >= PCAP_DRAIN_BUDGET_NS) {
+                    break;
+                }
+            } while (1);
+        }
 
         halt_openli_timer(state->timerev);
     }

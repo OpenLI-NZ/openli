@@ -77,6 +77,7 @@ void open_daemonlog(char *name) {
     name = strrchr(name,'/') ? strrchr(name,'/') + 1 : name;
     openlog(name, LOG_PID, LOG_DAEMON);
     setlogmask(LOG_UPTO(LOG_INFO));
+    daemonised = 1;
 #else
     (void)(name);
 #endif

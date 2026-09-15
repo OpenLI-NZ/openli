@@ -193,6 +193,12 @@ void encode_etsili_pshdr(wandder_encoder_t *encoder,
         int64_t seqno, struct timeval *tv,
         openli_timestamp_encoding_fmt_t timefmt);
 
+/* defined in gsmsmsiri.c */
+int encode_templated_gsmsmsiri(wandder_encoder_t *encoder,
+        encrypt_encode_state_t *encrypt,
+        openli_encoding_job_t *job, encoded_header_template_t *hdr_tplate,
+        openli_encoded_result_t *res);
+
 /* defined in templating.c */
 
 void free_encoded_header_templates(Pvoid_t *headers);
@@ -269,6 +275,8 @@ uint8_t *encrypt_payload_container_aes_192_cbc(EVP_CIPHER_CTX *ctx,
         wandder_etsispec_t *etsidecoder, uint8_t *fullrec, uint16_t reclen,
         uint8_t *enckey, size_t enckeylen);
 
+/* defined in encoder_worker.h */
+void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

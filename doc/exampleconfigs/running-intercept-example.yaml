@@ -57,6 +57,21 @@ defaultradiususers:
   - default@mynetwork.com
   - customercpe
 
+# Sets of IP address prefixes that we want to be able to (optionally) exclude
+# from interception by IP intercepts. Typically used to reduce workload by
+# pruning high bandwidth, low information traffic from an intercept (e.g.
+# streaming media, speedtest servers).
+ipcc-exclude-prefix-groups:
+ - name: netflix-cache
+   prefixes:
+    - 192.168.45.0/28
+ - name: speedtest
+   prefixes:
+    - 10.100.100.1/32
+    - 10.100.100.2/32
+    - 2001:0DB8:0123:4567::/64
+
+
 # List the set of agencies that we can perform intercepts for
 agencies:
 
@@ -122,8 +137,28 @@ ipintercepts:
    agencyid: "Police"           # ID of agency to send intercept to
    accesstype: "Fiber"          # Access tech used by the target to access IP
 
+# This intercept is similar to the one above, except in this case we are
+# using our previously define IPCC prefix filter groups to avoid intercepting
+# any traffic to or from our Netflix cache and Speedtest servers, as this
+# traffic doesn't hold any real communication value for the agency.
+#
+# NOTE: always confirm with the agency first before applying any filtering to
+# an intercept!
 
-# This second intercept is translating an Alcatel-Lucent native intercept into
+ - liid:  XP510PW27             # LIID, should be provided by requesting agency
+   authcountrycode: NZ          # Authorisation country code
+   deliverycountrycode: NZ      # Delivery country code
+   user: "mrcooper201"          # Username identifying the target in your AAA
+   mediator: 6001               # ID of the mediator to send intercept via
+   agencyid: "Police"           # ID of agency to send intercept to
+   accesstype: "Fiber"          # Access tech used by the target to access IP
+   cc_exclude_groups:
+     - netflix-cache            # Ignores traffic matching the prefixes
+     - speedtest                # associated with these labels in the
+                                # ipcc-exclude-prefix-groups definition
+                                # elsewhere in this config file
+
+# This intercept is translating an Alcatel-Lucent native intercept into
 # an ETSI-compliant one. All ALU intercept packets with an
 # Intercept ID of 522781 will be converted to have the ETSI LIID of NAPP9321HN
 # and the resulting records will be forwarded to the "Spooks" agency.

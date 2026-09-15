@@ -832,7 +832,7 @@ static int gtp_worker_process_packet(openli_gtp_worker_t *worker) {
                 return 0;
             }
             logger(LOG_INFO,
-                    "OpenLI: error while receiving packet in SMS worker thread %d: %s",
+                    "OpenLI: error while receiving packet in GTP worker thread %d: %s",
                     worker->workerid, strerror(errno));
             return -1;
         }
@@ -943,9 +943,7 @@ static void gtp_worker_main(openli_gtp_worker_t *worker) {
 
 void *gtp_thread_begin(void *arg) {
     openli_gtp_worker_t *worker = (openli_gtp_worker_t *)arg;
-    char sockname[256];
-    char returnq[256];
-    int zero = 0, x, hwm=2000;
+    int x;
     openli_state_update_t recvd;
     teid_to_session_t *iter, *tmp;
 
@@ -953,51 +951,20 @@ void *gtp_thread_begin(void *arg) {
     init_zmq_socket_array(worker->zmq_pubsocks, worker->tracker_threads,
             "inproc://openlipub", worker->zmq_ctxt, -1);
 
-    worker->zmq_packet_return = zmq_socket(worker->zmq_ctxt, ZMQ_PUSH);
-    snprintf(returnq, 256, "inproc://gtp-packet-return-%d", worker->workerid);
-    if (zmq_bind(worker->zmq_packet_return, returnq) < 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to bind to packet return ZMQ: %s", worker->workerid, strerror(errno));
-        zmq_close(worker->zmq_packet_return);
-        worker->zmq_packet_return = NULL;
-    } else if (zmq_setsockopt(worker->zmq_packet_return, ZMQ_LINGER, &zero,
-            sizeof(zero)) != 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to set linger on packet return ZMQ: %s", worker->workerid, strerror(errno));
-        zmq_close(worker->zmq_packet_return);
-        worker->zmq_packet_return = NULL;
-    } else if (zmq_setsockopt(worker->zmq_packet_return, ZMQ_SNDHWM, &hwm,
-            sizeof(hwm)) != 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to set HWM on packet return ZMQ: %s", worker->workerid, strerror(errno));
-        zmq_close(worker->zmq_packet_return);
-        worker->zmq_packet_return = NULL;
-    }
+    worker->zmq_packet_return =
+            init_zmq_packet_return_publish(worker->zmq_ctxt, "GTP",
+                    worker->workerid);
 
-    worker->zmq_ii_sock = zmq_socket(worker->zmq_ctxt, ZMQ_PULL);
-    snprintf(sockname, 256, "inproc://openligtpcontrol_sync-%d",
+    worker->zmq_ii_sock = init_zmq_ii_consumer(worker->zmq_ctxt, "GTP",
             worker->workerid);
-
-    if (zmq_bind(worker->zmq_ii_sock, sockname) < 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to bind to II zmq: %s", worker->workerid, strerror(errno));
+    if (worker->zmq_ii_sock == NULL) {
         goto haltgtpworker;
     }
 
-    if (zmq_setsockopt(worker->zmq_ii_sock, ZMQ_LINGER, &zero, sizeof(zero))
-            != 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to configure II zmq: %s", worker->workerid, strerror(errno));
-        goto haltgtpworker;
-    }
-
-    worker->zmq_colthread_recvsock = zmq_socket(worker->zmq_ctxt, ZMQ_PULL);
-    snprintf(sockname, 256, "inproc://openligtpworker-colrecv%d",
-            worker->workerid);
-
-    if (zmq_bind(worker->zmq_colthread_recvsock, sockname) < 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to bind to colthread zmq: %s", worker->workerid, strerror(errno));
-        goto haltgtpworker;
-    }
-
-    if (zmq_setsockopt(worker->zmq_colthread_recvsock, ZMQ_LINGER, &zero,
-           sizeof(zero)) != 0) {
-        logger(LOG_INFO, "OpenLI: GTP processing thread %d failed to configure colthread zmq: %s", worker->workerid, strerror(errno));
+    worker->zmq_colthread_recvsock =
+            init_zmq_colthread_recv_consumer(worker->zmq_ctxt, "GTP",
+                    worker->workerid);
+    if (worker->zmq_colthread_recvsock == NULL) {
         goto haltgtpworker;
     }
 

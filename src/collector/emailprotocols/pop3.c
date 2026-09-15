@@ -196,8 +196,8 @@ static int update_auth_command(pop3_session_t *pop3sess, char *replace,
 static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
         emailsession_t *sess) {
 
-    char decoded[2048];
-    char reencoded[2048];
+    char *decoded;
+    char reencoded[4096];
     char *ptr;
     int cnt, r;
     char *crlf;
@@ -228,9 +228,11 @@ static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
         return 0;
     }
 
+    decoded = calloc(strlen(authmsg) + 1, sizeof(char));
     base64_init_decodestate(&s);
     cnt = base64_decode_block(authmsg, strlen(authmsg), decoded, &s);
     if (cnt == 0) {
+        if (decoded) free(decoded);
         return 0;
     }
     decoded[cnt] = '\0';
@@ -245,6 +247,7 @@ static int decode_plain_auth_content(char *authmsg, pop3_session_t *pop3sess,
      */
     pop3sess->mailbox = strdup(ptr);
     add_email_participant(sess, pop3sess->mailbox, 0);
+    if (decoded) free(decoded);
 
     /* replace encoded credentials, if requested by the user */
     if (sess->mask_credentials) {

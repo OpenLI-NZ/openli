@@ -193,6 +193,11 @@ static void free_coreserver_fast_filters(colthread_local_t *loc) {
 static int fast_coreserver_check(colthread_local_t *loc, packet_info_t *pinfo) {
     coreserver_fast_filter_v4_t *fast;
 
+    if (pinfo->trans_proto != TRACE_IPPROTO_UDP &&
+            pinfo->trans_proto != TRACE_IPPROTO_TCP) {
+        return 1;
+    }
+
     if (pinfo->family == AF_INET) {
         struct sockaddr_in *sa;
         sa = (struct sockaddr_in *)(&(pinfo->destip));
@@ -393,6 +398,13 @@ static void process_incoming_messages(colthread_local_t *loc,
         handle_change_iprange_intercept(loc, syncpush->data.iprange);
     }
 
+    if (syncpush->type == OPENLI_PUSH_UPDATE_IPCC_FILTERS) {
+        handle_update_ipcc_filters(loc, syncpush->data.cc_exclude);
+    }
+
+    if (syncpush->type == OPENLI_PUSH_REMOVE_IPCC_FILTERS) {
+        handle_remove_ipcc_filters(loc, syncpush->data.liid);
+    }
 }
 
 #define PACKETS_PER_READ_THRESH 100
@@ -515,7 +527,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->dropped = 0;
     loc->pkts_since_msg_read = 0;
     loc->tick_counter = 0;
-
+    loc->ipcc_filters = NULL;
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -575,7 +587,7 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
         for (i = 0; i < glob->gtp_threads; i++) {
             char pubsockname[128];
 
-            snprintf(pubsockname, 128, "inproc://openligtpworker-colrecv%d", i);
+            snprintf(pubsockname, 128, "inproc://openliGTPworker-colrecv%d", i);
             loc->gtp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
             zmq_setsockopt(loc->gtp_worker_queues[i], ZMQ_SNDHWM, &hwm,
                     sizeof(hwm));
@@ -590,6 +602,25 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
         loc->fromgtp_queues = NULL;
         loc->gtp_worker_queues = NULL;
     }
+
+    if (glob->sctp_threads > 0) {
+        loc->sctp_worker_queues = calloc(glob->sctp_threads, sizeof(void *));
+        for (i = 0; i < glob->sctp_threads; i++) {
+            char pubsockname[128];
+
+            snprintf(pubsockname, 128, "inproc://openliSCTPworker-colrecv%d",
+                    i);
+            loc->sctp_worker_queues[i] = zmq_socket(glob->zmq_ctxt, ZMQ_PUSH);
+            zmq_setsockopt(loc->sctp_worker_queues[i], ZMQ_SNDHWM, &hwm,
+                    sizeof(hwm));
+            zmq_connect(loc->sctp_worker_queues[i], pubsockname);
+        }
+        loc->sctpq_count = glob->sctp_threads;
+    } else {
+        loc->sctp_worker_queues = NULL;
+        loc->sctpq_count = 0;
+    }
+
 
     loc->fragreass = create_new_ipfrag_reassembler();
 
@@ -636,7 +667,7 @@ static void *start_processing_thread(libtrace_t *trace,
     }
 
     for (i = 0; i < glob->gtp_threads; i++) {
-        snprintf(returnq, 256, "inproc://gtp-packet-return-%d", i);
+        snprintf(returnq, 256, "inproc://GTP-packet-return-%d", i);
         if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
             logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from GTP worker %d: %s",
                     loc->localname, i, strerror(errno));
@@ -647,6 +678,14 @@ static void *start_processing_thread(libtrace_t *trace,
         snprintf(returnq, 256, "inproc://email-packet-return-%d", i);
         if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
             logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from email worker %d: %s",
+                    loc->localname, i, strerror(errno));
+        }
+    }
+
+    for (i = 0; i < glob->sctp_threads; i++) {
+        snprintf(returnq, 256, "inproc://SCTP-packet-return-%d", i);
+        if (zmq_connect(loc->zmq_packet_return, returnq) < 0) {
+            logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to bind to ZMQ for packet object returns from SCTP worker %d: %s",
                     loc->localname, i, strerror(errno));
         }
     }
@@ -732,6 +771,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
     libtrace_packet_t *pkt = NULL;
+    cc_prefix_exclusion_map_t *flt, *tmpflt;
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
@@ -759,6 +799,12 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         zmq_setsockopt(loc->email_worker_queues[i], ZMQ_LINGER, &zero,
                 sizeof(zero));
         zmq_close(loc->email_worker_queues[i]);
+    }
+
+    for (i = 0; i < glob->sctp_threads; i++) {
+        zmq_setsockopt(loc->sctp_worker_queues[i], ZMQ_LINGER, &zero,
+                sizeof(zero));
+        zmq_close(loc->sctp_worker_queues[i]);
     }
 
     for (i = 0; i < glob->gtp_threads; i++) {
@@ -813,6 +859,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         libtrace_message_queue_destroy(&(loc->fromsip_queues[i]));
     }
 
+
     zmq_setsockopt(loc->tosyncq_ip, ZMQ_LINGER, &zero, sizeof(zero));
     zmq_close(loc->tosyncq_ip);
 
@@ -832,6 +879,9 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     if (loc->sip_worker_queues) {
         free(loc->sip_worker_queues);
     }
+    if (loc->sctp_worker_queues) {
+        free(loc->sctp_worker_queues);
+    }
 
     HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
         free_all_ipsessions(&(v4->intercepts));
@@ -846,6 +896,12 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         free(v6);
     }
 
+
+    HASH_ITER(hh, loc->ipcc_filters, flt, tmpflt) {
+        HASH_DELETE(hh, loc->ipcc_filters, flt);
+        openli_cc_prefix_filter_release(flt->cc_exclude);
+        free(flt);
+    }
 
     free_all_staticipsessions(&(loc->activestaticintercepts));
     free_all_rtpstreams(&(loc->activertpintercepts));
@@ -1077,6 +1133,122 @@ static inline uint32_t is_core_server_packet(
     }
 
     return hashval;
+
+}
+
+static void handle_sctp_data_chunks(colthread_local_t *loc,
+        libtrace_packet_t *pkt) {
+
+    libtrace_sctp_common_t *sctp;
+    uint32_t rem;
+    uint8_t proto, flags, *dchunk = NULL;
+    uint16_t len;
+    libtrace_sctp_data_t *dhdr;
+    libtrace_sctp_state_t state;
+    uint8_t *sccp, *tcap, *p;
+    uint16_t sccp_len = 0, tcap_len = 0;
+    uint32_t tid = 0, fwdto;
+    size_t data_offset;
+    openli_state_update_t sccpmsg;
+
+    memset(&state, 0, sizeof(state));
+
+    if (loc->sctpq_count == 0) {
+        return;
+    }
+
+    sctp = (libtrace_sctp_common_t *)trace_get_transport(pkt, &proto, &rem);
+    if (!sctp || rem == 0) {
+        return;
+    }
+
+    while (1) {
+        dchunk = trace_get_next_sctp_data_chunk(sctp, &state, rem, &flags,
+                &len, &dhdr);
+        if (dchunk == NULL) {
+            break;
+        }
+        sccp = NULL;
+        sccp_len = 0;
+
+        if (ntohl(dhdr->proto) == 3) {
+            sccp = parse_m3ua_header_for_sccp(dchunk, len, &sccp_len,
+                    NULL, NULL);
+        } else if (ntohl(dhdr->proto) == 5) {
+            sccp = parse_m2pa_header_for_sccp(dchunk, len, &sccp_len,
+                    NULL, NULL);
+        }
+
+        if (!sccp || sccp_len < 5) {
+            continue;
+        }
+
+        if (*sccp == 0x09) {
+            data_offset = 5 + sccp[4];
+        } else if (*sccp == 0x11) {
+            data_offset = 6 + sccp[5];
+        } else {
+            continue;
+        }
+
+        tcap = sccp + data_offset;
+        tcap_len = sccp_len - data_offset;
+
+        if (tcap_len < 4) {
+            continue;
+        }
+
+        // message type is byte 0
+        p = tcap + 1;
+
+        // length
+        if (*p & 0x80) {
+            p += (*p & 0x7F) + 1;
+        } else {
+            p ++;
+        }
+
+        // 0x62 = begin, 0x64 = end, 0x65 = continue
+        if (tcap[0] == 0x62 || tcap[0] == 0x64 || tcap[0] == 0x65) {
+            uint8_t tag, tag_len, i;
+            while (p < tcap + tcap_len) {
+                tag = *p;
+                tag_len = *(p + 1);
+
+                p += 2;
+
+                // begin, continue == match OTID
+                // end == match DTID
+                /* Note that in practice, some messages sent using a continue
+                 * actually have the "original" TID in the DTID field (e.g
+                 * a dialogueResponse) but I've not yet come across any
+                 * such cases that would affect SMS interception.
+                 */
+                if (((tcap[0] == 0x62 || tcap[0] == 0x65) && tag == 0x48) ||
+                        (tcap[0] == 0x64 && tag == 0x49)) {
+                   for (i = 0; i < tag_len && i < 4; i++) {
+                       tid = (tid << 8) | p[i];
+                   }
+                }
+
+                p += tag_len;
+            }
+        }
+
+        fwdto = hashlittle(&tid, sizeof(tid), 312267023) % loc->sctpq_count;
+
+        if (collector_halt) {
+            return;
+        }
+        sccpmsg.type = OPENLI_UPDATE_SCCP;
+        sccpmsg.data.sccp.content = calloc(sccp_len, sizeof(uint8_t));
+        memcpy(sccpmsg.data.sccp.content, sccp, sccp_len);
+        sccpmsg.data.sccp.contentlen = sccp_len;
+        sccpmsg.data.sccp.timestamp = trace_get_timeval(pkt);
+
+        zmq_send(loc->sctp_worker_queues[fwdto], (void *)&(sccpmsg),
+                sizeof(sccpmsg), 0);
+    }
 
 }
 
@@ -1332,9 +1504,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         goto skipcoreservers;
     }
 
+    if (proto == TRACE_IPPROTO_SCTP) {
+        handle_sctp_data_chunks(loc, pkt);
+    }
     /* All these special packets are UDP, so we can avoid a whole bunch
      * of these checks for TCP traffic */
-    if (proto == TRACE_IPPROTO_UDP) {
+    else if (proto == TRACE_IPPROTO_UDP) {
 
         /* Is this from one of our ALU mirrors -- if yes, parse + strip it
          * for conversion to an ETSI record */
@@ -1599,7 +1774,7 @@ static int start_xinput(collector_global_t *glob, x_input_t *xinp) {
 }
 
 static int start_input(collector_global_t *glob, colinput_t *inp,
-        int todaemon, char *progname) {
+        char *progname) {
 
     libtrace_info_t *info;
     struct timeval tv;
@@ -1654,7 +1829,7 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
      * program name associated with them.
      */
 
-    if (todaemon) {
+    if (daemonised) {
         open_daemonlog(progname);
     }
 
@@ -2018,6 +2193,10 @@ static void destroy_collector_state(collector_global_t *glob) {
         free(glob->emailworkers);
     }
 
+    if (glob->sctpworkers) {
+        free(glob->sctpworkers);
+    }
+
     if (glob->gtpworkers) {
         for (i = 0; i < glob->gtp_threads; i++) {
             pthread_mutex_destroy(&(glob->gtpworkers[i].col_queue_mutex));
@@ -2078,6 +2257,18 @@ static void destroy_collector_state(collector_global_t *glob) {
     }
 
     destroy_sip_call_state(&glob->sip_call_state, &glob->sip_call_state_mutex);
+
+    if (glob->gsm_identity_map.shardcount > 0) {
+        gsm_identity_record_t *id, *tmp;
+        for (i = 0; i < glob->gsm_identity_map.shardcount; i++) {
+            pthread_rwlock_destroy(&(glob->gsm_identity_map.shards[i].rwlock));
+            HASH_ITER(hh, glob->gsm_identity_map.shards[i].rec, id, tmp) {
+                HASH_DELETE(hh, glob->gsm_identity_map.shards[i].rec, id);
+                free(id);
+            }
+        }
+        free(glob->gsm_identity_map.shards);
+    }
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));
@@ -2281,6 +2472,23 @@ static int prepare_collector_glob(collector_global_t *glob) {
         glob->email_ingestor->zmq_ctxt = glob->zmq_ctxt;
     }
 
+    if (glob->sctp_threads > 0) {
+        uint16_t i;
+        glob->gsm_identity_map.shards = calloc(glob->sctp_threads * 2,
+                sizeof(gsm_identity_shard_t));
+        glob->gsm_identity_map.shardcount = glob->sctp_threads * 2;
+
+        for (i = 0; i < glob->sctp_threads * 2; i++) {
+            glob->gsm_identity_map.shards[i].rec = NULL;
+            glob->gsm_identity_map.shards[i].ident = i;
+            pthread_rwlock_init(&(glob->gsm_identity_map.shards[i].rwlock),
+                    NULL);
+        }
+    } else {
+        glob->gsm_identity_map.shards = NULL;
+        glob->gsm_identity_map.shardcount = 0;
+    }
+
     return 0;
 }
 
@@ -2294,6 +2502,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->forwarding_threads = 1;
     glob->encoding_threads = 2;
     glob->email_threads = 1;
+    glob->sctp_threads = 1;
     glob->gtp_threads = 1;
     glob->sip_threads = 1;
     glob->sharedinfo.jsonconfig = NULL;
@@ -2968,6 +3177,7 @@ static void *start_ip_sync_thread(void *params) {
 
 haltsyncthread:
     /* Collector is halting, stop all processing threads */
+    sync_drop_all_mediators(sync);
     halt_processing_threads(glob);
     clean_sync_data(sync);
 
@@ -3095,6 +3305,9 @@ int main(int argc, char *argv[]) {
 
     if (todaemon) {
         daemonise(argv[0], pidfile);
+    } else if (getenv("INVOCATION_ID") != NULL) {
+        // systemd is controlling us, so try to force syslog
+        open_daemonlog(argv[0]);
     }
 
     /* Initialise osipparser2 */
@@ -3192,6 +3405,18 @@ int main(int argc, char *argv[]) {
     } else {
         glob->gtpworkers = NULL;
     }
+
+    if (glob->sctp_threads > 0) {
+        glob->sctpworkers = calloc(glob->sctp_threads,
+                sizeof(openli_sctp_worker_t));
+
+        for (i = 0; i < glob->sctp_threads; i++) {
+            start_sctp_worker_thread(&(glob->sctpworkers[i]), i, glob);
+        }
+    } else {
+        glob->sctpworkers = NULL;
+    }
+
 
     if (glob->email_threads > 0) {
 
@@ -3362,7 +3587,7 @@ int main(int argc, char *argv[]) {
         pthread_rwlock_unlock(&(glob->x_input_mutex));
 
         HASH_ITER(hh, glob->inputs, inp, tmp) {
-            if (start_input(glob, inp, todaemon, argv[0]) == 0) {
+            if (start_input(glob, inp, argv[0]) == 0) {
                 logger(LOG_INFO, "OpenLI: failed to start input %s",
                         inp->uri);
             }
@@ -3435,6 +3660,9 @@ int main(int argc, char *argv[]) {
     }
     for (i = 0; i < glob->gtp_threads; i++) {
         pthread_join(glob->gtpworkers[i].threadid, NULL);
+    }
+    for (i = 0; i < glob->sctp_threads; i++) {
+        pthread_join(glob->sctpworkers[i].threadid, NULL);
     }
     for (i = 0; i < glob->sip_threads; i++) {
         pthread_join(glob->sipworkers[i].threadid, NULL);

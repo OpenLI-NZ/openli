@@ -297,6 +297,9 @@ static int update_configuration_delete(update_con_info_t *cinfo,
         case TARGET_EMAILINTERCEPT:
             ret = remove_email_intercept(cinfo, state, target, 1);
             break;
+        case TARGET_IPCCFILTER:
+            ret = remove_ipcc_filter(cinfo, state, target, 0);
+            break;
         case TARGET_DEFAULTRADIUS:
             ret = remove_defaultradius(cinfo, state, target);
             break;
@@ -381,6 +384,9 @@ static json_object *create_get_response(update_con_info_t *cinfo,
             break;
         case TARGET_OPENLIVERSION:
             jobj = get_openli_version();
+            break;
+        case TARGET_IPCCFILTER:
+            jobj = get_ipcc_filter(cinfo, state, tgtptr);
             break;
         case TARGET_GTPSERVER:
             jobj = get_coreservers(cinfo, state, OPENLI_CORE_SERVER_GTP);
@@ -481,6 +487,13 @@ static int update_configuration_post(update_con_info_t *cinfo,
                 ret = add_new_emailintercept(cinfo, state);
             } else {
                 ret = modify_emailintercept(cinfo, state);
+            }
+            break;
+        case TARGET_IPCCFILTER:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_ipcc_filter(cinfo, state);
+            } else {
+                ret = modify_ipcc_filter(cinfo, state);
             }
             break;
         case TARGET_OPENLIVERSION:
@@ -750,6 +763,8 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_MEDIATOR;
         } else if (strncmp(url, "/options", strlen("/options")) == 0) {
             cinfo->target = TARGET_OPTIONS;
+        } else if (strncmp(url, "/ipccfilter", strlen("/ipccfilter")) == 0) {
+            cinfo->target = TARGET_IPCCFILTER;
         } else {
             free(cinfo);
             return MHD_NO;

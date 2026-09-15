@@ -101,11 +101,13 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->emailcount = glob->email_threads;
     sync->sipcount = glob->sip_threads;
     sync->gtpcount = glob->gtp_threads;
+    sync->sctpcount = glob->sctp_threads;
 
     sync->zmq_pubsocks = calloc(sync->pubsockcount, sizeof(void *));
     sync->zmq_fwdctrlsocks = calloc(sync->forwardcount, sizeof(void *));
     sync->zmq_emailsocks = calloc(sync->emailcount, sizeof(void *));
     sync->zmq_gtpsocks = calloc(sync->gtpcount, sizeof(void *));
+    sync->zmq_sctpsocks = calloc(sync->sctpcount, sizeof(void *));
     sync->zmq_sipsocks = calloc(sync->sipcount, sizeof(void *));
 
     sync->ctx = glob->sslconf.ctx;
@@ -143,7 +145,10 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
             "inproc://openliemailcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount,
-            "inproc://openligtpcontrol_sync", glob->zmq_ctxt, -1);
+            "inproc://openliGTPcontrol_sync", glob->zmq_ctxt, -1);
+
+    init_zmq_socket_array(sync->zmq_sctpsocks, sync->sctpcount,
+            "inproc://openliSCTPcontrol_sync", glob->zmq_ctxt, -1);
 
     init_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount,
             "inproc://openlisipcontrol_sync", glob->zmq_ctxt, -1);
@@ -158,17 +163,16 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 #define HALT_THREADS(socks, count) \
     pthread_mutex_lock(&(haltinfo.mutex)); \
     haltinfo.halted = 0; \
-    haltfails = send_halt_message_to_zmq_socket_array( \
-        socks, count, &haltinfo); \
-    \
-    if (haltfails) { \
-        haltattempts ++; \
-        usleep(250000); \
-        continue; \
-    } \
+    send_halt_message_to_zmq_socket_array(socks, count, &haltinfo); \
     \
     while (count > 0 && haltinfo.halted < count) { \
-        pthread_cond_wait(&(haltinfo.cond), &(haltinfo.mutex)); \
+        struct timespec ts; \
+        clock_gettime(CLOCK_REALTIME, &ts); \
+        ts.tv_sec += 2; \
+        if (pthread_cond_timedwait(&(haltinfo.cond), \
+                    &(haltinfo.mutex), &ts) != 0) { \
+            break; \
+        } \
     } \
     pthread_mutex_unlock(&(haltinfo.mutex));
 
@@ -215,7 +219,7 @@ static void purge_unused_udpsink_mappings(collector_sync_t *sync) {
 void clean_sync_data(collector_sync_t *sync) {
 
     int zero=0;
-    int haltattempts = 0, haltfails = 0;
+    int haltattempts = 0;
     ip_to_session_t *iter, *tmp;
     default_radius_user_t *raditer, *radtmp;
     halt_info_t haltinfo;
@@ -289,7 +293,6 @@ void clean_sync_data(collector_sync_t *sync) {
     pthread_cond_init(&(haltinfo.cond), NULL);
 
     while (haltattempts < 10) {
-        haltfails = 0;
 
         if (sync->zmq_colsock) {
             int x;
@@ -352,6 +355,7 @@ void clean_sync_data(collector_sync_t *sync) {
         HALT_THREADS(sync->zmq_sipsocks, sync->sipcount);
         HALT_THREADS(sync->zmq_emailsocks, sync->emailcount);
         HALT_THREADS(sync->zmq_gtpsocks, sync->gtpcount);
+        HALT_THREADS(sync->zmq_sctpsocks, sync->sctpcount);
         HALT_THREADS(sync->zmq_pubsocks, sync->pubsockcount);
         HALT_THREADS(sync->zmq_fwdctrlsocks, sync->forwardcount);
         break;
@@ -360,11 +364,12 @@ void clean_sync_data(collector_sync_t *sync) {
     pthread_mutex_destroy(&(haltinfo.mutex));
     pthread_cond_destroy(&(haltinfo.cond));
 
-    free(sync->zmq_emailsocks);
-    free(sync->zmq_sipsocks);
-    free(sync->zmq_gtpsocks);
-    free(sync->zmq_pubsocks);
-    free(sync->zmq_fwdctrlsocks);
+    clear_zmq_socket_array(sync->zmq_sipsocks, sync->sipcount);
+    clear_zmq_socket_array(sync->zmq_emailsocks, sync->emailcount);
+    clear_zmq_socket_array(sync->zmq_gtpsocks, sync->gtpcount);
+    clear_zmq_socket_array(sync->zmq_pubsocks, sync->pubsockcount);
+    clear_zmq_socket_array(sync->zmq_sctpsocks, sync->sctpcount);
+    clear_zmq_socket_array(sync->zmq_fwdctrlsocks, sync->forwardcount);
 
 }
 
@@ -1938,6 +1943,38 @@ static inline void announce_vendormirror_id(collector_sync_t *sync,
     pthread_mutex_unlock(sync->glob->stats_mutex);
 }
 
+static void push_cc_exclude_withdraw(collector_sync_t *sync,
+        ipintercept_t *cept) {
+
+    sync_sendq_t *tmp, *sendq;
+    openli_pushed_t msg;
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_REMOVE_IPCC_FILTERS;
+        msg.data.liid = strdup(cept->common.liid);
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+}
+
+static void push_cc_exclude_tries(collector_sync_t *sync,
+        ipintercept_t *cept) {
+
+    sync_sendq_t *tmp, *sendq;
+    openli_pushed_t msg;
+
+    if (cept->cc_exclude_tries == NULL) {
+        return;
+    }
+
+    HASH_ITER(hh, (sync_sendq_t *)(sync->glob->collector_queues), sendq, tmp) {
+        memset(&msg, 0, sizeof(openli_pushed_t));
+        msg.type = OPENLI_PUSH_UPDATE_IPCC_FILTERS;
+        msg.data.cc_exclude = cept->cc_exclude_tries;
+        libtrace_message_queue_put(sendq->q, (void *)(&msg));
+    }
+}
+
 static void push_existing_user_sessions(collector_sync_t *sync,
         ipintercept_t *cept) {
 
@@ -1960,6 +1997,32 @@ static void push_existing_user_sessions(collector_sync_t *sync,
         }
     }
 
+}
+
+static openli_cc_prefix_filter_t *construct_openli_cc_prefix_filter(
+        ipintercept_t *cept, int colqueues) {
+
+    openli_cc_prefix_filter_t *tries;
+    size_t i;
+    openli_cc_prefix_filter_result_t res;
+
+    tries = openli_cc_prefix_filter_create(cept->common.liid, 1 + colqueues);
+    for (i = 0; i < cept->cc_exclude_count; i++) {
+        res = openli_cc_prefix_filter_add_cidr(tries, cept->cc_exclude_cidrs[i]);
+        if (res == OPENLI_CC_PREFIX_FILTER_DUPLICATE) {
+            continue;
+        }
+        if (res != OPENLI_CC_PREFIX_FILTER_OK) {
+            logger(LOG_INFO,
+                    "OpenLI collector: unable to add IPCC filter prefix '%s' to LIID %s: %s",
+                    cept->cc_exclude_cidrs[i], cept->common.liid,
+                    openli_cc_prefix_filter_result_string(res));
+            openli_cc_prefix_filter_destroy(tries);
+            return NULL;
+        }
+    }
+
+    return tries;
 }
 
 static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
@@ -2014,6 +2077,14 @@ static int insert_new_ipintercept(collector_sync_t *sync, ipintercept_t *cept) {
             OPENLI_INTERCEPT_TYPE_IP);
     publish_openli_msg(sync->zmq_pubsocks[cept->common.seqtrackerid], expmsg);
 
+    if (cept->cc_exclude_count > 0) {
+        cept->cc_exclude_tries = construct_openli_cc_prefix_filter(cept,
+                HASH_CNT(hh, (sync_sendq_t *)sync->glob->collector_queues));
+        if (cept->cc_exclude_tries) {
+            push_cc_exclude_tries(sync, cept);
+        }
+    }
+
     if (cept->username) {
         push_existing_user_sessions(sync, cept);
         add_intercept_to_user_intercept_list(&sync->userintercepts, cept);
@@ -2055,6 +2126,7 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
     }
 
     push_ipintercept_halt_to_threads(sync, ipint);
+    push_cc_exclude_withdraw(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
     if (ipint->username) {
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
@@ -2144,6 +2216,41 @@ static int update_modified_intercept(collector_sync_t *sync,
         ipint->vendmirrorid = modified->vendmirrorid;
         if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
             announce_vendormirror_id(sync, ipint);
+        }
+    }
+
+    if (compare_ipcc_prefix_filters(ipint, modified) != 0) {
+        char **tmp_cidrs;
+        size_t tmp_count;
+        openli_cc_prefix_filter_t *replace = NULL;
+
+        tmp_count = ipint->cc_exclude_count;
+        tmp_cidrs = ipint->cc_exclude_cidrs;
+
+        ipint->cc_exclude_cidrs = modified->cc_exclude_cidrs;
+        ipint->cc_exclude_count = modified->cc_exclude_count;
+
+        modified->cc_exclude_cidrs = tmp_cidrs;
+        modified->cc_exclude_count = tmp_count;
+
+        if (ipint->cc_exclude_count == 0) {
+            // tell collector local threads to remove the filter without
+            // replacement
+            if (ipint->cc_exclude_tries) {
+                openli_cc_prefix_filter_release(ipint->cc_exclude_tries);
+                ipint->cc_exclude_tries = NULL;
+            }
+            push_cc_exclude_withdraw(sync, ipint);
+        } else {
+            replace = construct_openli_cc_prefix_filter(ipint,
+                    HASH_CNT(hh, (sync_sendq_t *)sync->glob->collector_queues));
+            if (replace) {
+                if (ipint->cc_exclude_tries) {
+                    openli_cc_prefix_filter_release(ipint->cc_exclude_tries);
+                }
+                ipint->cc_exclude_tries = replace;
+                push_cc_exclude_tries(sync, ipint);
+            }
         }
     }
 
@@ -2997,6 +3104,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 if (ret == -1) {
                     return -1;
                 }
+                ret = forward_provmsg_to_workers(sync->zmq_sctpsocks,
+                        sync->sctpcount, provmsg, msglen, msgtype, "SCTP");
+                if (ret == -1) {
+                    return -1;
+                }
                 break;
             case OPENLI_PROTO_NOMORE_INTERCEPTS:
                 disable_unconfirmed_intercepts(sync);
@@ -3007,6 +3119,11 @@ static int recv_from_provisioner(collector_sync_t *sync) {
                 }
                 ret = forward_provmsg_to_workers(sync->zmq_gtpsocks,
                         sync->gtpcount, provmsg, msglen, msgtype, "GTP");
+                if (ret == -1) {
+                    return -1;
+                }
+                ret = forward_provmsg_to_workers(sync->zmq_sctpsocks,
+                        sync->sctpcount, provmsg, msglen, msgtype, "SCTP");
                 if (ret == -1) {
                     return -1;
                 }
@@ -3204,6 +3321,8 @@ void sync_disconnect_provisioner(collector_sync_t *sync, uint8_t dropmeds) {
             NULL, 0, OPENLI_PROTO_DISCONNECT, "email");
     forward_provmsg_to_workers(sync->zmq_gtpsocks, sync->gtpcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "GTP");
+    forward_provmsg_to_workers(sync->zmq_sctpsocks, sync->sctpcount,
+            NULL, 0, OPENLI_PROTO_DISCONNECT, "SCTP");
     forward_provmsg_to_workers(sync->zmq_sipsocks, sync->sipcount,
             NULL, 0, OPENLI_PROTO_DISCONNECT, "SIP");
 

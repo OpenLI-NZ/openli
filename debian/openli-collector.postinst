@@ -17,7 +17,6 @@ case "$1" in
     adduser --quiet --system --group --no-create-home \
                 --home /etc/openli ${USER}
 
-    mkdir -p /var/lib/openli/
     mkdir -p /etc/openli/
 
     if [ ! -f /var/lib/openli/cinstate.db ]; then

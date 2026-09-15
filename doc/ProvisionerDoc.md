@@ -260,6 +260,16 @@ a RADIUS feed to an OpenLI collector to generate the IRI records but the
 recipient collector doesn't necessarily need to be the same collector instance
 as the one that is receiving the mirrored packets.
 
+From version 1.1.21, you can define IP subnets for an IP intercept that are
+automatically excluded from interception, i.e. if an intercepted packet's
+source or destination IP matches a particular subnet, then the packet will
+not be encoded and delivered to the receiving LEA. This feature is intended to
+allow operators to exclude certain bandwidth-heavy services (e.g. media
+streaming platforms) from interception to reduce the workload on their
+collectors and the amount of (uninteresting) traffic that they deliver to
+the requesting agency. You should ALWAYS confirm with the agency first before
+applying any filtering to an intercept!
+
 For mobile IP intercepts, there are some slight differences. The Access type
 must be set to "mobile" to tell OpenLI to detect IP sessions using mobile
 session management protocols (such as GTP), instead of RADIUS. The User must
@@ -615,7 +625,6 @@ An IP intercept must contain the following key-value elements:
                              that have been defined for this intercept when
                              the X1 interface was used to configure it on your
                              network, expressed as a YAML sequence
-
 Valid access types are:
   'dialup', 'adsl', 'vdsl', 'fiber', 'wireless', 'lan', 'satellite', 'wimax',
   'cable', 'mobile' and 'wireless-other'.
@@ -700,6 +709,25 @@ following key-value elements:
                              example config for more information about the
                              meaning of this field.
 
+
+* `cc_exclude_groups`     -- the names of any IPCC prefix exclusion groups to
+                             use to filter out unwanted traffic from this
+                             intercept, expressed as a YAML sequence
+
+---
+IPCC prefix exclusion groups may be defined using a YAML sequence within the
+top level key `ipcc-exclude-prefix-groups`.
+
+Each prefix group contains the following key-value pairs:
+
+* `name`        -- a unique name assigned to this set of prefixes. This name
+                   is what you will put in the `cc_exclude_groups` sequence
+                   for any IP intercepts that you want to apply this filter
+                   to.
+* `prefixes`    -- a YAML sequence containing the IP prefixes that you want
+                   this filter to exclude from interception, expressed in the
+                   typical CIDR format (e.g. 10.0.0.0/24). IPv6 prefixes are
+                   also supported.
 
 ---
 A VOIP intercept must contain the following key-value elements:

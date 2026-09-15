@@ -39,6 +39,35 @@
 #include "etsili_core.h"
 #include "ipcc.h"
 
+static inline openli_cc_prefix_filter_t *lookup_cc_prefix_filter(
+        colthread_local_t *loc, char *liid) {
+
+    cc_prefix_exclusion_map_t *found;
+
+    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    if (found) {
+        return found->cc_exclude;
+    }
+    return NULL;
+}
+
+static inline int suppress_cc(openli_cc_prefix_filter_t *flt,
+        int family, packet_info_t *pinfo) {
+    void *src, *dst;
+
+    if (!flt) return 0;
+    if (family == AF_INET) {
+        src = &(((struct sockaddr_in *)&pinfo->srcip)->sin_addr.s_addr);
+        dst = &(((struct sockaddr_in *)&pinfo->destip)->sin_addr.s_addr);
+    } else {
+        src = &(((struct sockaddr_in6 *)&pinfo->srcip)->sin6_addr.s6_addr);
+        dst = &(((struct sockaddr_in6 *)&pinfo->destip)->sin6_addr.s6_addr);
+    }
+    return openli_cc_prefix_filter_match(flt, family, src) ||
+            openli_cc_prefix_filter_match(flt, family, dst);
+}
+
+
 static inline static_ipcache_t *find_static_cached(prefix_t *prefix,
         colthread_local_t *loc) {
 
@@ -79,13 +108,14 @@ static inline int add_static_cached(prefix_t *prefix, patricia_node_t *pnode,
 
 static inline int lookup_static_ranges(struct sockaddr *cmp,
         int family, libtrace_packet_t *pkt, uint8_t dir,
-        colthread_local_t *loc, struct timeval *tv) {
+        colthread_local_t *loc, packet_info_t *pinfo, struct timeval *tv) {
 
     int matched = 0;
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
     openli_export_recv_t *msg;
     static_ipcache_t *cached = NULL;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
 
     memset(&prefix, 0, sizeof(prefix_t));
 
@@ -143,6 +173,14 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                     continue;
                 }
 
+                if (matchsess->common.liid) {
+                    cc_exclude = lookup_cc_prefix_filter(loc,
+                            matchsess->common.liid);
+                    if (suppress_cc(cc_exclude, family, pinfo)) {
+                            continue;
+                    }
+                }
+
                 matched ++;
                 if (matchsess->common.targetagency == NULL ||
                         strcmp(matchsess->common.targetagency, "pcapdisk") == 0)
@@ -168,13 +206,14 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
 
 static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
         colthread_local_t *loc, int *matched, libtrace_packet_t *pkt,
-        struct timeval *tv) {
+        packet_info_t *pinfo, struct timeval *tv) {
 
     patricia_node_t *pnode = NULL;
     prefix_t prefix;
     openli_export_recv_t *msg;
     ipv6_target_t *tgt;
     ipsession_t *sess, *tmp;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
 
     memset(&prefix, 0, sizeof(prefix_t));
     memcpy(&(prefix.add.sin6), &(cmp->sin6_addr), 16);
@@ -209,6 +248,14 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                     if (sess->common.toend_time > 0 && tv->tv_sec >=
                             sess->common.toend_time) {
                         continue;
+                    }
+
+                    if (sess->common.liid) {
+                        cc_exclude = lookup_cc_prefix_filter(loc,
+                                sess->common.liid);
+                        if (suppress_cc(cc_exclude, AF_INET6, pinfo)) {
+                            continue;
+                        }
                     }
 
                     *matched = ((*matched) + 1);
@@ -254,16 +301,17 @@ int ipv6_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     /* Check if ipsrc or ipdst match any of our active intercepts.
      * NOTE: a packet can match multiple intercepts so don't break early.
      */
+
     cmp = (struct sockaddr_in6 *)(&pinfo->srcip);
-    singlev6_conn_contents(cmp, loc, &matched, pkt, &pinfo->tv);
+    singlev6_conn_contents(cmp, loc, &matched, pkt, pinfo, &pinfo->tv);
 
     cmp = (struct sockaddr_in6 *)(&pinfo->destip);
-    singlev6_conn_contents(cmp, loc, &matched, pkt, &pinfo->tv);
+    singlev6_conn_contents(cmp, loc, &matched, pkt, pinfo, &pinfo->tv);
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET6, pkt, 0, loc, &pinfo->tv);
+            AF_INET6, pkt, 0, loc, pinfo, &pinfo->tv);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET6, pkt, 1, loc, &pinfo->tv);
+            AF_INET6, pkt, 1, loc, pinfo, &pinfo->tv);
 
     return matched;
 }
@@ -277,6 +325,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     int matched = 0;
     ipv4_target_t *tgt;
     ipsession_t *sess, *tmp;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
 
     if (rem < sizeof(libtrace_ip_t)) {
         /* Truncated IP header */
@@ -294,6 +343,7 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
 
     if (tgt) {
         HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+
             if (sess->common.tomediate == OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
                 continue;
             }
@@ -304,6 +354,13 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             if (sess->common.toend_time > 0 && pinfo->tv.tv_sec >=
                     sess->common.toend_time) {
                 continue;
+            }
+
+            if (sess->common.liid) {
+                cc_exclude = lookup_cc_prefix_filter(loc, sess->common.liid);
+                if (suppress_cc(cc_exclude, AF_INET, pinfo)) {
+                    continue;
+                }
             }
 
             matched ++;
@@ -345,6 +402,13 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                 continue;
             }
 
+            if (sess->common.liid) {
+                cc_exclude = lookup_cc_prefix_filter(loc, sess->common.liid);
+                if (suppress_cc(cc_exclude, AF_INET, pinfo)) {
+                    continue;
+                }
+            }
+
             matched ++;
             if (sess->common.targetagency == NULL ||
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
@@ -371,9 +435,9 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
     }
 
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->srcip),
-            AF_INET, pkt, 0, loc, &pinfo->tv);
+            AF_INET, pkt, 0, loc, pinfo, &pinfo->tv);
     matched += lookup_static_ranges((struct sockaddr *)(&pinfo->destip),
-            AF_INET, pkt, 1, loc, &pinfo->tv);
+            AF_INET, pkt, 1, loc, pinfo, &pinfo->tv);
 
 
 ipv4ccdone:

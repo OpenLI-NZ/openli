@@ -5,11 +5,17 @@ After=network.target
 
 [Service]
 User=openli
+Group=openli
 Type=simple
 ExecStart=/usr/bin/openliprovisioner -c /etc/openli/provisioner-config.yaml -K default
 ExecReload=/bin/kill -s HUP $MAINPID
-ExecStop=/bin/kill -s TERM $MAINPID
 Restart=on-abnormal
+RestartSec=5s
+
+PrivateTmp=yes
+ProtectSystem=yes
+ProtectHome=yes
+PrivateDevices=yes
 
 [Install]
 WantedBy=multi-user.target

@@ -31,6 +31,77 @@
 #include <stdlib.h>
 #include <string.h>
 
+void *init_zmq_packet_return_publish(void *zmq_ctxt, const char *label,
+        const int workerid) {
+
+    int zero = 0, hwm=2000;
+    void *retsock = NULL;
+    char returnq[1024];
+
+    retsock = zmq_socket(zmq_ctxt, ZMQ_PUSH);
+    snprintf(returnq, 1024, "inproc://%s-packet-return-%d", label, workerid);
+    if (zmq_bind(retsock, returnq) < 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to bind to packet return ZMQ: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    } else if (zmq_setsockopt(retsock, ZMQ_LINGER, &zero, sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to set linger on packet return ZMQ: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    } else if (zmq_setsockopt(retsock, ZMQ_SNDHWM, &hwm, sizeof(hwm)) != 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to set HWM on packet return ZMQ: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    }
+    return retsock;
+}
+
+void *init_zmq_ii_consumer(void *zmq_ctxt, const char *label,
+        const int workerid) {
+    int zero = 0;
+    char sockname[1024];
+    void *retsock = NULL;
+
+    retsock = zmq_socket(zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 256, "inproc://openli%scontrol_sync-%d", label,
+            workerid);
+
+    if (zmq_bind(retsock, sockname) < 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to bind to II zmq: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    } else if (zmq_setsockopt(retsock, ZMQ_LINGER, &zero, sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to configure II zmq: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    }
+
+    return retsock;
+}
+
+void *init_zmq_colthread_recv_consumer(void *zmq_ctxt, const char *label,
+        const int workerid) {
+    int zero = 0;
+    char sockname[1024];
+    void *retsock = NULL;
+
+    retsock = zmq_socket(zmq_ctxt, ZMQ_PULL);
+    snprintf(sockname, 256, "inproc://openli%sworker-colrecv%d", label,
+            workerid);
+
+    if (zmq_bind(retsock, sockname) < 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to bind to colthread zmq: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    } else if (zmq_setsockopt(retsock, ZMQ_LINGER, &zero, sizeof(zero)) != 0) {
+        logger(LOG_INFO, "OpenLI: %s processing thread %d failed to configure colthread zmq: %s", label, workerid, strerror(errno));
+        zmq_close(retsock);
+        retsock = NULL;
+    }
+
+    return retsock;
+}
+
 int init_zmq_socket_array(void **zmq_socks, int sockcount,
         const char *basename, void *zmq_ctxt, int sendtimeo) {
 
@@ -87,7 +158,7 @@ void clear_zmq_socket_array(void **zmq_socks, int sockcount) {
 int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
 		halt_info_t *haltinfo) {
     openli_export_recv_t *haltmsg;
-    int zero = 0, ret, i, failed;
+    int ret, i, failed;
 
     if (zmq_socks == NULL) {
         return 0;
@@ -101,20 +172,21 @@ int send_halt_message_to_zmq_socket_array(void **zmq_socks, int sockcount,
         haltmsg = (openli_export_recv_t *)calloc(1,
                 sizeof(openli_export_recv_t));
         haltmsg->type = OPENLI_EXPORT_HALT;
-	haltmsg->data.haltinfo = haltinfo;
+        haltmsg->data.haltinfo = haltinfo;
 
-        ret = zmq_send(zmq_socks[i], &haltmsg, sizeof(haltmsg), ZMQ_NOBLOCK);
-        if (ret < 0 && errno == EAGAIN) {
-            failed ++;
-            free(haltmsg);
-            continue;
+        while (1) {
+            ret = zmq_send(zmq_socks[i], &haltmsg, sizeof(haltmsg), 0);
+            if (ret <= 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                logger(LOG_INFO, "OpenLI Collector: error sending halt message to a worker thread -- collector will likely hang: %s", strerror(errno));
+                free(haltmsg);
+                failed ++;
+                break;
+            }
+            break;
         }
-        if (ret <= 0) {
-            free(haltmsg);
-        }
-        zmq_setsockopt(zmq_socks[i], ZMQ_LINGER, &zero, sizeof(zero));
-        zmq_close(zmq_socks[i]);
-	zmq_socks[i] = NULL;
     }
     return failed;
 }

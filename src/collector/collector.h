@@ -49,12 +49,14 @@
 #include "reassembler.h"
 #include "collector_publish.h"
 #include "collector_base.h"
+#include "cc_prefix_filter.h"
 #include "openli_tls.h"
 #include "radius_hasher.h"
 #include "email_ingest_service.h"
 #include "email_worker.h"
 #include "gtp_worker.h"
 #include "sip_worker.h"
+#include "sctp_worker.h"
 #include "sipparsing.h"
 #include "x2x3_ingest.h"
 
@@ -77,6 +79,8 @@ enum {
     OPENLI_PUSH_UPDATE_IPRANGE_INTERCEPT=16,
     OPENLI_PUSH_UPDATE_VOIPINTERCEPT=17,
     OPENLI_PUSH_HUP_RELOAD=18,
+    OPENLI_PUSH_UPDATE_IPCC_FILTERS=19,
+    OPENLI_PUSH_REMOVE_IPCC_FILTERS=20,
 };
 
 enum {
@@ -89,6 +93,7 @@ enum {
     OPENLI_UPDATE_IMAP = 6,
     OPENLI_UPDATE_POP3 = 7,
     OPENLI_UPDATE_SMS_SIP = 8,
+    OPENLI_UPDATE_SCCP = 9,
 };
 
 typedef struct openli_sip_content {
@@ -99,6 +104,12 @@ typedef struct openli_sip_content {
     int ipfamily;
     struct timeval timestamp;
 } PACKED openli_sip_content_t;
+
+typedef struct openli_sccp_content {
+    uint8_t *content;
+    uint16_t contentlen;
+    struct timeval timestamp;
+} PACKED openli_sccp_content_t;
 
 #define RECVD_PKT recvd.data.packet.lt_pkt
 #define RECVD_PINFO recvd.data.packet.pinfo
@@ -112,6 +123,7 @@ typedef struct openli_state_msg {
             libtrace_packet_t *lt_pkt;
             packet_info_t pinfo;
         } packet;
+        openli_sccp_content_t sccp;
         openli_sip_content_t sip;
     } data;
 
@@ -127,6 +139,8 @@ typedef struct openli_ii_msg {
         char *rtpstreamkey;
         coreserver_t *coreserver;
         staticipsession_t *iprange;
+        openli_cc_prefix_filter_t *cc_exclude;
+        char *liid;
     } data;
 
 } PACKED openli_pushed_t;
@@ -214,9 +228,17 @@ typedef struct staticip_cacheentry {
     UT_hash_handle hh;
 } static_ipcache_t;
 
+typedef struct cc_prefix_exclusion_map {
+    char *liid;
+    openli_cc_prefix_filter_t *cc_exclude;
+    UT_hash_handle hh;
+} cc_prefix_exclusion_map_t;
+
 typedef struct colthread_local {
 
     char *localname;
+
+    cc_prefix_exclusion_map_t *ipcc_filters;
 
     /* Message queue for pushing updates to sync IP thread */
     void *tosyncq_ip;
@@ -240,6 +262,9 @@ typedef struct colthread_local {
     /* Number of SIP processing threads that have queues in the above array */
     int sipq_count;
 
+    /* Number of SCTP processing threads */
+    int sctpq_count;
+
     /* Array of message queues to pass packets to the email worker threads */
     void **email_worker_queues;
 
@@ -248,6 +273,9 @@ typedef struct colthread_local {
 
     /* Array of message queues to pass packets to the GTP worker threads */
     void **gtp_worker_queues;
+
+    /* Array of message queues to pass packets to the SCTP worker threads */
+    void **sctp_worker_queues;
 
     /* Current intercepts */
     ipv4_target_t *activeipv4intercepts;
@@ -327,6 +355,7 @@ struct collector_global {
     int email_threads;
     int gtp_threads;
     int sip_threads;
+    int sctp_threads;
 
     void *zmq_encoder_ctrl;
 
@@ -347,6 +376,8 @@ struct collector_global {
     openli_email_worker_t *emailworkers;
     openli_gtp_worker_t *gtpworkers;
     openli_sip_worker_t *sipworkers;
+    openli_sctp_worker_t *sctpworkers;
+
     colthread_local_t *collocals;
     int nextloc;
 
@@ -398,7 +429,7 @@ struct collector_global {
     x_input_t *x_inputs;
     pthread_rwlock_t x_input_mutex;
 
-    
+    gsm_identity_map_t gsm_identity_map;
 
 };
 

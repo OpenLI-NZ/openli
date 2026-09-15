@@ -275,7 +275,8 @@ static void convert_commonintercept_to_json(json_object *jobj,
 static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object *jobj;
     json_object *vendmirrorid, *user, *accesstype, *radiusident;
-    json_object *staticips, *mobileident, *udpsinks;
+    json_object *staticips, *mobileident, *udpsinks, *ccgroups;
+    size_t i;
 
     jobj = json_object_new_object();
     convert_commonintercept_to_json(jobj, &(ipint->common));
@@ -289,6 +290,13 @@ static json_object *convert_ipintercept_to_json(ipintercept_t *ipint) {
     json_object_object_add(jobj, "user", user);
     json_object_object_add(jobj, "accesstype", accesstype);
     json_object_object_add(jobj, "radiusident", radiusident);
+
+    ccgroups = json_object_new_array();
+    for (i = 0; i < ipint->cc_exclude_group_count; i++) {
+        json_object_array_add(ccgroups,
+                json_object_new_string(ipint->cc_exclude_groups[i]));
+    }
+    json_object_object_add(jobj, "cc_exclude_groups", ccgroups);
 
     if (ipint->mobileident != OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED) {
         mobileident = json_object_new_string(
@@ -405,6 +413,47 @@ static json_object *convert_emailintercept_to_json(emailintercept_t *mailint) {
     return jobj;
 }
 
+static json_object *convert_ipcc_prefix_filter_group_to_json(
+        ipcc_prefix_filter_t *pfxflt) {
+    json_object *jobj;
+    json_object *groupname, *prefixes;
+    size_t i;
+    uint8_t cidrvalid = 0;
+
+    if (pfxflt->group_name == NULL) {
+        return NULL;
+    }
+    if (pfxflt->pfx_count == 0) {
+        return NULL;
+    }
+
+    prefixes = json_object_new_array();
+    jobj = json_object_new_object();
+    json_object_object_add(jobj, "prefixes", prefixes);
+
+    groupname = json_object_new_string(pfxflt->group_name);
+    json_object_object_add(jobj, "name", groupname);
+
+    for (i = 0; i < pfxflt->pfx_count; i++) {
+        json_object *cidr;
+
+        if (pfxflt->pfx_cidrs[i] == NULL) {
+            continue;
+        }
+        cidr = json_object_new_string(pfxflt->pfx_cidrs[i]);
+        json_object_array_add(prefixes, cidr);
+        cidrvalid = 1;
+    }
+
+    if (cidrvalid == 0) {
+        json_object_put(jobj);
+        return NULL;
+    }
+
+    return jobj;
+
+}
+
 static json_object *convert_voipintercept_to_json(voipintercept_t *vint) {
     json_object *jobj;
     json_object *siptargets;
@@ -466,7 +515,6 @@ static json_object *convert_coreserver_to_json(coreserver_t *cs) {
 
     return jobj;
 }
-
 
 /* RHEL 8 doesn't have a libjson that provides json_object_new_uint64(), so
  * we need to provide our own version.
@@ -571,11 +619,10 @@ json_object *get_known_collectors(update_con_info_t *cinfo UNUSED,
     prov_collector_t *col, *tmp;
     known_client_t kc;
 
-    if (HASH_CNT(hh, state->collectors) == 0) {
-        return NULL;
-    }
-
     jarray = json_object_new_array();
+    if (HASH_CNT(hh, state->collectors) == 0) {
+        return jarray;
+    }
 
     HASH_ITER(hh, state->collectors, col, tmp) {
         kc.type = TARGET_COLLECTOR;
@@ -760,6 +807,29 @@ json_object *get_agency(update_con_info_t *cinfo UNUSED,
 
     return jarray;
 
+}
+
+json_object *get_ipcc_filter(update_con_info_t *cinfo UNUSED,
+        provision_state_t *state, char *name) {
+    ipcc_prefix_filter_t *flt, *tmp;
+    json_object *jarray, *jobj;
+
+    if (name) {
+        HASH_FIND(hh, state->interceptconf.ipcc_filters, name, strlen(name),
+                flt);
+        if (!flt) {
+            return NULL;
+        }
+        jobj = convert_ipcc_prefix_filter_group_to_json(flt);
+        return jobj;
+    }
+
+    jarray = json_object_new_array();
+    HASH_ITER(hh, state->interceptconf.ipcc_filters, flt, tmp) {
+        jobj = convert_ipcc_prefix_filter_group_to_json(flt);
+        json_object_array_add(jarray, jobj);
+    }
+    return jarray;
 }
 
 json_object *get_voip_intercept(update_con_info_t *cinfo UNUSED,

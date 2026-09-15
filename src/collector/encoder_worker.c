@@ -66,8 +66,7 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     free(known);
 }
 
-static void destroy_encoding_job(openli_encoding_job_t *job,
-        uint8_t free_request) {
+void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request) {
 
     if (!job) {
         return;
@@ -127,7 +126,7 @@ static void release_liid_from_forwarder(forwarder_assignment_t *assign,
 }
 
 static int init_worker(openli_encoder_t *enc) {
-    int zero = 0, rto = 10;
+    int zero = 0;
     int hwm = 1000;
     int i, zmq_fd;
     char sockname[128];
@@ -150,11 +149,6 @@ static int init_worker(openli_encoder_t *enc) {
         return -1;
     }
 
-    if (zmq_setsockopt(enc->zmq_recvjob, ZMQ_RCVTIMEO, &rto,
-                sizeof(rto)) != 0) {
-        logger(LOG_INFO, "OpenLI: error configuring connection to zmq pull socket");
-        return -1;
-    }
     if (zmq_connect(enc->zmq_recvjob, sockname) != 0) {
         logger(LOG_INFO, "OpenLI: error connecting to zmq pull socket");
         return -1;
@@ -254,18 +248,14 @@ void destroy_encoder_worker(openli_encoder_t *enc) {
         free_etsili_generics(enc->freegenerics);
     }
 
-    do {
-        x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t), 0);
-        if (x < 0) {
-            if (errno == EAGAIN) {
-                continue;
-            }
-            break;
-        }
+
+    while ((x = zmq_recv(enc->zmq_recvjob, &job, sizeof(openli_encoding_job_t),
+            ZMQ_DONTWAIT)) > 0) {
+
         destroy_encoding_job(&job, 1);
         drained ++;
 
-    } while (x > 0);
+    }
     zmq_close(enc->zmq_recvjob);
 
     remove_openli_fdevent(enc->zmq_job_ev);
@@ -449,6 +439,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
                 enc->etsidecoder, res->msgbody->encoded + res->preamblen,
                 res->msgbody->len - res->preamblen, job->encryptkey,
                 job->encryptkey_len) == NULL) {
+            logger(LOG_INFO, "OpenLI: unable to encrypt ETSI record (LIID: %s, type: %u) using aes-192-cbc", job->liid, type);
             return -1;
         }
     }
@@ -814,6 +805,9 @@ static int encode_templated_epscc(openli_encoder_t *enc,
 
     wandder_encoded_result_t *body = NULL;
     openli_mobcc_job_t *epsccjob;
+    wandder_decoder_t *dec = NULL;
+    uint8_t *payload_ptr = NULL;
+    int seen_seqno = 0;
 
     epsccjob = (openli_mobcc_job_t *)&(job->origreq->data.mobcc);
 
@@ -834,19 +828,59 @@ static int encode_templated_epscc(openli_encoder_t *enc,
         return -1;
     }
 
+    dec = init_wandder_decoder(NULL, body->encoded, body->len, 0);
+    if (dec == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to create decoder for EPSCC body");
+        wandder_release_encoded_result(enc->encoder, body);
+        return -1;
+    }
+
+    wandder_decode_next(dec);   // Payload
+    wandder_decode_next(dec);   // cCPayloadSequence
+    wandder_decode_next(dec);   // sequence
+    wandder_decode_next(dec);   // payloadDirection
+    wandder_decode_next(dec);   // ccContents
+    wandder_decode_next(dec);   // EPSCC-PDU
+
+    while (wandder_decode_next(dec) > 0) {
+        if (wandder_get_identifier(dec) == 5) {
+            seen_seqno = 1;
+        }
+        if (seen_seqno && wandder_get_identifier(dec) == 2 &&
+                wandder_get_class(dec) == WANDDER_CLASS_CONTEXT_PRIMITIVE) {
+            if (wandder_get_itemlen(dec) != epsccjob->ipclen) {
+                logger(LOG_INFO,
+                        "OpenLI: EPSCC body was not encoded correctly? Payload length available does not match the payload we're supposed to include");
+                free_wandder_decoder(dec);
+                wandder_release_encoded_result(enc->encoder, body);
+                return -1;
+            }
+            payload_ptr = wandder_get_itemptr(dec);
+            break;
+        }
+    }
+
+    if (payload_ptr == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: failed to find payload pointer in EPSCC body");
+        free_wandder_decoder(dec);
+        wandder_release_encoded_result(enc->encoder, body);
+        return -1;
+    }
+    memcpy(payload_ptr, epsccjob->ipcontent, epsccjob->ipclen);
+    free_wandder_decoder(dec);
+
     if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
-                body->encoded, body->len, epsccjob->ipcontent,
-                epsccjob->ipclen, job) < 0) {
+                body->encoded, body->len, NULL, 0, job) < 0) {
 
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, epsccjob->ipcontent, epsccjob->ipclen,
-                job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -986,27 +1020,31 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
 
     if (is_new) {
         if (etsili_create_umtscc_template(enc->encoder, job->preencoded,
-                ccjob->dir, ccjob->ipclen, umtscc_tplate) < 0) {
+                ccjob->dir, ccjob->ipclen, ccjob->ipcontent,
+                umtscc_tplate) < 0) {
             logger(LOG_INFO, "OpenLI: Failed to create UMTSCC template?");
             return -1;
         }
+    } else {
+        if (etsili_update_cc_template(umtscc_tplate, ccjob->ipcontent,
+                ccjob->ipclen) < 0) {
+            logger(LOG_INFO, "OpenLI: error while populating UMTSCC template?");
+            return -1;
+        }
     }
-    /* We have very specific templates for each observed packet size, so
-     * this will not require updating */
 
     if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
         if (create_preencrypted_message_body(enc->encoder, &known->encrypt_cc,
                 res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
                 umtscc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)ccjob->ipcontent, ccjob->ipclen, job) < 0) {
+                NULL, 0, job) < 0) {
             return -1;
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
-                umtscc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)ccjob->ipcontent, ccjob->ipclen,
+                umtscc_tplate->cc_content.cc_wrap_len, NULL, 0,
                 job->origreq->type, job->liid) < 0) {
             return -1;
         }
@@ -1066,11 +1104,19 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
     if (is_new) {
         if (etsili_create_emailcc_template(enc->encoder, job->preencoded,
                 emailccjob->format, emailccjob->dir,
-                emailccjob->cc_content_len, emailcc_tplate) < 0) {
+                emailccjob->cc_content_len, emailccjob->cc_content,
+                emailcc_tplate) < 0) {
             logger(LOG_INFO, "OpenLI: Failed to create EmailCC template?");
             return -1;
         }
+    } else {
+        if (etsili_update_cc_template(emailcc_tplate, emailccjob->cc_content,
+                emailccjob->cc_content_len) < 0) {
+            logger(LOG_INFO, "OpenLI: error while populating EmailCC template?");
+            return -1;
+        }
     }
+
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
     if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
@@ -1078,17 +1124,14 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
                 res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)emailccjob->cc_content,
-                emailccjob->cc_content_len, job) < 0) {
+                NULL, 0, job) < 0) {
             return -1;
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)emailccjob->cc_content,
-                emailccjob->cc_content_len, job->origreq->type,
-                job->liid) < 0) {
+                NULL, 0, job->origreq->type, job->liid) < 0) {
             return -1;
         }
     }
@@ -1120,11 +1163,19 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
 
     if (is_new) {
         if (etsili_create_ipcc_template(enc->encoder, job->preencoded,
-                ipccjob->dir, ipccjob->ipclen, ipcc_tplate) < 0) {
+                ipccjob->dir, ipccjob->ipclen, ipccjob->ipcontent,
+                ipcc_tplate) < 0) {
             logger(LOG_INFO, "OpenLI: Failed to create IPCC template?");
             return -1;
         }
+    } else {
+        if (etsili_update_cc_template(ipcc_tplate, ipccjob->ipcontent,
+                ipccjob->ipclen) < 0) {
+            logger(LOG_INFO, "OpenLI: error while populating IPCC template");
+            return -1;
+        }
     }
+
     /* We have very specific templates for each observed packet size, so
      * this will not require updating */
     if (job->encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE) {
@@ -1132,16 +1183,14 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
                 res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)ipccjob->ipcontent,
-                ipccjob->ipclen, job) < 0) {
+                NULL, 0, job) < 0) {
             return -1;
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
-                (uint8_t *)ipccjob->ipcontent,
-                ipccjob->ipclen, job->origreq->type, job->liid) < 0) {
+                NULL, 0, job->origreq->type, job->liid) < 0) {
             return -1;
         }
     }
@@ -1206,6 +1255,10 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             break;
         case OPENLI_EXPORT_UMTSIRI:
             ret = encode_templated_umtsiri(enc, job, known, hdr_tplate, res);
+            break;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            ret = encode_templated_gsmsmsiri(enc->encoder,
+                    &known->encrypt_iri, job, hdr_tplate, res);
             break;
         case OPENLI_EXPORT_EPSIRI:
             ret = encode_templated_epsiri(enc, job, known, hdr_tplate, res);
@@ -1282,12 +1335,12 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
             ret = 0;
     }
 
+    if (ret <= 0) {
+        return ret;
+    }
     finalize_encoded_result(res, job, enc, known, job->origreq->type,
             job->origreq->destid);
 
-    if (ret < 0) {
-        return ret;
-    }
     return enccount;
 }
 
@@ -1313,7 +1366,8 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         openli_encoded_result_t *result = NULL;
 
         memset(&job, 0, sizeof(openli_encoding_job_t));
-        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t), 0);
+        x = zmq_recv(socket, &job, sizeof(openli_encoding_job_t),
+                ZMQ_DONTWAIT);
         if (x < 0 && (errno != EAGAIN && errno != EINTR)) {
             logger(LOG_INFO,
                     "OpenLI: error reading job in encoder worker %d",
@@ -1384,6 +1438,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                     logger(LOG_INFO,
                             "OpenLI: encoder worker had an error when encoding %d record",
                             job.origreq->type);
+                    exit(-5);
                 }
 encodejoberror:
                 destroy_encoding_job(&job, 1);
@@ -1475,12 +1530,16 @@ static int handle_epoll_event(openli_encoder_t *enc, struct epoll_event *ev) {
 
     openli_epoll_ev_t *mev = (openli_epoll_ev_t *)(ev->data.ptr);
     int ret = 0;
+    uint64_t val;
 
     switch(mev->fdtype) {
         case OPENLI_EPOLL_ENCODING_CONTROL:
             // Time to halt the worker
             return -1;
         case OPENLI_EPOLL_ZMQ_YIELD:
+            ret = read(enc->yield_fd, &val, sizeof(val));
+            ret = process_job(enc, enc->zmq_recvjob);
+            break;
         case OPENLI_EPOLL_ENCODING_JOB:
             ret = process_job(enc, enc->zmq_recvjob);
             break;

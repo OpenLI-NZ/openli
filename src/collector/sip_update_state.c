@@ -607,7 +607,9 @@ static sipregister_t *create_new_voip_registration(
         cin_id = get_register_cin_using_regid(sipworker->call_state,
                 sipworker->call_state_mutex, regid);
         newreg = create_sipregister(vint, regid, cin_id, tv->tv_sec);
-
+        if (newreg == NULL) {
+            return NULL;
+        }
         HASH_ADD_KEYPTR(hh, vint->active_registrations, newreg->registerid,
                 strlen(newreg->registerid), newreg);
     }

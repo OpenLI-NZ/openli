@@ -1,14 +1,16 @@
 [Unit]
 Description=OpenLI collector daemon
+Documentation=http://github.com/OpenLI-NZ/openli/wiki
 After=network.target
 
 [Service]
-Type=forking
-ExecStart=/etc/init.d/openli-collector start
-ExecStop=/etc/init.d/openli-collector stop
-ExecReload=/etc/init.d/openli-collector reload
+Type=simple
+ExecStart=/usr/bin/openlicollector -c /etc/openli/collector-config.yaml
+ExecReload=/bin/kill -s HUP $MAINPID
+Restart=on-abnormal
+RestartSec=5s
+
 PrivateTmp=yes
-PrivateDevices=no
 ProtectSystem=yes
 ProtectHome=yes
 

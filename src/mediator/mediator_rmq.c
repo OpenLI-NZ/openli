@@ -599,6 +599,10 @@ void disconnect_mediator_producer_RMQ(coll_recv_t *col) {
         known->declared_int_rmq = 0;
         known->declared_raw_rmq = 0;
     }
+
+    col->total_iri_unacked = 0;
+    col->total_cc_unacked = 0;
+    col->total_raw_unacked = 0;
 }
 
 
@@ -1066,82 +1070,85 @@ static int consume_other_frame(amqp_connection_state_t state) {
     return -1;
 }
 
-static int count_saved_messages(saved_received_data_t *msgs, size_t msgcnt) {
-    size_t i;
-    int awaiting = 0;
+static uint32_t release_confirmed_messages(coll_recv_t *col, uint8_t channel,
+        uint64_t delivery_tag, uint8_t multiple) {
+    uint32_t released = 0;
+    col_known_liid_t *known, *tmp;
+    col_saved_queue_t *q = NULL;
 
-    for (i = 0; i < msgcnt; i++) {
-        if (msgs[i].msgbody != NULL && msgs[i].msglen > 0) {
-            awaiting++;
-        }
-    }
-    return awaiting;
-}
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        q = NULL;
+        if (channel == 2) q = &(known->iri_queue);
+        if (channel == 3) q = &(known->cc_queue);
+        if (channel == 4) q = &(known->raw_queue);
 
-static int release_confirmed_messages(saved_received_data_t *msgs,
-        size_t msgcnt, uint64_t delivery_tag, uint8_t multiple) {
-    size_t i;
-    int released = 0;
-
-    for (i = 0; i < msgcnt; i++) {
-        saved_received_data_t *next = &(msgs[i]);
-        int confirmed;
-
-        if (next->msgbody == NULL || next->msglen == 0 ||
-                next->delivtag == 0) {
+        if (!q) {
             continue;
         }
-        confirmed = multiple ? next->delivtag <= delivery_tag :
-                next->delivtag == delivery_tag;
-        if (!confirmed) {
-            continue;
+        while (q->count > 0) {
+            saved_received_data_t *slot = &(q->slots[q->head]);
+            if (slot->delivtag == 0 || slot->delivtag > delivery_tag) {
+                break;
+            }
+            if (slot->msgbody) {
+                free(slot->msgbody);
+                slot->msgbody = NULL;
+            }
+            q->head = (q->head + 1) % q->capacity;
+            q->count --;
+            released ++;
+
+            if (!multiple) {
+                slot = &(q->slots[q->head]);
+                if (q->count == 0 || slot->delivtag != delivery_tag) {
+                    return released;
+                }
+            }
         }
-        free(next->msgbody);
-        free(next->liid);
-        next->msgbody = NULL;
-        next->liid = NULL;
-        next->msglen = 0;
-        next->delivtag = 0;
-        released++;
     }
     return released;
+
+}
+
+static inline uint8_t any_queues_full(coll_recv_t *col) {
+    col_known_liid_t *known, *tmp;
+
+    if (!col->queue_full) {
+        return 0;
+    }
+
+    // a queue was full, but we should check again now?
+    HASH_ITER(hh, col->known_liids, known, tmp) {
+        if (known->cc_queue.count >= known->cc_queue.capacity) {
+            return 1;
+        }
+        if (known->iri_queue.count >= known->iri_queue.capacity) {
+            return 1;
+        }
+        if (known->raw_queue.count >= known->raw_queue.capacity) {
+            return 1;
+        }
+    }
+    return 0;
 }
 
 int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
     int r;
     amqp_frame_t frame;
     struct timeval tv;
-    int cc_await = 0, iri_await = 0, raw_await = 0;
+    uint32_t cc_await = 0, iri_await = 0, raw_await = 0;
 
-    iri_await = count_saved_messages(col->saved_iri_msgs,
-            col->saved_iri_msg_cnt);
-    cc_await = count_saved_messages(col->saved_cc_msgs,
-            col->saved_cc_msg_cnt);
-    raw_await = count_saved_messages(col->saved_raw_msgs,
-            col->saved_raw_msg_cnt);
+    iri_await = col->total_iri_unacked;
+    cc_await = col->total_cc_unacked;
+    raw_await = col->total_raw_unacked;
 
     while (cc_await > 0 || iri_await > 0 || raw_await > 0) {
-        tv.tv_sec = 1;
+        tv.tv_sec = 0;
         tv.tv_usec = 0;
         r = amqp_simple_wait_frame_noblock(col->amqp_producer_state, &frame,
                 &tv);
         if (r == AMQP_STATUS_TIMEOUT) {
-            if (cc_await == 0) col->saved_cc_msg_cnt = 0;
-            if (iri_await == 0) col->saved_iri_msg_cnt = 0;
-            if (raw_await == 0) col->saved_raw_msg_cnt = 0;
-            compact_saved_messages(col->saved_iri_msgs,
-                    &(col->saved_iri_msg_cnt));
-            compact_saved_messages(col->saved_cc_msgs,
-                    &(col->saved_cc_msg_cnt));
-            compact_saved_messages(col->saved_raw_msgs,
-                    &(col->saved_raw_msg_cnt));
-
-            if (col->saved_raw_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
-                    col->saved_iri_msg_cnt < MAX_SAVED_RECEIVED_DATA &&
-                    col->saved_cc_msg_cnt < MAX_SAVED_RECEIVED_DATA) {
-                col->queue_full = 0;
-            }
-            return 1;
+            break;
         } else if (r != AMQP_STATUS_OK) {
             return 0;
         }
@@ -1156,31 +1163,34 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
                     logger(LOG_INFO, "OpenLI mediator: channel exception occurred on an internal RMQ connection -- must reset connection");
                     return 0;
                 case AMQP_BASIC_ACK_METHOD: {
-                    saved_received_data_t *msgs;
-                    size_t msgcnt;
-                    int *await;
-                    int released;
+                    uint32_t released = 0;
 
                     ack = (amqp_basic_ack_t *)frame.payload.method.decoded;
                     if (frame.channel == 2) {
-                        msgs = col->saved_iri_msgs;
-                        msgcnt = col->saved_iri_msg_cnt;
-                        await = &(iri_await);
+                        released = release_confirmed_messages(col, 2,
+                                ack->delivery_tag, ack->multiple);
+                        if (released > iri_await) {
+                            iri_await = 0;
+                        } else {
+                            iri_await -= released;
+                        }
                     } else if (frame.channel == 3) {
-                        msgs = col->saved_cc_msgs;
-                        msgcnt = col->saved_cc_msg_cnt;
-                        await = &(cc_await);
+                        released = release_confirmed_messages(col, 3,
+                                ack->delivery_tag, ack->multiple);
+                        if (released > cc_await) {
+                            cc_await = 0;
+                        } else {
+                            cc_await -= released;
+                        }
                     } else if (frame.channel == 4) {
-                        msgs = col->saved_raw_msgs;
-                        msgcnt = col->saved_raw_msg_cnt;
-                        await = &(raw_await);
-                    } else {
-                        break;
+                        released = release_confirmed_messages(col, 4,
+                                ack->delivery_tag, ack->multiple);
+                        if (released > raw_await) {
+                            raw_await = 0;
+                        } else {
+                            raw_await -= released;
+                        }
                     }
-                    released = release_confirmed_messages(msgs, msgcnt,
-                            ack->delivery_tag, ack->multiple);
-                    assert(released <= *await);
-                    *await -= released;
                     break;
                 }
                 case AMQP_BASIC_NACK_METHOD:
@@ -1201,10 +1211,10 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
             }
         }
     }
-    compact_saved_messages(col->saved_iri_msgs, &(col->saved_iri_msg_cnt));
-    compact_saved_messages(col->saved_cc_msgs, &(col->saved_cc_msg_cnt));
-    compact_saved_messages(col->saved_raw_msgs, &(col->saved_raw_msg_cnt));
-    col->queue_full = 0;
+    col->total_cc_unacked = cc_await;
+    col->total_iri_unacked = iri_await;
+    col->total_raw_unacked = raw_await;
+    col->queue_full = any_queues_full(col);
     return 1;
 }
 
@@ -1499,7 +1509,7 @@ static inline int ack_mediator_liid_messages(amqp_connection_state_t state,
 
     int x;
 
-    if (state == NULL) {
+    if (state == NULL || deliv_tag == 0) {
         return 0;
     }
 

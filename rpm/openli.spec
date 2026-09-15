@@ -1,5 +1,5 @@
 Name:           openli
-Version:        1.1.20
+Version:        1.1.21
 Release:        1%{?dist}
 Summary:        Software for performing ETSI-compliant lawful intercept
 
@@ -17,7 +17,7 @@ BuildRequires: libyaml-devel
 BuildRequires: libtrace4-devel >= 4.0.34
 BuildRequires: Judy-devel
 BuildRequires: uthash-devel
-BuildRequires: libwandder2-devel >= 2.0.21
+BuildRequires: libwandder2-devel >= 2.0.22
 BuildRequires: zeromq-devel
 BuildRequires: gperftools-devel
 BuildRequires: libosip2-devel >= 5.0.0
@@ -272,7 +272,9 @@ fi
 %post collector
 if [ $1 -eq 1 ]; then
         /bin/systemctl enable openli-collector.service openli-collector.socket >/dev/null 2>&1 || :
+fi
 
+if [ ! -f /var/lib/openli/cinstate.db ]; then
         # Create cinstate database
         mkdir -p /var/lib/openli/
         mkdir -p /etc/openli/

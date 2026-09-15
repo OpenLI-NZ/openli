@@ -29,6 +29,7 @@
 #include <stdio.h>
 #include <errno.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include "util.h"
 #include "logger.h"
@@ -89,6 +90,8 @@ static inline char *extract_authcc_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.authcc;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.authcc;
         case OPENLI_EXPORT_RAW_SYNC:
         case OPENLI_EXPORT_RAW_CC:
         case OPENLI_EXPORT_RAW_IRI:
@@ -115,6 +118,8 @@ static inline char *extract_delivcc_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipiri.delivcc;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.delivcc;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.delivcc;
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.delivcc;
@@ -140,6 +145,8 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipiri.liid;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.liid;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.liid;
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.liid;
@@ -169,6 +176,8 @@ static inline uint32_t extract_cin_from_job(openli_export_recv_t *recvd) {
             return recvd->data.ipiri.cin;
         case OPENLI_EXPORT_IPMMIRI:
             return recvd->data.ipmmiri.cin;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            return recvd->data.gsmsms.cin;
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.cin;
@@ -228,6 +237,9 @@ static inline etsili_iri_type_t extract_iritype_from_job(
             break;
         case OPENLI_EXPORT_EPSIRI:
             iritype = recvd->data.mobiri.iritype;
+            break;
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            iritype = ETSILI_IRI_REPORT;
             break;
         default:
             return ETSILI_IRI_NONE;
@@ -476,7 +488,7 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
-    size_t index;
+    size_t index, shutdown_retries = 0;
     int ret = 1;
     openli_encoding_job_t job;
 
@@ -497,12 +509,21 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     while (1) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
                 sizeof(openli_encoding_job_t), 0)) < 0) {
-            if (errno == EAGAIN) {
+            if (errno == EAGAIN || errno == EINTR) {
+                if (collector_halt) {
+                    shutdown_retries ++;
+                    if (shutdown_retries > 50) {
+                        free(job.liid);
+                        return -1;
+                    }
+                }
+                usleep(1000);
                 continue;
             }
             logger(LOG_INFO,
                     "Error while pushing encoding job to worker threads: %s",
                     strerror(errno));
+            free(job.liid);
             return -1;
         }
         break;
@@ -524,6 +545,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     openli_encoding_job_t job;
     int ret = 1;
     size_t index;
+    size_t shutdown_retries = 0;
 
     job.seqno = *seqno;
 	job.preencoded = intstate->preencoded;
@@ -562,12 +584,24 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     while (1) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
                 sizeof(openli_encoding_job_t), 0)) < 0) {
-            if (errno == EAGAIN) {
+            if (errno == EAGAIN || errno == EINTR) {
+                if (collector_halt) {
+                    shutdown_retries ++;
+                    if (shutdown_retries > 50) {
+                        // we're in shutdown mode and this socket is not
+                        // draining -- bail, otherwise we'll be stuck
+                        // here forever
+                        destroy_encoding_job(&job, 1);
+                        return -1;
+                    }
+                }
+                usleep(1000);
                 continue;
             }
             logger(LOG_INFO,
                     "Error while pushing encoding job to worker threads: %s",
                     strerror(errno));
+            destroy_encoding_job(&job, 1);
             return -1;
         }
         break;
@@ -859,6 +893,7 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
                 case OPENLI_EXPORT_RAW_IRI:
                 case OPENLI_EXPORT_IPCC:
                 case OPENLI_EXPORT_EPSCC:
+                case OPENLI_EXPORT_GSM_SMS_IRI:
 					run_encoding_job(seqdata, job);
                     sincepurge ++;
                     break;

@@ -30,6 +30,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <unistd.h>
 
 #include "netcomms.h"
 #include "logger.h"
@@ -679,7 +680,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea) {
         (INTERCEPT_COMMON_LEN(ipint->common) + \
          ipint->username_len + sizeof(ipint->options) + \
          sizeof(ipint->accesstype) + sizeof(ipint->mobileident) + \
-         (4 * 4))
+         ipintercept_cc_exclude_encoded_length(ipint) + (4 * 4))
 
 #define VENDMIRROR_IPINTERCEPT_BODY_LEN(ipint) \
         (IPINTERCEPT_BODY_LEN(ipint) + sizeof(ipint->vendmirrorid) + 4)
@@ -786,6 +787,20 @@ static int _push_intercept_common_fields(net_buffer_t *nb,
     return 0;
 }
 
+static int push_ipintercept_cc_exclude_groups(net_buffer_t *nb,
+        const ipintercept_t *ipint) {
+    size_t i;
+
+    for (i = 0; i < ipint->cc_exclude_count; i++) {
+        if (push_tlv(nb, OPENLI_PROTO_FIELD_IPCC_EXCLUDE_PREFIX,
+                (uint8_t *)ipint->cc_exclude_cidrs[i],
+                strlen(ipint->cc_exclude_cidrs[i])) == -1) {
+            return -1;
+        }
+    }
+    return 0;
+}
+
 static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
 
     ii_header_t hdr;
@@ -831,6 +846,10 @@ static int _push_ipintercept_modify(net_buffer_t *nb, ipintercept_t *ipint) {
     if (push_tlv(nb, OPENLI_PROTO_FIELD_INTOPTIONS,
             (uint8_t *)(&(ipint->options)),
             sizeof(ipint->options)) == -1) {
+        goto pushmodfail;
+    }
+
+    if (push_ipintercept_cc_exclude_groups(nb, ipint) == -1) {
         goto pushmodfail;
     }
 
@@ -1460,6 +1479,10 @@ int push_ipintercept_onto_net_buffer(net_buffer_t *nb, void *data) {
         goto pushipintfail;
     }
 
+    if (push_ipintercept_cc_exclude_groups(nb, ipint) == -1) {
+        goto pushipintfail;
+    }
+
     if (ipint->vendmirrorid != OPENLI_VENDOR_MIRROR_NONE) {
         if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_VENDMIRRORID,
                 (uint8_t *)(&ipint->vendmirrorid),
@@ -1928,7 +1951,18 @@ int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
     hellomsg.fwd_hello_body.threadid = htonl(threadid);
 
     if (ssl) {
-        r = SSL_write(ssl, &hellomsg, sizeof(hellomsg));
+        do {
+            r = SSL_write(ssl, &hellomsg, sizeof(hellomsg));
+            if (r <= 0) {
+                int err = SSL_get_error(ssl, r);
+                if (err == SSL_ERROR_WANT_WRITE ||
+                        err == SSL_ERROR_WANT_READ) {
+                    usleep(1000);
+                    continue;
+                }
+                return -1;
+            }
+        } while (r <= 0);
     } else {
         r = send(sockfd, &hellomsg, sizeof(hellomsg), 0);
     }
@@ -1957,18 +1991,26 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
 
     if (nb->ssl != NULL){
         ret = SSL_write(nb->ssl, nb->actptr, NETBUF_CONTENT_SIZE(nb));
-    }
-    else {
-        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
-    }
-
-    if (ret == -1) {
-        if (errno == EAGAIN || errno == EWOULDBLOCK) {
-            /* Socket not available right now... */
-            return 1;
+        if (ret <= 0) {
+            int sslr = SSL_get_error(nb->ssl, ret);
+            if (sslr == SSL_ERROR_WANT_WRITE || sslr == SSL_ERROR_WANT_READ) {
+                /* Non-blocking TLS write is pending */
+                return 1;
+            }
+            *err = OPENLI_PROTO_SEND_ERROR;
+            return -1;
         }
-        *err = OPENLI_PROTO_SEND_ERROR;
-        return -1;
+    } else {
+        ret = send(nb->fd, nb->actptr, NETBUF_CONTENT_SIZE(nb), MSG_DONTWAIT);
+
+        if (ret == -1) {
+            if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                /* Socket not available right now... */
+                return 1;
+            }
+            *err = OPENLI_PROTO_SEND_ERROR;
+            return -1;
+        }
     }
 
 
@@ -2031,6 +2073,11 @@ static int decode_tlv(uint8_t *start, uint8_t *end,
 
     uint16_t t16 = ntohs(*(uint16_t *)start);
     *t = t16;
+
+    if (start + 2 > end) {
+        logger(LOG_INFO, "OpenLI: truncated TLV (incomplete length field).");
+        return -1;
+    }
 
     start += 2;
     if (start >= end) {
@@ -2299,6 +2346,11 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
     ipint->accesstype = INTERNET_ACCESS_TYPE_UNDEFINED;
     ipint->statics = NULL;
     ipint->options = 0;
+    ipint->cc_exclude_groups = NULL;
+    ipint->cc_exclude_group_count = 0;
+    ipint->cc_exclude_cidrs = NULL;
+    ipint->cc_exclude_count = 0;
+    ipint->cc_exclude_tries = NULL;
     ipint->mobileident = OPENLI_MOBILE_IDENTIFIER_NOT_SPECIFIED;
 
     init_decoded_intercept_common(&(ipint->common));
@@ -2333,6 +2385,13 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
             ipint->mobileident = *((openli_mobile_identifier_t *)valptr);
         } else if (f == OPENLI_PROTO_FIELD_INTOPTIONS) {
             ipint->options = *((uint32_t *)valptr);
+        } else if (f == OPENLI_PROTO_FIELD_IPCC_EXCLUDE_PREFIX) {
+            char *tmp = NULL;
+            DECODE_STRING_FIELD(tmp, valptr, vallen);
+            if (add_ipintercept_cc_exclude_cidr(ipint, tmp) < 0) {
+                return -1;
+            }
+            free(tmp);
         } else if (f == OPENLI_PROTO_FIELD_USERNAME) {
             DECODE_STRING_FIELD(ipint->username, valptr, vallen);
             if (vallen == 0) {
@@ -3272,21 +3331,31 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
     }
 
     if (nb->ssl != NULL){
+        int sslr;
         ret = SSL_read(nb->ssl, nb->appendptr, NETBUF_SPACE_REM(nb));
-    }
-    else {
+        if (ret <= 0) {
+            sslr = SSL_get_error(nb->ssl, ret);
+            if (sslr == SSL_ERROR_WANT_READ || sslr == SSL_ERROR_WANT_WRITE) {
+                return OPENLI_PROTO_NO_MESSAGE;
+            } else if (sslr == SSL_ERROR_ZERO_RETURN ||
+                    (sslr == SSL_ERROR_SYSCALL && ret == 0)) {
+                return OPENLI_PROTO_PEER_DISCONNECTED;
+            }
+            return OPENLI_PROTO_RECV_ERROR;
+        }
+
+    } else {
         ret = recv(nb->fd, nb->appendptr, NETBUF_SPACE_REM(nb), MSG_DONTWAIT);
-    }
-    
-    if (ret <= 0) {
-        if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-            return OPENLI_PROTO_NO_MESSAGE;
+        if (ret <= 0) {
+            if (ret < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                return OPENLI_PROTO_NO_MESSAGE;
+            }
+            if (ret == 0) {
+                /* Other end disconnected */
+                return OPENLI_PROTO_PEER_DISCONNECTED;
+            }
+            return OPENLI_PROTO_RECV_ERROR;
         }
-        if (ret == 0) {
-            /* Other end disconnected */
-            return OPENLI_PROTO_PEER_DISCONNECTED;
-        }
-        return OPENLI_PROTO_RECV_ERROR;
     }
 
     nb->appendptr += ret;

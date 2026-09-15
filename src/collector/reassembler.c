@@ -487,6 +487,11 @@ static uint8_t *find_sip_message_end(uint8_t *content, uint16_t contlen) {
     memcpy(clenstr, (char *)clengthstart, clengthend - clengthstart);
     clenval = strtoul(clenstr, NULL, 10);
 
+    /* Try not to fall for a clearly bogus Content-Length */
+    if (clenval >= pow(2,24)) {
+        return NULL;
+    }
+
     /* Our message is only complete if we have both the SIP header and any
      * SDP payload in the buffer.
      */
@@ -583,6 +588,11 @@ int update_ipfrag_reassemble_stream(ip_reassemble_stream_t *stream,
     }
 
     if (!moreflag) {
+        if (((uint32_t)newfrag->fragoff) + newfrag->length > UINT16_MAX) {
+            // fragment offset is going to exceed 16 bit space, therefore
+            // it is probably bogus
+            return -1;
+        }
         stream->endfrag = newfrag->fragoff + newfrag->length;
     }
     stream->sorted = 0;
