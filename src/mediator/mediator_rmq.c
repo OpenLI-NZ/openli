@@ -63,6 +63,7 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
         char *queueid, int channel) {
 
     amqp_bytes_t rmq_queueid;
+    amqp_rpc_reply_t reply;
 
 #if 0
     amqp_table_t queueargs;
@@ -84,8 +85,9 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
 
     amqp_queue_declare(state, channel, rmq_queueid, 0, 1, 0, 0,
             amqp_empty_table);
+    reply= amqp_get_rpc_reply(state);
     if (amqp_get_rpc_reply(state).reply_type != AMQP_RESPONSE_NORMAL) {
-        logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %u", queueid, channel, amqp_get_rpc_reply(state).reply_type);
+        logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %s (%d)", queueid, channel, amqp_error_string2(reply.library_error), reply.library_error);
         return -1;
     }
 
@@ -1568,8 +1570,7 @@ int ack_mediator_rawip_messages(amqp_connection_state_t state,
  *  @param liid             The LIID of the intercept to register
  *
  *  @return -1 if the queue declaration fails, -2 if the registration
- *          fails, 0 if either parameter is bad, 1 if everything was
- *          successful
+ *          fails, 1 if everything was successful
  */
 int register_mediator_iri_RMQ_consumer(amqp_connection_state_t state,
         char *liid) {
@@ -1600,8 +1601,7 @@ int register_mediator_iri_RMQ_consumer(amqp_connection_state_t state,
  *  @param liid             The LIID of the intercept to register
  *
  *  @return -1 if the queue declaration fails, -2 if the registration
- *          fails, 0 if either parameter is bad, 1 if everything was
- *          successful
+ *          fails, 1 if everything was successful
  */
 int register_mediator_cc_RMQ_consumer(amqp_connection_state_t state,
         char *liid) {

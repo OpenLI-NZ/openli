@@ -472,6 +472,7 @@ static int register_known_liid_consumers(liid_map_entry_t *m, void *arg) {
     int r;
     const char *histr = "??";
     uint8_t *delflag = NULL;
+    uint8_t dummy = 0;
 
     if (ho->handover_type == HANDOVER_HI2) {
         r = register_mediator_iri_RMQ_consumer(ho->rmq_consumer, m->liid);
@@ -481,6 +482,10 @@ static int register_known_liid_consumers(liid_map_entry_t *m, void *arg) {
         r = register_mediator_cc_RMQ_consumer(ho->rmq_consumer, m->liid);
         histr = "CC";
         delflag = &(m->ccqueue_deleted);
+    } else if (ho->handover_type == HANDOVER_RAWIP) {
+        r = register_mediator_rawip_RMQ_consumer(ho->rmq_consumer, m->liid);
+        histr = "RAWIP";
+        delflag = &dummy;
     } else {
         return 0;
     }
@@ -873,6 +878,10 @@ int check_handover_rmq_status(handover_t *ho, char *agencyid) {
     if (ho->handover_type == HANDOVER_HI2) {
         hi_str = "HI2";
         r = consume_mediator_iri_messages(ho->rmq_consumer,
+                &(ho->ho_state->buf), 1, &(ho->ho_state->next_rmq_ack));
+    } else if (ho->handover_type == HANDOVER_RAWIP) {
+        hi_str = "RAWIP";
+        r = consume_mediator_rawip_messages(ho->rmq_consumer,
                 &(ho->ho_state->buf), 1, &(ho->ho_state->next_rmq_ack));
     } else {
         hi_str = "HI3";

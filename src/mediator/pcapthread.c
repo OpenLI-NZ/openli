@@ -907,7 +907,7 @@ static void add_new_pcapdisk_liid(lea_thread_state_t *state,
             /* Only register with RMQ if this LIID is "new" */
             if (register_mediator_rawip_RMQ_consumer(
                     pstate->rawip_handover->rmq_consumer,
-                    added->liid_key) < 0) {
+                    added->liid_key) != 1) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: WARNING failed to register rawip RMQ for LIID %s in pcap thread",
                         added->liid_key);
@@ -1024,8 +1024,9 @@ static int pcap_thread_epoll_event(lea_thread_state_t *state,
             }
             break;
         case OPENLI_EPOLL_RMQCHECK_TIMER:
-            /* This should never fire in this thread, but just in case... */
-            ret = agency_thread_action_rmqcheck_timer(state, mev);
+            halt_openli_timer(mev);
+            check_handover_rmq_status(pstate->rawip_handover, "pcapdisk");
+            start_openli_timer(mev, state->rmq_hb_freq);
             break;
         case OPENLI_EPOLL_CEASE_LIID_TIMER:
             /* Clean up any unconfirmed LIIDs */
@@ -1111,11 +1112,6 @@ static void *run_pcap_thread(void *params) {
         goto threadexit;
     }
 
-    /* Don't need the RMQ check timer, since we're going to poll the
-     * RMQ queues multiple times per second.
-     */
-    halt_openli_timer(state->rmqhb);
-
     /* Set up the flush / rotation timer for our output files */
     gettimeofday(&tv, NULL);
     firstflush = (((tv.tv_sec / 60) * 60) + 60) - tv.tv_sec;
@@ -1136,11 +1132,18 @@ static void *run_pcap_thread(void *params) {
             break;
         }
 
+        if (!pstate.rawip_handover->rmq_registered &&
+                state->internalrmqpass) {
+            register_handover_RMQ_all(pstate.rawip_handover,
+                    &(state->active_liids), "pcapdisk", state->internalrmqpass);
+        }
+
         /* epoll */
         if (start_openli_ms_timer(state->timerev, PCAP_IDLE_POLL_MS) < 0) {
             logger(LOG_INFO,"OpenLI Mediator: failed to add timer to epoll in agency thread for %s", state->agencyid);
             break;
         }
+
         timerexpired = 0;
         while (!timerexpired && !is_halted) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, -1);

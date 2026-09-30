@@ -756,16 +756,20 @@ int insert_lea_liid_mapping(lea_thread_state_t *state, added_liid_t *toadd) {
     }
 
     /* Register to consume from the LIID's internal RMQ queues */
-    if ((register_mediator_iri_RMQ_consumer(
-                    state->agency.hi2->rmq_consumer, toadd->liid_key) < 0) ||
-            (register_mediator_cc_RMQ_consumer(state->agency.hi3->rmq_consumer,
-                    toadd->liid_key) < 0)) {
-        logger(LOG_INFO,
-            "OpenLI Mediator: WARNING failed to register RMQ for LIID %s -> %s",
-            toadd->liid_key, state->agencyid);
-    } else {
-        logger(LOG_INFO, "OpenLI Mediator: added %s -> %s to LIID map",
+    if (strcmp(state->agencyid, "pcapdisk") != 0) {
+        if ((register_mediator_iri_RMQ_consumer(
+                        state->agency.hi2->rmq_consumer,
+                        toadd->liid_key) < 0) ||
+                (register_mediator_cc_RMQ_consumer(
+                        state->agency.hi3->rmq_consumer,
+                        toadd->liid_key) < 0)) {
+            logger(LOG_INFO,
+                "OpenLI Mediator: WARNING failed to register RMQ for LIID %s -> %s",
                 toadd->liid_key, state->agencyid);
+        } else {
+            logger(LOG_INFO, "OpenLI Mediator: added %s -> %s to LIID map",
+                    toadd->liid_key, state->agencyid);
+        }
     }
     return 1;
 }
