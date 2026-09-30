@@ -1,3 +1,41 @@
+openli (1.1.23-1) unstable; urgency=medium
+
+  * Intercepts are now keyed by (LIID, authCC) rather than just LIID, to
+    support cases where multiple jurisdictions happen to use the same
+    LIID.
+  * Fix bug where the REST API would reject requests to modify an
+    existing intercept if the 'agencyid' was not present in the message
+    body.
+  * Fix bug where omitting the 'mediator' or 'outputhandovers' fields
+    from the body of a PUT request sent to an intercept endpoint in the
+    REST API would cause those fields to be reset to their default
+    values.
+  * SIP: reduced the timeout for a completed call from 30s to 5s, to
+    reduce the amount of useless zombie session state that is retained
+    by a collector.
+  * Fix bug where static IP interception would cease if the username
+    for an active IP intercept was modified via the REST API or via
+    a SIGHUP config reload.
+  * Provisioner: fix segfault when a JSON field received via the REST
+    API is not able to be parsed (e.g. a string value is received
+    for a numeric field).
+  * Mediator: fix bug where the internal RabbitMQ queues that serve the
+    pcapdisk thread are not re-registered if they are closed due to an
+    error.
+  * Mediator: improve error logging when an internal RabbitMQ queue is
+    not able to be declared.
+  * Mediator: fix bugs that would cause the pcapdisk thread's RabbitMQ
+    queues to disconnect due to timing out, especially when under heavy
+    traffic loads.
+  * Mediator: ensure file rotation triggers are halted for intercepts that
+    have been withdrawn.
+  * Mediator: fix bug where the pcapdisk thread would try to deregister RMQ
+    handles for intercepts that were never assigned to it.
+  * Mediator: set explicit prefetch limits for all internal RMQ queues so
+    that they do not overwhelm their own TCP sockets under load.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Thu, 1 Oct 2026 11:36:41 +1300
+
 openli (1.1.22-1) unstable; urgency=medium
 
   * Fix bug where the contents of some CCs contained random bytes rather
