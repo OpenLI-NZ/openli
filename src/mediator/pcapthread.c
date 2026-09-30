@@ -916,6 +916,9 @@ static void add_new_pcapdisk_liid(lea_thread_state_t *state,
         if (create_new_pcap_output(state, pstate, added->liid,
                 added->liid_key) == NULL) {
             logger(LOG_INFO, "OpenLI Mediator: failed to create new pcap output entity for LIID %s", added->liid);
+        } else {
+            logger(LOG_INFO, "OpenLI Mediator: added %s -> %s to LIID map",
+                    added->liid, "pcapdisk");
         }
     }
 
@@ -977,13 +980,14 @@ int handle_pcap_thread_messages(lea_thread_state_t *state,
         if (msg.type == MED_LEA_MESSAGE_REMOVE_LIID) {
             /* An LIID has been withdrawn */
             char *liid = (char *)(msg.data);
+            if (lookup_liid_agency_mapping(&(state->active_liids), liid)) {
+                if (pstate->rawip_handover->rmq_consumer != NULL) {
+                    deregister_mediator_rawip_RMQ_consumer(
+                            pstate->rawip_handover->rmq_consumer, liid);
+                }
 
-            if (pstate->rawip_handover->rmq_consumer != NULL) {
-                deregister_mediator_rawip_RMQ_consumer(
-                        pstate->rawip_handover->rmq_consumer, liid);
+                withdraw_liid_agency_mapping(&(state->active_liids), liid);
             }
-
-            withdraw_liid_agency_mapping(&(state->active_liids), liid);
             free(liid);
         }
 

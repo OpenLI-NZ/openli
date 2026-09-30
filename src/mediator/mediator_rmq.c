@@ -86,8 +86,14 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
     amqp_queue_declare(state, channel, rmq_queueid, 0, 1, 0, 0,
             amqp_empty_table);
     reply= amqp_get_rpc_reply(state);
-    if (amqp_get_rpc_reply(state).reply_type != AMQP_RESPONSE_NORMAL) {
-        logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %s (%d)", queueid, channel, amqp_error_string2(reply.library_error), reply.library_error);
+    if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
+
+        if (reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION) {
+            logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %s (%d)", queueid, channel, amqp_error_string2(reply.library_error), reply.library_error);
+        } else if (reply.reply_type == AMQP_RESPONSE_SERVER_EXCEPTION) {
+            logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: server exception", queueid, channel);
+
+        }
         return -1;
     }
 
