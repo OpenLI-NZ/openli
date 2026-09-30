@@ -1593,17 +1593,21 @@ static void push_session_update_to_threads(void *sendqs,
 }
 
 static inline void push_ipintercept_halt_to_threads(collector_sync_t *sync,
-        ipintercept_t *ipint) {
+        ipintercept_t *ipint, uint8_t justuser) {
 
     internet_user_t *user;
     access_session_t *sess, *tmp2;
     static_ipranges_t *ipr, *tmpr;
 
-    logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for LIID  %s", ipint->common.liid);
+    if (!justuser) {
+        logger(LOG_INFO, "OpenLI: collector will stop intercepting traffic for LIID  %s", ipint->common.liid);
 
-    /* Remove all static IP ranges for this intercept -- its over */
-    HASH_ITER(hh, ipint->statics, ipr, tmpr) {
-        remove_staticiprange(sync, ipr);
+        /* Remove all static IP ranges for this intercept -- its over */
+        HASH_ITER(hh, ipint->statics, ipr, tmpr) {
+            remove_staticiprange(sync, ipr);
+        }
+    } else {
+        logger(LOG_INFO, "OpenLI: collector will stop intercepting for the user currently associated with LIID %s", ipint->common.liid);
     }
 
     user = lookup_user_by_intercept(sync->allusers, ipint);
@@ -2172,7 +2176,7 @@ static void remove_ip_intercept(collector_sync_t *sync, ipintercept_t *ipint) {
         return;
     }
 
-    push_ipintercept_halt_to_threads(sync, ipint);
+    push_ipintercept_halt_to_threads(sync, ipint, 0);
     push_cc_exclude_withdraw(sync, ipint);
     HASH_DELETE(hh_liid, sync->ipintercepts, ipint);
     if (ipint->username) {
@@ -2242,7 +2246,7 @@ static int update_modified_intercept(collector_sync_t *sync,
 
     if (strcmp(ipint->username, modified->username) != 0
             || ipint->mobileident != modified->mobileident) {
-        push_ipintercept_halt_to_threads(sync, ipint);
+        push_ipintercept_halt_to_threads(sync, ipint, 1);
         remove_intercept_from_user_intercept_list(&sync->userintercepts, ipint);
 
         free(ipint->username);
