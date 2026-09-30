@@ -563,6 +563,7 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         }
         goto consfailed;
     }
+    amqp_basic_qos(state, 2, 0, 1024, 0);
 
     amqp_channel_open(state, 3);
     if ((amqp_get_rpc_reply(state).reply_type) != AMQP_RESPONSE_NORMAL) {
@@ -571,6 +572,7 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         }
         goto consfailed;
     }
+    amqp_basic_qos(state, 3, 0, 1024, 0);
 
     amqp_channel_open(state, 4);
     if ((amqp_get_rpc_reply(state).reply_type) != AMQP_RESPONSE_NORMAL) {
@@ -579,6 +581,7 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         }
         goto consfailed;
     }
+    amqp_basic_qos(state, 4, 0, 4096, 0);
 
     return state;
 
