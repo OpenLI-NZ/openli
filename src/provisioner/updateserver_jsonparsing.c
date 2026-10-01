@@ -133,12 +133,17 @@ struct json_component_options {
     }
 
 #define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
-    if (newmem != NULL && oldmem != NULL && strcmp(newmem, oldmem) != 0) { \
-        free(oldmem); oldmem = newmem; *changeflag = 1; \
-        newmem = NULL; \
-    } else if (newmem) { \
-        if (oldmem == NULL) { \
+    if ((newmem) != NULL) { \
+        if (newmem[0] == '\0') { \
+            if (oldmem != NULL) { \
+                free(oldmem); oldmem = NULL; *changeflag = 1; \
+            } \
+            free(newmem); \
+            newmem = NULL; \
+        } else if (oldmem == NULL) { \
             oldmem = newmem; newmem = NULL; *changeflag = 1; \
+        } else if (strcmp(oldmem, newmem) != 0) { \
+            free(oldmem); oldmem = newmem; *changeflag = 1; newmem = NULL; \
         } else { \
             free(newmem); newmem = NULL; \
         } \
@@ -4020,17 +4025,15 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
-    MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &changed);
-    MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &changed);
+    MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &medchanged);
+    MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &medchanged);
     MODIFY_STRING_MEMBER(modified.hi3_portstr, found->ag->hi3_portstr,
-            &changed);
+            &medchanged);
     MODIFY_STRING_MEMBER(modified.hi2_portstr, found->ag->hi2_portstr,
-            &changed);
+            &medchanged);
 
     if (modified.encrypt != 0xff &&
             modified.encrypt != found->ag->encrypt) {
-        changed = 1;
         medchanged = 1;
         found->ag->encrypt = modified.encrypt;
     }
@@ -4038,51 +4041,28 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     update_intercept_timeformats(state, found->ag->agencyid,
             modified.digest.time_fmt, modified.operatorid);
 
-    if (modified.operatorid && strlen(modified.operatorid) == 0) {
-        if (found->ag->operatorid) {
-            free(found->ag->operatorid);
-            found->ag->operatorid = NULL;
-            changed = 1;
-            colchanged = 1;
-            medchanged = 1;
-        }
-    } else {
-        prev = found->ag->operatorid;
-        MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
-                &changed);
-        if (prev != found->ag->operatorid) {
-            colchanged = 1;
-            medchanged = 1;
-        }
+    MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc,
+            &medchanged);
+
+    prev = found->ag->operatorid;
+    MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
+            &medchanged);
+    if (prev != found->ag->operatorid) {
+        colchanged = 1;
     }
 
-    if (modified.shortoperatorid && strlen(modified.shortoperatorid) == 0) {
-        if (found->ag->shortoperatorid) {
-            free(found->ag->shortoperatorid);
-            found->ag->shortoperatorid = NULL;
-            changed = 1;
-            medchanged = 1;
-        }
-    } else {
-        prev = found->ag->shortoperatorid;
-        MODIFY_STRING_MEMBER(modified.shortoperatorid,
-                found->ag->shortoperatorid, &changed);
-        if (prev != found->ag->shortoperatorid) {
-            medchanged = 1;
-        }
-    }
+    MODIFY_STRING_MEMBER(modified.shortoperatorid, found->ag->shortoperatorid,
+            &medchanged);
 
     if (modified.digest.time_fmt != 0xff &&
             modified.digest.time_fmt != found->ag->digest.time_fmt) {
         found->ag->digest.time_fmt = modified.digest.time_fmt;
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
     }
 
     if (modified.digest.required != 0xff &&
                 modified.digest.required != found->ag->digest.required) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.required = modified.digest.required;
@@ -4090,7 +4070,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (modified.digest.hash_method != 0xff &&
                 modified.digest.hash_method != found->ag->digest.hash_method) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.hash_method = modified.digest.hash_method;
@@ -4098,7 +4077,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (modified.digest.sign_method != 0xff &&
                 modified.digest.sign_method != found->ag->digest.sign_method) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.sign_method = modified.digest.sign_method;
@@ -4107,7 +4085,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.hash_timeout != 0xffffffff &&
                 modified.digest.hash_timeout !=
                         found->ag->digest.hash_timeout) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.hash_timeout = modified.digest.hash_timeout;
@@ -4116,7 +4093,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.hash_pdulimit != 0xffffffff &&
                 modified.digest.hash_pdulimit !=
                         found->ag->digest.hash_pdulimit) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.hash_pdulimit = modified.digest.hash_pdulimit;
@@ -4125,7 +4101,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.sign_timeout != 0xffffffff &&
                 modified.digest.sign_timeout !=
                         found->ag->digest.sign_timeout) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.sign_timeout = modified.digest.sign_timeout;
@@ -4134,7 +4109,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.sign_hashlimit != 0xffffffff &&
                 modified.digest.sign_hashlimit !=
                         found->ag->digest.sign_hashlimit) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.sign_hashlimit = modified.digest.sign_hashlimit;
@@ -4142,28 +4116,24 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (modified.keepalivefreq != 0xffffffff &&
                 modified.keepalivefreq != found->ag->keepalivefreq) {
-        changed = 1;
         medchanged = 1;
         found->ag->keepalivefreq = modified.keepalivefreq;
     }
 
     if (modified.handover_retry != 0xffff &&
                 modified.handover_retry != found->ag->handover_retry) {
-        changed = 1;
         medchanged = 1;
         found->ag->handover_retry = modified.handover_retry;
     }
 
     if (modified.resend_window_kbs != 0xffffffff &&
             modified.resend_window_kbs != found->ag->resend_window_kbs) {
-        changed = 1;
         medchanged = 1;
         found->ag->resend_window_kbs = modified.resend_window_kbs;
     }
 
     if (modified.keepalivewait != 0xffffffff &&
                 modified.keepalivewait != found->ag->keepalivewait) {
-        changed = 1;
         medchanged = 1;
         found->ag->keepalivewait = modified.keepalivewait;
     }
@@ -4171,21 +4141,23 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (medchanged) {
         /* TODO exclude digest config from "medchanged" */
         announce_lea_to_mediators(state, found);
-        logger(LOG_INFO,
-                "OpenLI: modified existing agency '%s' via update socket.",
-                found->ag->agencyid);
+        changed = 1;
     }
 
     if (colchanged) {
         announce_digest_config_to_collectors(state, found);
+        changed = 1;
     }
 
     if (!changed) {
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",
                 found->ag->agencyid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: modified existing agency '%s' via update socket.",
+                found->ag->agencyid);
     }
-
 
     if (parsed) {
         json_object_put(parsed);
