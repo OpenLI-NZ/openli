@@ -1256,7 +1256,6 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
     int msgread = 0;
     int rejects = 0;
     struct timeval tv;
-    uint32_t len;
     amqp_envelope_t envelope;
     amqp_rpc_reply_t ret;
 
@@ -1387,14 +1386,13 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
                     }
 
                     if (is_rawip_batch) {
-                        len = rec_len;
-                        if (append_etsipdu_to_buffer(buf, (uint8_t *)&len,
-                                sizeof(len), 0) == 0) {
+                        if (append_rawip_record_to_buffer(buf, cursor,
+                               rec_len, 0) == 0) {
                             amqp_destroy_envelope(&envelope);
                             return -1;
                         }
-                    }
-                    if (append_etsipdu_to_buffer(buf, cursor, rec_len, 0) == 0) {
+                    } else if (append_etsipdu_to_buffer(buf, cursor,
+                            rec_len, 0) == 0) {
                         amqp_destroy_envelope(&envelope);
                         return -1;
                     }
@@ -1412,15 +1410,14 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
         }
 
         if (prependlength) {
-            len = envelope.message.body.len;
-            if (append_etsipdu_to_buffer(buf, (uint8_t *)(&len),
-                    sizeof(len), 0) == 0) {
-                logger(LOG_INFO, "OpenLI Mediator: unable to enqueue ETSI PDU length into export buffer");
+            if (envelope.message.body.len > UINT32_MAX ||
+                    append_rawip_record_to_buffer(buf,
+                            envelope.message.body.bytes,
+                            envelope.message.body.len, 0) == 0) {
+                logger(LOG_INFO, "OpenLI Mediator: unable to enqueue raw IP record into export buffer");
                 return -1;
             }
-        }
-
-        if (append_etsipdu_to_buffer(buf, envelope.message.body.bytes,
+        } else if (append_etsipdu_to_buffer(buf, envelope.message.body.bytes,
                 envelope.message.body.len, 0) == 0) {
             logger(LOG_INFO, "OpenLI Mediator: unable to enqueue ETSI PDU into export buffer");
             return -1;

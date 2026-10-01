@@ -94,6 +94,8 @@ uint64_t get_buffered_amount(export_buffer_t *buf);
 uint64_t append_message_to_buffer(export_buffer_t *buf,
         openli_encoded_result_t *msg, uint64_t beensent);
 uint64_t append_heartbeat_to_buffer(export_buffer_t *buf);
+uint64_t append_rawip_record_to_buffer(export_buffer_t *buf,
+        const uint8_t *record, uint32_t record_len, uint64_t beensent);
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
         uint8_t *pdustart, uint32_t pdulen, uint64_t beensent);
 int transmit_buffered_records(export_buffer_t *buf, int fd,
