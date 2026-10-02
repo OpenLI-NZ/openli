@@ -179,20 +179,19 @@ static inline int has_outstanding_pub_confirms(coll_recv_t *col) {
 
 static void init_liid_saved_queue(col_saved_queue_t *q) {
     q->capacity = COL_SAVED_QUEUE_CAPACITY;
-    q->slots = malloc(q->capacity * sizeof(saved_received_data_t));
+    q->slots = calloc(q->capacity, sizeof(saved_received_data_t));
     q->head = 0;
     q->tail = 0;
     q->count = 0;
 }
 
 static void destroy_liid_saved_queue(col_saved_queue_t *q) {
-    uint32_t i, idx;
+    uint32_t i;
 
     if (q->slots) {
-        for (i = 0; i < q->count; i++) {
-            idx = (q->head + i) % q->capacity;
-            if (q->slots[idx].msgbody) {
-                free(q->slots[idx].msgbody);
+        for (i = 0; i < q->capacity; i++) {
+            if (q->slots[i].msgbody) {
+                free(q->slots[i].msgbody);
             }
         }
         free(q->slots);
@@ -248,9 +247,16 @@ static inline int enqueue_liid_saved_queue(col_saved_queue_t *q,
     }
 
     slot = &(q->slots[q->tail]);
-    slot->msgbody = malloc(msglen);
-    if (slot->msgbody == NULL) {
-        return -1;
+    if (slot->alloc_len < msglen) {
+        uint32_t to_alloc = (msglen < 2048) ? 2048 : msglen;
+        uint8_t *newbody;
+
+        newbody = realloc(slot->msgbody, to_alloc);
+        if (newbody == NULL) {
+            return -1;
+        }
+        slot->msgbody = newbody;
+        slot->alloc_len = to_alloc;
     }
     memcpy(slot->msgbody, msgbody, msglen);
     slot->msglen = msglen;
@@ -278,7 +284,16 @@ static inline uint32_t pop_batch_from_saved_queue(col_saved_queue_t *q,
 }
 
 static inline void shrink_liid_saved_queue(col_saved_queue_t *q) {
+    uint32_t i;
+
     if (q->count == 0 && q->capacity > COL_SAVED_QUEUE_CAPACITY) {
+        for (i = COL_SAVED_QUEUE_CAPACITY; i < q->capacity; i++) {
+            if (q->slots[i].msgbody) {
+                free(q->slots[i].msgbody);
+                q->slots[i].msgbody = NULL;
+                q->slots[i].alloc_len = 0;
+            }
+        }
         saved_received_data_t *shrunk = realloc(q->slots,
                 COL_SAVED_QUEUE_CAPACITY * sizeof(saved_received_data_t));
         if (shrunk) {
@@ -374,6 +389,10 @@ static void remove_expired_liid_queues(coll_recv_t *col) {
         destroy_liid_saved_queue(&(known->cc_queue));
         destroy_liid_saved_queue(&(known->iri_queue));
         destroy_liid_saved_queue(&(known->raw_queue));
+        if (col->cached_known == known) {
+            col->cached_known = NULL;
+            col->cached_liidlen = 0;
+        }
         HASH_DELETE(hh, col->known_liids, known);
         free(known);
     }
@@ -393,35 +412,54 @@ static void destroy_rmq_colev(coll_recv_t *col) {
     col->incoming_rmq = NULL;
 }
 
-int collrecv_save_message(coll_recv_t *col, unsigned char *liid,
+static col_known_liid_t *collrecv_save_message(coll_recv_t *col,
+        unsigned char *liid,
         uint16_t liidlen, uint8_t *msgbody, uint16_t msglen,
         openli_proto_msgtype_t msgtype) {
 
     col_known_liid_t *known = NULL;
 
-    HASH_FIND(hh, col->known_liids, liid, liidlen, known);
+    if (col->cached_known && col->cached_liidlen == liidlen &&
+            memcmp(col->cached_liid, liid, liidlen) == 0) {
+        known = col->cached_known;
+    } else {
+
+        HASH_FIND(hh, col->known_liids, liid, liidlen, known);
+        if (!known) {
+            known = create_new_known_liid(col, liid);
+        }
+        if (known && liidlen < sizeof(col->cached_liid)) {
+            col->cached_known = known;
+            col->cached_liidlen = liidlen;
+            memcpy(col->cached_liid, liid, liidlen);
+        } else {
+            col->cached_known = NULL;
+            col->cached_liidlen = 0;
+        }
+    }
+
     if (!known) {
-        known = create_new_known_liid(col, liid);
+        return NULL;
     }
 
     if (msgtype == OPENLI_PROTO_ETSI_IRI) {
         if (enqueue_liid_saved_queue(&(known->iri_queue), liid,
                     msgbody, msglen, msgtype) < 0) {
-            return -1;
+            return NULL;
         }
     } else if (msgtype == OPENLI_PROTO_ETSI_CC) {
         if (enqueue_liid_saved_queue(&(known->cc_queue), liid,
                     msgbody, msglen, msgtype) < 0) {
-            return -1;
+            return NULL;
         }
     } else {
         if (enqueue_liid_saved_queue(&(known->raw_queue), liid,
                     msgbody, msglen, msgtype) < 0) {
-            return -1;
+            return NULL;
         }
     }
 
-    return 0;
+    return known;
 }
 
 /** Perform the necessary setup to establish a TLS connection with the
@@ -653,10 +691,9 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 }
 
 static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
-        uint16_t msglen, openli_proto_msgtype_t msgtype, unsigned char *liidstr,
-        uint16_t liidlen) {
+        uint16_t msglen, openli_proto_msgtype_t msgtype,
+        col_known_liid_t *found) {
 
-    col_known_liid_t *found;
     struct timeval tv;
     int r = 0;
 
@@ -667,9 +704,8 @@ static int _process_received_data(coll_recv_t *col, uint8_t *msgbody,
         col->disabled_log = 0;
     }
 
-    HASH_FIND(hh, col->known_liids, liidstr, liidlen, found);
     if (!found) {
-        found = create_new_known_liid(col, liidstr);
+        return 0;
     }
 
     if (found->provisioner_withdrawn) {
@@ -974,6 +1010,7 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
 
     unsigned char liidstr[1024];
     uint16_t liidlen;
+    col_known_liid_t *known;
 
     extract_liid_from_exported_msg(msgbody, msglen, liidstr, 65536, &liidlen);
 
@@ -988,15 +1025,15 @@ static int process_received_data(coll_recv_t *col, uint8_t *msgbody,
         msglen -= (liidlen + 2);
     }
 
-    if (collrecv_save_message(col, liidstr, liidlen, msgbody, msglen,
-            msgtype) < 0) {
+    known = collrecv_save_message(col, liidstr, liidlen, msgbody, msglen,
+            msgtype);
+    if (known == NULL) {
         increment_col_drop_counter(col);
         col->queue_full = 1;
         return 0;
     }
 
-    return _process_received_data(col, msgbody, msglen, msgtype,
-            liidstr, liidlen);
+    return _process_received_data(col, msgbody, msglen, msgtype, known);
 }
 
 /** Reads and processes a message from the collector that this thread

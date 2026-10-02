@@ -367,6 +367,32 @@ int consume_mediator_iri_messages(amqp_connection_state_t state,
 int consume_mediator_rawip_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv);
 
+typedef int (*openli_rawip_handler_cb)(const uint8_t *record,
+        uint32_t record_len, void *userdata); 
+
+/** Alternative to consume_mediator_rawip_messages that uses a user-provided
+ *  callback function to handle raw IP records rather than the default
+ *  handling based on export buffers (which makes more sense for a streamed
+ *  output channel like an ETSI handover, rather than an atomic per-record
+ *  output like pcapdisk).
+ *
+ *  @param state            The RMQ connection to consume packets from
+ *  @param cb               The function to invoke for each raw IP record
+ *  @param userdata         A pointer to a custom argument that you want
+ *                          to pass into the callback function
+ *  @param maxread          The maximum number of packets to read before
+ *                          returning from this function
+ *  @param last_deliv       The delivery tag of the most recent consumed
+ *                          message (updated by this function)
+ *
+ *  @return -1 if an error occurs, -2 if the RMQ connection has timed out
+ *          due to a heartbeat failure, 0 if no packets were consumed, or
+ *          1 if at least one packet was consumed successfully.
+ */
+int consume_mediator_rawip_messages_cb(amqp_connection_state_t state,
+        openli_rawip_handler_cb cb, void *userdata, int maxread,
+        uint64_t *last_deliv);
+
 /** Acknowledges IRI messages for an RMQ connection, up to the provided
  *  delivery tag number.
  *

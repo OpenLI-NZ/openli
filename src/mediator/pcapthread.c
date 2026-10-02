@@ -81,6 +81,8 @@ static void halt_pcap_outputs(pcap_thread_state_t *pstate) {
         trace_destroy_output(out->out);
         free(out);
     }
+    pstate->cached_rawip_output = NULL;
+    pstate->cached_rawip_keylen = 0;
 }
 
 /** Concatenates a string onto another, using the provided pointer as
@@ -392,59 +394,75 @@ static active_pcap_output_t *create_new_pcap_output(
 /** Converts a raw IP packet record into a libtrace packet and writes it
  *  to the appropriate pcap output file.
  *
- *  @param nextrec          Pointer to the start of the raw IP packet record
- *  @param bufrem           The amount of readable bytes in the buffer where
- *                          the raw IP packet record is stored
- *  @param pstate           The pcap-specific state for this thread
+ *  @param record           Pointer to the start of the raw IP packet record
+ *  @param record_len       The length of the record, in bytes
+ *  @param userdata         A pointer to the pcap-specific state for this thread
  *
  *  @return the number of bytes to advance the buffer to move past the
  *          raw IP packet record that we just wrote to disk.
  */
-static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
-        pcap_thread_state_t *pstate) {
+static int write_rawip_record_to_pcap(const uint8_t *record,
+        uint32_t record_len, void *userdata) {
 
-    active_pcap_output_t *pcapout;
-    uint32_t pdulen;
+    pcap_thread_state_t *pstate = (pcap_thread_state_t *)userdata;
+    active_pcap_output_t *pcapout = NULL;
     unsigned char liidspace[2048];
     char *liidstart;
-    uint16_t liidlen;
-    uint8_t *pktdata;
+    uint16_t liidlen = 0;
+    uint16_t raw_keylen = 0;
+    const uint8_t *pktdata;
 
-    /* The raw IP packet record begins with a four-byte size field, which is
-     * the size of the record (not including the size field itself)
-     */
-    pdulen = *(uint32_t *)nextrec;
-
-    nextrec += sizeof(uint32_t);
-    bufrem -= sizeof(uint32_t);
-
-    if (pdulen == 0) {
-        return sizeof(uint32_t);
+    if (record_len < sizeof(uint16_t)) {
+        return 0;
     }
 
-    /* Next is the intercept key, which is encoded as a 2 byte size field
-     * followed by the key string itself (not null-terminated)
-     */
-    extract_liid_from_exported_msg(nextrec, bufrem, liidspace, 2048, &liidlen);
+    raw_keylen = ntohs(*(uint16_t *)record);
+    if (raw_keylen > record_len - sizeof(uint16_t)) {
+        raw_keylen = record_len - sizeof(uint16_t);
+    }
 
-    nextrec += liidlen;
-    bufrem -= liidlen;
-    if (pdulen - liidlen > 65535) {
+    liidlen = raw_keylen + sizeof(uint16_t);
+    if (record_len - liidlen > 65535) {
         logger(LOG_INFO, "OpenLI Mediator: raw IP packet is too large to write as a pcap packet, possibly corrupt");
-        return pdulen + sizeof(uint32_t);
+        return 0;
     }
 
-    liidstart = strchr((char *)liidspace, '-');
-    if (liidstart != NULL) {
-        liidstart ++;
+    /* does this intercept key match the one from the last raw IP packet we
+     * wrote? if so, we have it cached.
+     */
+    if (pstate->cached_rawip_output != NULL &&
+            raw_keylen == pstate->cached_rawip_keylen &&
+            memcmp(record + sizeof(uint16_t), pstate->cached_rawip_key,
+                    raw_keylen) == 0) {
+        pcapout = pstate->cached_rawip_output;
     } else {
-        liidstart = (char *)liidspace;
+        /* otherwise, look it up in our output map and save it for next time */
+        extract_liid_from_exported_msg((uint8_t *)record, record_len,
+                liidspace, 2048, &liidlen);
+        liidstart = strchr((char *)liidspace, '-');
+        if (liidstart != NULL) {
+            liidstart ++;
+        } else {
+            liidstart = (char *)liidspace;
+        }
+        HASH_FIND(hh, pstate->active, liidstart, strlen(liidstart), pcapout);
+
+        if (pcapout && pcapout->out &&
+                raw_keylen < sizeof(pstate->cached_rawip_key)) {
+            pstate->cached_rawip_output = pcapout;
+            pstate->cached_rawip_keylen = raw_keylen;
+            memcpy(pstate->cached_rawip_key, record + sizeof(uint16_t),
+                    raw_keylen);
+        } else {
+            pstate->cached_rawip_output = NULL;
+            pstate->cached_rawip_keylen = 0;
+        }
     }
-    HASH_FIND(hh, pstate->active, liidstart, strlen(liidstart), pcapout);
 
     /* Hopefully, we already know about this LIID and have a pcap output
      * handle all set up and ready for it. If not, let's just skip past it.
      */
+    pktdata = record + liidlen;
     if (pcapout && pcapout->out) {
         if (!pstate->packet) {
             pstate->packet = trace_create_packet();
@@ -455,20 +473,23 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
          * "prepare" a packet object from a buffer as long as it contains
          * the format header followed by the raw packet contents.
          */
-        pktdata = nextrec;
         if (trace_prepare_packet(pstate->dummypcap, pstate->packet,
                 (void *)pktdata, TRACE_RT_DATA_DLT+TRACE_DLT_RAW,
                 TRACE_PREP_DO_NOT_OWN_BUFFER) < 0) {
             logger(LOG_INFO, "OpenLI Mediator: error converting received raw IP into a valid libtrace pcap packet");
-            return pdulen + sizeof(uint32_t);
+            return 0;
         }
 
         /* Now we can have libtrace write the packet using the pcap format */
         if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
             libtrace_err_t err = trace_get_err_output(pcapout->out);
-            logger(LOG_INFO, "OpenLI Mediator: failed to write raw IP to pcap for LIID %s to %s: %s", liidspace, pcapout->uri, err.problem);
+            logger(LOG_INFO, "OpenLI Mediator: failed to write raw IP to pcap for LIID %s to %s: %s", pcapout->liid, pcapout->uri, err.problem);
             trace_destroy_output(pcapout->out);
             pcapout->out = NULL;
+            if (pstate->cached_rawip_output == pcapout) {
+                pstate->cached_rawip_output = NULL;
+                pstate->cached_rawip_keylen = 0;
+            }
             if (pcapout->uri) {
                 free(pcapout->uri);
             }
@@ -483,210 +504,6 @@ static uint32_t write_rawip_to_pcap(uint8_t *nextrec, uint64_t bufrem,
         }
     }
 
-    return pdulen + sizeof(uint32_t);
-}
-
-
-/** Converts a ETSI CC record into a libtrace packet and writes it
- *  to the appropriate pcap output file.
- *
- *  @param nextrec          Pointer to the start of the ETSI CC record
- *  @param bufrem           The amount of readable bytes in the buffer where
- *                          the ETSI CC record is stored
- *  @param pstate           The pcap-specific state for this thread
- *
- *  @return the number of bytes to advance the buffer to move past the
- *          ETSI CC record that we just wrote to disk. Returns 0 if there
- *          is a problem with the ETSI CC record that prevents it from
- *          being written to disk.
- */
-static uint32_t write_etsicc_to_pcap(uint8_t *nextrec, uint64_t bufrem,
-        pcap_thread_state_t *pstate) {
-
-    active_pcap_output_t *pcapout;
-    uint32_t pdulen;
-    unsigned char liidspace[2048];
-    struct timeval tv;
-
-    if (pstate->decoder == NULL) {
-        pstate->decoder = wandder_create_etsili_decoder();
-    }
-
-    /* Using the ETSI decoder, grab the record length and the LIID from
-     * within the record itself
-     */
-    wandder_attach_etsili_buffer(pstate->decoder, nextrec, bufrem, false);
-    pdulen = wandder_etsili_get_pdu_length(pstate->decoder);
-
-    if (pdulen == 0 || pdulen > bufrem) {
-        logger(LOG_INFO, "OpenLI Mediator: pcap thread received an incomplete ETSI CC");
-        return 0;
-    }
-
-    if (wandder_etsili_get_liid(pstate->decoder, (char *)liidspace,
-            2048) == NULL) {
-        logger(LOG_INFO, "OpenLI Mediator: unable to find LIID in ETSI CC received by pcap thread");
-        return 0;
-    }
-    HASH_FIND(hh, pstate->active, liidspace, strlen((const char *)liidspace),
-            pcapout);
-
-    /* Hopefully, we already know about this LIID and have a pcap output
-     * handle all set up and ready for it. If not, let's just skip past it.
-     */
-    if (pcapout && pcapout->out) {
-        uint8_t *rawip;
-        uint32_t cclen;
-        uint32_t *tsptr;
-        char ccname[128];
-
-        if (!pstate->packet) {
-            pstate->packet = trace_create_packet();
-        }
-
-        /* Convert CC to pcap and write to trace file using libtrace.
-         * We don't need the ETSI headers, so we can jump straight to the
-         * the CC contents using libwandder
-         */
-        rawip = wandder_etsili_get_cc_contents(pstate->decoder, &cclen,
-                ccname, 128);
-
-        if (rawip == NULL) {
-            logger(LOG_INFO, "OpenLI Mediator: unable to find CC contents from ETSI CC seen by pcap thread for LIID %s", liidspace);
-            goto exitpcapwrite;
-        }
-        if (cclen > 65535) {
-            logger(LOG_INFO, "OpenLI Mediator: ETSI CC record is too large to write as a pcap packet, possibly corrupt");
-            goto exitpcapwrite;
-        }
-
-        tv = wandder_etsili_get_header_timestamp(pstate->decoder);
-
-        trace_construct_packet(pstate->packet, TRACE_TYPE_NONE,
-                (const void *)rawip, (uint16_t)cclen);
-
-        /* trace_construct_packet() sets the packet timestamp to "now",
-         * but we actually want to replace that with the time that the
-         * packet was intercepted (as per the timestamp field in the
-         * ETSI PS header).
-         */
-
-        /* A bit naughty, but this is the only way we can set the
-         * pcap timestamp in libtrace at the moment...
-         */
-        tsptr = (uint32_t *)(pstate->packet->header);
-        *tsptr = tv.tv_sec;
-        tsptr ++;
-        *tsptr = tv.tv_usec;
-
-        if (trace_write_packet(pcapout->out, pstate->packet) < 0) {
-            libtrace_err_t err = trace_get_err_output(pcapout->out);
-            logger(LOG_INFO, "OpenLI Mediator: failed to write ETSI CC to pcap for LIID %s: %s", liidspace, err.problem);
-            trace_destroy_output(pcapout->out);
-            pcapout->out = NULL;
-        } else {
-            if (pcapout->pktwritten == 0 && pcapout->uri) {
-                logger(LOG_INFO,
-                        "OpenLI Mediator: opened new trace file %s for LIID %s",
-                        pcapout->uri, pcapout->liid);
-            }
-            pcapout->pktwritten += 1;
-        }
-    }
-
-exitpcapwrite:
-    return pdulen;
-}
-
-/** Reads intercept records from the export buffer, converts them into the
- *  pcap format and writes them into their corresponding pcap output file(s).
- *
- *  @param ho           The handover which owns the export buffer
- *  @param pstate       The pcap-specific thread state for this thread
- *
- *  @return -1 if an error occurs while writing to disk, -2 if an error
- *          occurs while acknowledging the written data in RMQ, 0 if
- *          the writing was successful.
- */
-static int write_pcap_from_buffered_rmq(handover_t *ho,
-        pcap_thread_state_t *pstate) {
-    uint64_t bufrem;
-    uint8_t *nextrec = NULL;
-    uint32_t advance = 0;
-    static int tally = 0;
-
-    uint64_t total_advance = 0;
-
-    nextrec = get_buffered_head(&(ho->ho_state->buf), &bufrem);
-    while (nextrec != NULL && bufrem > 0) {
-        tally ++;
-        if (ho->handover_type == HANDOVER_HI3) {
-            advance = write_etsicc_to_pcap(nextrec, bufrem, pstate);
-        } else if (ho->handover_type == HANDOVER_HI2) {
-            if (pstate->decoder == NULL) {
-                pstate->decoder = wandder_create_etsili_decoder();
-            }
-            wandder_attach_etsili_buffer(pstate->decoder, nextrec, bufrem, 0);
-            advance = wandder_etsili_get_pdu_length(pstate->decoder);
-            if (advance == 0 || advance > bufrem) {
-                logger(LOG_INFO, "OpenLI Mediator: incomplete or corrupt HI2 record received by pcap thread");
-                return -1;
-            }
-        } else if (ho->handover_type == HANDOVER_RAWIP) {
-            advance = write_rawip_to_pcap(nextrec, bufrem, pstate);
-        } else {
-            logger(LOG_INFO, "OpenLI Mediator: handover is corrupted in pcap thread");
-            advance = 0;
-        }
-
-        if (advance == 0 || advance > bufrem) {
-            /* Preserve progress already made in this batch. Otherwise a
-             * later retry would write those packets to the PCAP twice. */
-            if (total_advance > 0) {
-                advance_export_buffer_head(&(ho->ho_state->buf),
-                        total_advance);
-            }
-            return -1;
-        }
-
-        nextrec += advance;
-        bufrem -= advance;
-        total_advance += advance;
-    }
-
-    /* Updating the export buffer once per batch avoids running
-     * post_transmit() for every individual packet. */
-    if (total_advance > 0) {
-        advance_export_buffer_head(&(ho->ho_state->buf), total_advance);
-    }
-
-    if (!ho->ho_state->valid_rmq_ack) {
-        return 0;
-    }
-
-    /* acknowledge RMQ messages */
-    if (ho->handover_type == HANDOVER_HI3) {
-        if (ack_mediator_cc_messages(ho->rmq_consumer,
-                ho->ho_state->next_rmq_ack) != 0) {
-            logger(LOG_INFO, "OpenLI Mediator: error while acknowledging sent data from internal CC queue by pcapdisk thread");
-            return -2;
-        }
-    } else if (ho->handover_type == HANDOVER_HI2) {
-        if (ack_mediator_iri_messages(ho->rmq_consumer,
-                ho->ho_state->next_rmq_ack) != 0) {
-            logger(LOG_INFO, "OpenLI Mediator: error while acknowledging sent data from internal IRI queue by pcapdisk thread");
-            return -2;
-        }
-    } else if (ho->handover_type == HANDOVER_RAWIP) {
-        if (ack_mediator_rawip_messages(ho->rmq_consumer,
-                ho->ho_state->next_rmq_ack) != 0) {
-            logger(LOG_INFO, "OpenLI Mediator: error while acknowledging sent data from internal rawip queue by pcapdisk thread");
-            return -2;
-        }
-    }
-
-    ho->ho_state->valid_rmq_ack = 0;
-
     return 0;
 }
 
@@ -694,46 +511,29 @@ static int consume_pcap_packets(handover_t *ho, pcap_thread_state_t *pstate) {
 
     int r;
 
-    if ((r = write_pcap_from_buffered_rmq(ho, pstate)) == 1) {
-        return 0;
-    } else if (r == -2) {
-        reset_handover_rmq(ho);
-        return 0;
-    } else if (r == -1) {
-        /* pcap writing error */
-        return -1;
-    }
-
-    /* if we get here, the buffer is empty so read more messages from RMQ */
-    if (ho->handover_type == HANDOVER_HI3) {
-        r = consume_mediator_cc_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
-    } else if (ho->handover_type == HANDOVER_RAWIP) {
-        r = consume_mediator_rawip_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), PCAP_RMQ_BATCH_SIZE,
-                &(ho->ho_state->next_rmq_ack));
-    } else if (ho->handover_type == HANDOVER_HI2) {
-        r = consume_mediator_iri_messages(ho->rmq_consumer,
-                &(ho->ho_state->buf), 1024, &(ho->ho_state->next_rmq_ack));
-    } else {
+    /* read more messages from RMQ */
+    if (ho->handover_type != HANDOVER_RAWIP) {
         reset_handover_rmq(ho);
         return 0;
     }
 
-    if (r < 0) {
-        reset_handover_rmq(ho);
-        return 1;
-    } else if (r > 0) {
-        ho->ho_state->valid_rmq_ack = 1;
+    /* raw IP can skip using an export buffer and just write directly
+     * to disk
+     */
+    r = consume_mediator_rawip_messages_cb(ho->rmq_consumer,
+            write_rawip_record_to_pcap, pstate, PCAP_RMQ_BATCH_SIZE,
+            &(ho->ho_state->next_rmq_ack));
+    if (r <= 0) {
+        if (r < 0) {
+            reset_handover_rmq(ho);
+        }
+        return 0;
     }
-
-    r = write_pcap_from_buffered_rmq(ho, pstate);
-    if (r == -2) {
+    if (ack_mediator_rawip_messages(ho->rmq_consumer,
+                ho->ho_state->next_rmq_ack) != 0) {
+        logger(LOG_INFO, "OpenLI mediator: error while acknowledging sent data from raw IP queue within pcapdisk thread");
         reset_handover_rmq(ho);
         return 0;
-    } else if (r == -1) {
-        /* pcap writing error */
-        return -1;
     }
 
     /* Signal that a batch was consumed. The caller may drain another batch
@@ -767,6 +567,10 @@ static void pcap_flush_traces(pcap_thread_state_t *pstate) {
                     err.problem);
             trace_destroy_output(pcapout->out);
             pcapout->out = NULL;
+            if (pstate->cached_rawip_output == pcapout) {
+                pstate->cached_rawip_output = NULL;
+                pstate->cached_rawip_keylen = 0;
+            }
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
             free(pcapout->liid_key);
@@ -808,6 +612,10 @@ static void pcap_rotate_traces(lea_thread_state_t *state,
                 trace_destroy_output(pcapout->out);
                 pcapout->out = NULL;
             }
+            if (pstate->cached_rawip_output == pcapout) {
+                pstate->cached_rawip_output = NULL;
+                pstate->cached_rawip_keylen = 0;
+            }
             HASH_DELETE(hh, pstate->active, pcapout);
             free(pcapout->liid);
             free(pcapout->liid_key);
@@ -843,6 +651,10 @@ static void pcap_disable_liid(pcap_thread_state_t *pstate, char *liid,
     if (pcapout->out) {
         trace_destroy_output(pcapout->out);
         pcapout->out = NULL;
+    }
+    if (pstate->cached_rawip_output == pcapout) {
+        pstate->cached_rawip_output = NULL;
+        pstate->cached_rawip_keylen = 0;
     }
     HASH_DELETE(hh, pstate->active, pcapout);
     if (pcapout->uri) {
@@ -1108,11 +920,12 @@ static void *run_pcap_thread(void *params) {
     pstate.active = NULL;
     pstate.dirwarned = 0;
     pstate.inqueue = (libtrace_message_queue_t *)params;
-    pstate.decoder = NULL;
     pstate.packet = NULL;
     pstate.dummypcap = trace_create_dead("pcapfile:/dev/null");
     pstate.rawip_handover = create_new_handover(state->epoll_fd, NULL, NULL,
             HANDOVER_RAWIP, 0, 0, 0);
+    pstate.cached_rawip_output = NULL;
+    pstate.cached_rawip_keylen = 0;
 
     register_handover_RMQ_all(pstate.rawip_handover, NULL, "pcapdisk",
             state->internalrmqpass);
@@ -1155,6 +968,7 @@ static void *run_pcap_thread(void *params) {
         }
 
         timerexpired = 0;
+        rmq_active = 0;
         while (!timerexpired && !is_halted) {
             nfds = epoll_wait(state->epoll_fd, evs, 64, -1);
 
@@ -1214,9 +1028,6 @@ static void *run_pcap_thread(void *params) {
 
 threadexit:
     halt_pcap_outputs(&pstate);
-    if (pstate.decoder) {
-        wandder_free_etsili_decoder(pstate.decoder);
-    }
     if (pstate.packet) {
         trace_destroy_packet(pstate.packet);
     }

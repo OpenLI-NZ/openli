@@ -1101,10 +1101,8 @@ static uint32_t release_confirmed_messages(coll_recv_t *col, uint8_t channel,
             if (slot->delivtag == 0 || slot->delivtag > delivery_tag) {
                 break;
             }
-            if (slot->msgbody) {
-                free(slot->msgbody);
-                slot->msgbody = NULL;
-            }
+            slot->delivtag = 0;
+            slot->msglen = 0;
             q->head = (q->head + 1) % q->capacity;
             q->count --;
             released ++;
@@ -1244,6 +1242,11 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
  *  @param prependlength    Flag to indicate whether the message length
  *                          should be written into the export buffer ahead
  *                          of writing the message itself
+ *  @param rawip_cb         Callback function to invoke on each message
+ *                          consumed from a raw IP queue. If NULL, raw IP
+ *                          packets will be consumed via the export buffer.
+ *  @param rawip_cb_data    Pointer to custom data to pass into the raw IP
+ *                          callback function as an argument.
  *
  *  @return -1 if an error occurs, -2 if the RMQ connection has timed out
  *          due to a heartbeat failure, 0 if no messages were consumed, or
@@ -1251,7 +1254,8 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
  */
 static int consume_mediator_liid_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, int channel, uint64_t *last_deliv,
-        uint8_t prependlength) {
+        uint8_t prependlength, openli_rawip_handler_cb rawip_cb,
+        void *rawip_cb_data) {
 
     int msgread = 0;
     int rejects = 0;
@@ -1386,7 +1390,12 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
                     }
 
                     if (is_rawip_batch) {
-                        if (append_rawip_record_to_buffer(buf, cursor,
+                        if (rawip_cb) {
+                            if (rawip_cb(cursor, rec_len, rawip_cb_data) < 0) {
+                                amqp_destroy_envelope(&envelope);
+                                return -1;
+                            }
+                        } else if (append_rawip_record_to_buffer(buf, cursor,
                                rec_len, 0) == 0) {
                             amqp_destroy_envelope(&envelope);
                             return -1;
@@ -1410,10 +1419,19 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
         }
 
         if (prependlength) {
-            if (envelope.message.body.len > UINT32_MAX ||
-                    append_rawip_record_to_buffer(buf,
-                            envelope.message.body.bytes,
-                            envelope.message.body.len, 0) == 0) {
+            if (envelope.message.body.len > UINT32_MAX) {
+                return -1;
+            }
+
+            if (rawip_cb) {
+                if (rawip_cb(envelope.message.body.bytes,
+                            envelope.message.body.len, rawip_cb_data) < 0) {
+                    amqp_destroy_envelope(&envelope);
+                    return -1;
+                }
+            } else if (append_rawip_record_to_buffer(buf,
+                        envelope.message.body.bytes,
+                        envelope.message.body.len, 0) == 0) {
                 logger(LOG_INFO, "OpenLI Mediator: unable to enqueue raw IP record into export buffer");
                 return -1;
             }
@@ -1451,7 +1469,7 @@ int consume_mediator_iri_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv) {
 
     return consume_mediator_liid_messages(state, buf, maxread, 2, last_deliv,
-            0);
+            0, NULL, NULL);
 }
 
 /** Consumes CC records using an RMQ connection, writing them into the
@@ -1475,7 +1493,7 @@ int consume_mediator_cc_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv) {
 
     return consume_mediator_liid_messages(state, buf, maxread, 3, last_deliv,
-            0);
+            0, NULL, NULL);
 }
 
 /** Consumes raw IP packets using an RMQ connection, writing them into the
@@ -1499,7 +1517,15 @@ int consume_mediator_rawip_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv) {
 
     return consume_mediator_liid_messages(state, buf, maxread, 4, last_deliv,
-            1);
+            1, NULL, NULL);
+}
+
+int consume_mediator_rawip_messages_cb(amqp_connection_state_t state,
+        openli_rawip_handler_cb cb, void *userdata, int maxread,
+        uint64_t *last_deliv) {
+
+    return consume_mediator_liid_messages(state, NULL, maxread, 4, last_deliv,
+            1, cb, userdata);
 }
 
 /** Acknowledges messages for an RMQ connection, up to the provided

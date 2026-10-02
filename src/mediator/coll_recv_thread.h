@@ -102,8 +102,8 @@ typedef struct col_thread_msg {
 
 
 typedef struct saved_received_data {
-    char *liid;
     uint8_t *msgbody;
+    uint32_t alloc_len;
     uint16_t msglen;
     uint64_t delivtag;
     openli_proto_msgtype_t msgtype;
@@ -330,6 +330,10 @@ struct single_coll_receiver {
     size_t iris_published;
     size_t ccs_published;
     size_t raw_published;
+
+    col_known_liid_t *cached_known;
+    uint16_t cached_liidlen;
+    unsigned char cached_liid[256];
 
     UT_hash_handle hh;
     UT_hash_handle hh_ssf;

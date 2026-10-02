@@ -29,7 +29,6 @@
 
 #include <libtrace.h>
 #include <libtrace/message_queue.h>
-#include <libwandder_etsili.h>
 #include <uthash.h>
 
 #include "lea_send_thread.h"
@@ -75,15 +74,17 @@ typedef struct pcap_thread_state {
      */
     int dirwarned;
 
-    /** A libwandder decoder for converting ETSI-encoded packets into pcap
-     *  formatted packets.
-     */
-    wandder_etsispec_t *decoder;
-
     /** A dedicated handover instance used for receiving raw IP packets over
      *  RabbitMQ
      */
     handover_t *rawip_handover;
+
+    /** Cached output handle from the previous raw IP packet, as often
+     *  consecutive packets will be for the same LIID due to batching
+     */
+    active_pcap_output_t *cached_rawip_output;
+    uint16_t cached_rawip_keylen;
+    uint8_t cached_rawip_key[256];
 
 } pcap_thread_state_t;
 
