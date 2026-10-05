@@ -67,6 +67,7 @@ typedef struct cin_seqno {
 typedef struct intercept_state {
     exporter_intercept_msg_t details;
     cin_seqno_t *cinsequencing;
+    cin_seqno_t *last_cinseq;
     size_t encoder_index;
     UT_hash_handle hh;
     wandder_encode_job_t *preencoded;

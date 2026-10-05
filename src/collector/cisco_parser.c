@@ -42,7 +42,9 @@ static inline openli_cc_prefix_filter_t *cisco_lookup_cc_prefix_filter(
         colthread_local_t *loc, char *liid) {
 
     cc_prefix_exclusion_map_t *found;
-
+    if (loc->ipcc_filters == NULL) {
+        return NULL;
+    }
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
     if (found) {
         return found->cc_exclude;

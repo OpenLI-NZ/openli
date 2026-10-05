@@ -280,6 +280,7 @@ typedef struct seqtracker_thread_data {
     openli_cinstatedb_t cinstatedb;
 
     exporter_intercept_state_t *intercepts;
+    exporter_intercept_state_t *last_intstate;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
     halt_info_t *haltinfo;
@@ -480,6 +481,7 @@ typedef struct encoder_state {
      *  encryption.
      */
     encoder_liid_state_t *known_liids;
+    encoder_liid_state_t *last_known;
 
     /** The "integrity check" state for all observed "LIID + CIN + HI" streams
      *  going to agencies that require integrity check messages to be

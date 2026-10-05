@@ -412,8 +412,8 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
 
-    res->cinstr = strdup(job->cinstr);
-    res->liid = strdup(job->liid);
+    res->cinstr = NULL;
+    res->liid = NULL;
     res->seqno = job->seqno;
     res->destid = destid;
     res->encodedby = enc->workerid;
@@ -1361,7 +1361,6 @@ static int process_job(openli_encoder_t *enc, void *socket) {
     size_t next;
     uint8_t fullbatch = 0;
     encoder_liid_state_t *found = NULL;
-    char liid_key[2048];
 
     openli_encoding_job_t job;
 
@@ -1397,8 +1396,14 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             goto encodejoberror;
         }
 
-        snprintf(liid_key, sizeof(liid_key), "%s-%s", job.authcc, job.liid);
-        HASH_FIND(hh, enc->known_liids, liid_key, strlen(liid_key), found);
+        if (enc->last_known &&
+                strcmp(job.liid_key, enc->last_known->liid_key) == 0) {
+            found = enc->last_known;
+        } else {
+            HASH_FIND(hh, enc->known_liids, job.liid_key, strlen(job.liid_key),
+                found);
+            enc->last_known = found;
+        }
 
         if (job.origreq == NULL) {
             /* This is a message to tell us that the intercept is no
@@ -1406,9 +1411,12 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             if (found) {
                 integrity_check_state_t *ics, *tmp;
                 HASH_DELETE(hh, enc->known_liids, found);
+                if (enc->last_known == found) {
+                    enc->last_known = NULL;
+                }
                 // remove all integrity state chains for this intercept
                 HASH_ITER(hh, enc->integrity_state, ics, tmp) {
-                    if (strcmp(liid_key, ics->liid_key) != 0) {
+                    if (strcmp(job.liid_key, ics->liid_key) != 0) {
                         continue;
                     }
                     HASH_DELETE(hh, enc->integrity_state, ics);
@@ -1428,6 +1436,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         if (!found) {
             found = create_new_known_liid(enc, job.liid, job.authcc,
                     job.delivcc, job.operatorid);
+            enc->last_known = found;
         }
 
         check_agency_digest_config(enc, found);

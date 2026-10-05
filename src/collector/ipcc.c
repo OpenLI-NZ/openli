@@ -44,6 +44,9 @@ static inline openli_cc_prefix_filter_t *lookup_cc_prefix_filter(
 
     cc_prefix_exclusion_map_t *found;
 
+    if (loc->ipcc_filters == NULL) {
+        return NULL;
+    }
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
     if (found) {
         return found->cc_exclude;

@@ -235,6 +235,17 @@ typedef struct cc_prefix_exclusion_map {
     UT_hash_handle hh;
 } cc_prefix_exclusion_map_t;
 
+typedef struct collector_local_stats {
+    uint64_t packets_intercepted;
+    uint64_t packets_sync_ip;
+    uint64_t packets_sync_voip;
+    uint64_t packets_sync_email;
+    uint64_t packets_gtp;
+    uint64_t ipcc_created;
+    uint64_t ipmmcc_created;
+} collector_local_stats_t;
+
+
 typedef struct colthread_local {
 
     char *localname;
@@ -332,6 +343,7 @@ typedef struct colthread_local {
     uint64_t accepted;
     uint64_t dropped;
 
+    collector_local_stats_t local_stats;
     time_t startedat;
     uint16_t pkts_since_msg_read;
     uint16_t tick_counter;

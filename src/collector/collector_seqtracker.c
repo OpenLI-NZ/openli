@@ -506,6 +506,9 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
 
     if (!intstate) {
+        if (seqdata->last_intstate == intstate) {
+            seqdata->last_intstate = NULL;
+        }
         logger(LOG_INFO, "OpenLI collector: tracker thread was told to end intercept LIID %s, but it is not a valid ID?",
                 msg->liid);
         return -1;
@@ -543,6 +546,9 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
 
     establish_cinstate_dbconn(seqdata);
     cinstate_db_remove_by_liid(&seqdata->cinstatedb, liid_key);
+    if (seqdata->last_intstate == intstate) {
+        seqdata->last_intstate = NULL;
+    }
 
     HASH_DELETE(hh, seqdata->intercepts, intstate);
     free_intercept_state(seqdata, intstate);
@@ -566,27 +572,43 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
 	job.liid = strdup(liid);
     job.liid_key = strdup(intstate->details.liid_key);
     job.authcc = strdup(authcc);
-    job.cinstr = strdup(cinseq->cin_string);
     job.cin = (int64_t)cinseq->cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
-    job.encryptkey = openli_dup_encryptkey_ptr(intstate->details.encryptkey,
-            intstate->details.encryptkey_len);
-    job.encryptkey_len = intstate->details.encryptkey_len;
+
+    if (job.encryptmethod > OPENLI_PAYLOAD_ENCRYPTION_NONE &&
+            intstate->details.encryptkey_len > 0) {
+        job.encryptkey = openli_dup_encryptkey_ptr(intstate->details.encryptkey,
+                intstate->details.encryptkey_len);
+        job.encryptkey_len = intstate->details.encryptkey_len;
+    } else {
+        job.encryptkey = NULL;
+        job.encryptkey_len = 0;
+    }
 
     job.timefmt = intstate->details.timefmt;
     job.liid_format = intstate->details.liid_format;
 
-    if (intstate->details.operatorid) {
-        job.operatorid = strdup(intstate->details.operatorid);
-    } else {
+    if (recvd->type == OPENLI_EXPORT_RAW_CC ||
+            recvd->type == OPENLI_EXPORT_RAW_IRI ||
+            recvd->type == OPENLI_EXPORT_RAW_SYNC) {
+        job.cinstr = NULL;
         job.operatorid = NULL;
-    }
-
-    if (delivcc) {
-        job.delivcc = strdup(delivcc);
-    } else {
         job.delivcc = NULL;
+    } else {
+        job.cinstr = strdup(cinseq->cin_string);
+
+        if (intstate->details.operatorid) {
+            job.operatorid = strdup(intstate->details.operatorid);
+        } else {
+            job.operatorid = NULL;
+        }
+
+        if (delivcc) {
+            job.delivcc = strdup(delivcc);
+        } else {
+            job.delivcc = NULL;
+        }
     }
     /* TODO we should be able to store this index per LIID, alongside its
      * encryption and integrity check state so we don't have to re-calculate
@@ -698,6 +720,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     int res = 0;
     uint8_t force_cindb_update = 0, cinreset_forbid = 0;
     struct timeval tv;
+    size_t liidlen, authcclen;
 
     memset(&job, 0, sizeof(job));
     liid = extract_liid_from_job(recvd);
@@ -712,8 +735,24 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinreset_forbid = 0;
     }
 
-    snprintf(liid_key, sizeof(liid_key), "%s-%s", authcc, liid);
-    HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
+    authcclen = authcc ? strlen(authcc) : 0;
+    liidlen = liid ? strlen(liid) : 0;
+
+    if (authcclen + 1 + liidlen < sizeof(liid_key)) {
+        memcpy(liid_key, authcc, authcclen);
+        liid_key[authcclen] = '-';
+        memcpy(liid_key + authcclen + 1, liid, liidlen + 1);
+    }
+
+    if (seqdata->last_intstate &&
+            strcmp(liid_key, seqdata->last_intstate->details.liid_key) == 0) {
+        intstate = seqdata->last_intstate;
+    } else {
+        HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key),
+                intstate);
+        seqdata->last_intstate = intstate;
+    }
+
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
                 liid);
@@ -721,7 +760,13 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         return 0;
     }
 
-    HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
+    if (intstate->last_cinseq && intstate->last_cinseq->cin == cin) {
+        cinseq = intstate->last_cinseq;
+    } else {
+        HASH_FIND(hh, intstate->cinsequencing, &cin, sizeof(cin), cinseq);
+        intstate->last_cinseq = cinseq;
+    }
+
     if (!cinseq) {
         char cinstr[sizeof(liid_key) + 16];
         struct cinstate_t init_cinstate;
@@ -779,6 +824,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
         HASH_ADD_KEYPTR(hh, intstate->cinsequencing, &(cinseq->cin),
                 sizeof(cin), cinseq);
+        intstate->last_cinseq = cinseq;
     }
 
     switch(recvd->type) {
