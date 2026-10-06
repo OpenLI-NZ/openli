@@ -277,7 +277,7 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         int epoll_fd, integrity_check_state_t **chain) {
 
     //char keydump[128];
-    integrity_check_state_t *found;
+    integrity_check_state_t *found = NULL;
     uint32_t seqno = job->seqno;
     uint8_t action = INTEGRITY_CHECK_NO_ACTION;
     uint32_t cin = (uint32_t)job->cin;
@@ -290,51 +290,63 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         return action;
     }
 
-    /* save the key string in a local map so we don't need to call
-     * snprintf() for every single intercept record
-     */
-    dmk_kval = cin | (((uint64_t)msgtype) << 32);
-    HASH_FIND(hh, known->digest_cin_keys, &dmk_kval, sizeof(dmk_kval), dmk);
-    if (!dmk) {
-        char key[128];
-        dmk = calloc(1, sizeof(digest_map_key_t));
-        dmk->key_cin = dmk_kval;
-        snprintf(key, 128, "%s %u %u", known->liid_key, msgtype, cin);
-        dmk->keystring = strdup(key);
+    if (known->last_integrity_state &&
+            known->last_integrity_state->cin == cin &&
+            known->last_integrity_state->msgtype == msgtype) {
+        found = known->last_integrity_state;
+    } else {
 
-        HASH_ADD_KEYPTR(hh, known->digest_cin_keys, &(dmk->key_cin),
-                sizeof(dmk->key_cin), dmk);
-    }
+        /* save the key string in a local map so we don't need to call
+         * snprintf() for every single intercept record
+         */
+        dmk_kval = cin | (((uint64_t)msgtype) << 32);
+        HASH_FIND(hh, known->digest_cin_keys, &dmk_kval, sizeof(dmk_kval), dmk);
+        if (!dmk) {
+            char key[128];
+            dmk = calloc(1, sizeof(digest_map_key_t));
+            dmk->key_cin = dmk_kval;
+            snprintf(key, 128, "%s %u %u", known->liid_key, msgtype, cin);
+            dmk->keystring = strdup(key);
 
-    /** map key is LIID, CIN and msgtype, separated by space characters. */
-    HASH_FIND(hh, *map, dmk->keystring, strlen(dmk->keystring), found);
-    if (!found) {
-        char cin_string[1024];
-        snprintf(cin_string, 1024, "%s-%u", known->liid_key, cin);
+            HASH_ADD_KEYPTR(hh, known->digest_cin_keys, &(dmk->key_cin),
+                    sizeof(dmk->key_cin), dmk);
+        }
 
-        found = calloc(1, sizeof(integrity_check_state_t));
-        found->key = strdup(dmk->keystring);
-        found->cinstr = strdup(cin_string);
-        found->agency = NULL;
-        found->cin = cin;
-        found->msgtype = msgtype;
-        found->liid_key = strdup(known->liid_key);
-        found->liid = strdup(known->liid);
-        found->authcc = strdup(known->authcc);
-        found->delivcc = strdup(known->delivcc);
-        found->hashed_seqnos = calloc(32, sizeof(int64_t));
-        found->signing_seqnos = calloc(16, sizeof(int64_t));
-        found->seqno_array_size = 32;
-        found->seqno_next_index = 0;
-        found->signing_seqno_array_size = 16;
-        found->signing_seqno_next_index = 0;
-        found->self_seqno_hash = 1;
-        found->self_seqno_sign = 1;
-        found->awaiting_final_signature = 0;
-        found->encryptmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
-        found->encryptkey = NULL;
-        found->encryptkey_len = 0;
-        HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
+        /** map key is LIID, CIN and msgtype, separated by space characters. */
+        HASH_FIND(hh, *map, dmk->keystring, strlen(dmk->keystring), found);
+        if (!found) {
+            found = calloc(1, sizeof(integrity_check_state_t));
+            found->key = strdup(dmk->keystring);
+            found->agency = NULL;
+            found->cin = cin;
+            found->msgtype = msgtype;
+            found->liid_key = strdup(known->liid_key);
+            found->liid = strdup(known->liid);
+            found->authcc = strdup(known->authcc);
+            found->delivcc = strdup(known->delivcc);
+
+            if (known->digest_config.hash_pdulimit > 32) {
+                found->hashed_seqnos = calloc(
+                        known->digest_config.hash_pdulimit, sizeof(int64_t));
+                found->seqno_array_size = known->digest_config.hash_pdulimit;
+            } else {
+                found->hashed_seqnos = calloc(32, sizeof(int64_t));
+                found->seqno_array_size = 32;
+            }
+            found->signing_seqnos = calloc(16, sizeof(int64_t));
+            found->seqno_next_index = 0;
+            found->signing_seqno_array_size = 16;
+            found->signing_seqno_next_index = 0;
+            found->self_seqno_hash = 1;
+            found->self_seqno_sign = 1;
+            found->awaiting_final_signature = 0;
+            found->encryptmethod = OPENLI_PAYLOAD_ENCRYPTION_NONE;
+            found->encryptkey = NULL;
+            found->encryptkey_len = 0;
+            HASH_ADD_KEYPTR(hh, *map, found->key, strlen(found->key), found);
+        }
+
+        known->last_integrity_state = found;
     }
 
     if (found->agency == NULL) {
@@ -683,7 +695,6 @@ void free_integrity_check_state(integrity_check_state_t *integ) {
     if (integ->liid) free(integ->liid);
     if (integ->authcc) free(integ->authcc);
     if (integ->delivcc) free(integ->delivcc);
-    if (integ->cinstr) free(integ->cinstr);
     if (integ->hash_ctx) EVP_MD_CTX_free(integ->hash_ctx);
     if (integ->hash_timer) destroy_openli_timer(integ->hash_timer);
     if (integ->sign_timer) destroy_openli_timer(integ->sign_timer);

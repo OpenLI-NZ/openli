@@ -74,9 +74,6 @@ void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request) {
     if (!job) {
         return;
     }
-    if (job->cinstr) {
-        free(job->cinstr);
-    }
     if (job->liid) {
         free(job->liid);
     }
@@ -353,7 +350,6 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
     res.liid = strdup(ics->liid_key);
     res.restype = ics->msgtype;
     res.encodedby = enc->workerid;
-    res.cinstr = strdup(ics->cinstr);
     res.destid = ics->destmediator;
 
     zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
@@ -412,7 +408,6 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
 
-    res->cinstr = NULL;
     res->liid = NULL;
     res->seqno = job->seqno;
     res->destid = destid;
@@ -1224,16 +1219,28 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     openli_encoded_result_t *res = &(resarray[(*next)]);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
-    snprintf(keystr, 1000, "%s-%s-%u", job->liid_key, job->cinstr,
-            job->timefmt);
-    JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
-    if ((*pval)) {
-        t_set = (saved_encoding_templates_t *)(*pval);
+
+    if (enc->last_tplate_set && enc->last_tplate_cin == job->cin &&
+            enc->last_tplate_timefmt == job->timefmt &&
+            enc->last_tplate_liid_key == known->liid_key) {
+        t_set = enc->last_tplate_set;
     } else {
-        t_set = calloc(1, sizeof(saved_encoding_templates_t));
-        t_set->key = strdup(keystr);
-        (*pval) = (Word_t)t_set;
+        snprintf(keystr, 1000, "%s-%ld-%u", job->liid_key, job->cin,
+                job->timefmt);
+        JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
+        if ((*pval)) {
+            t_set = (saved_encoding_templates_t *)(*pval);
+        } else {
+            t_set = calloc(1, sizeof(saved_encoding_templates_t));
+            t_set->key = strdup(keystr);
+            (*pval) = (Word_t)t_set;
+        }
+        enc->last_tplate_set = t_set;
+        enc->last_tplate_cin = job->cin;
+        enc->last_tplate_timefmt = job->timefmt;
+        enc->last_tplate_liid_key = known->liid_key;
     }
+
     if (job->origreq->type == OPENLI_EXPORT_FIRST_SEGMENT_FLAG ||
             job->origreq->type == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
         tsptr = NULL;
@@ -1429,6 +1436,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                         found->fwd_index);
                 destroy_known_liid(found);
             }
+            enc->last_tplate_set = NULL;
             destroy_encoding_job(&job, 0);
             continue;
         }

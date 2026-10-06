@@ -390,6 +390,7 @@ typedef struct encoder_liid_state {
     encrypt_encode_state_t encrypt_iri;
 
     size_t fwd_index;
+    struct integrity_check_state *last_integrity_state;
 
     UT_hash_handle hh;
 } encoder_liid_state_t;
@@ -403,7 +404,6 @@ struct integrity_check_state {
     char *liid;
     char *authcc;
     char *delivcc;
-    char *cinstr;
     openli_liid_format_t liid_format;
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
@@ -464,6 +464,11 @@ typedef struct encoder_state {
 
     Pvoid_t saved_intercept_templates;
     Pvoid_t saved_global_templates;
+
+    saved_encoding_templates_t *last_tplate_set;
+    uint32_t last_tplate_cin;
+    uint8_t last_tplate_timefmt;
+    char *last_tplate_liid_key;
 
     openli_encoded_result_t **result_array;
     size_t *result_batch;

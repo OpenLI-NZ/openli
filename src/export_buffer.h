@@ -50,7 +50,6 @@ typedef struct encoder_result {
     uint32_t seqno;
     uint32_t destid;
     char *liid;
-    char *cinstr;
     uint8_t encodedby;
     uint8_t restype;
     openli_export_recv_t *origreq;

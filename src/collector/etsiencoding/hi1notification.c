@@ -250,9 +250,6 @@ failstate:
         if (encoded->liid) {
             free(encoded->liid);
         }
-        if (encoded->cinstr) {
-            free(encoded->cinstr);
-        }
         free(encoded);
     }
     if (buf) {

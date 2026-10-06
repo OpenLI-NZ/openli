@@ -49,10 +49,6 @@ void free_encoded_result(openli_encoded_result_t *res) {
         free(res->liid);
     }
 
-    if (res->cinstr) {
-        free(res->cinstr);
-    }
-
     if (res->msgbody) {
 
         if (res->msgbody->encoded) {

@@ -57,7 +57,6 @@ typedef struct cin_seqno {
     uint32_t cin;
     uint32_t cc_seqno;
     uint32_t iri_seqno;
-    char *cin_string;
     uint8_t iri_begin;
     uint8_t iri_end;
     time_t last_cindb_update;

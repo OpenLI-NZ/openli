@@ -134,7 +134,6 @@ typedef struct encoder_job {
     wandder_encode_job_t *preencoded;
     uint32_t seqno;
     int64_t cin;
-    char *cinstr;
     openli_export_recv_t *origreq;
     char *liid;
     char *liid_key;

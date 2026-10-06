@@ -30,6 +30,7 @@
 #include <errno.h>
 #include <assert.h>
 #include <unistd.h>
+#include <sched.h>
 
 #include "util.h"
 #include "logger.h"
@@ -71,9 +72,6 @@ static inline void free_cinsequencing(exporter_intercept_state_t *intstate) {
 
     HASH_ITER(hh, intstate->cinsequencing, c, tmp) {
         HASH_DELETE(hh, intstate->cinsequencing, c);
-        if (c->cin_string) {
-            free(c->cin_string);
-        }
         free(c);
     }
 }
@@ -497,10 +495,11 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
         published_intercept_msg_t *msg) {
 
     exporter_intercept_state_t *intstate;
-    size_t index, shutdown_retries = 0;
+    size_t index;
     int ret = 1;
     openli_encoding_job_t job;
     char liid_key[2048];
+    int attempts = 0;
 
     snprintf(liid_key, sizeof(liid_key), "%s-%s", msg->authcc, msg->liid);
     HASH_FIND(hh, seqdata->intercepts, liid_key, strlen(liid_key), intstate);
@@ -521,27 +520,29 @@ static int remove_tracked_intercept(seqtracker_thread_data_t *seqdata,
     job.authcc = strdup(msg->authcc);
 
     index = intstate->encoder_index;
-    while (1) {
+    while (attempts < 500) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
-                sizeof(openli_encoding_job_t), 0)) < 0) {
+                sizeof(openli_encoding_job_t), ZMQ_DONTWAIT)) < 0) {
             if (errno == EAGAIN || errno == EINTR) {
-                if (collector_halt) {
-                    shutdown_retries ++;
-                    if (shutdown_retries > 50) {
-                        free(job.liid);
-                        return -1;
-                    }
-                }
-                usleep(1000);
+                attempts ++;
+                usleep(10000);
                 continue;
             }
             logger(LOG_INFO,
                     "Error while pushing encoding job to worker threads: %s",
                     strerror(errno));
             free(job.liid);
+            free(job.authcc);
             return -1;
         }
         break;
+    }
+
+    if (attempts >= 500) {
+        logger(LOG_CRIT, "OpenLI CRITICAL: failed to deliver intercept termination signal for LIID %s to encoder worker %d after 5 seconds; worker queue is massively congested", msg->liid, index);
+        free(job.authcc);
+        free(job.liid);
+        return -1;
     }
 
     establish_cinstate_dbconn(seqdata);
@@ -561,7 +562,7 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
         char *delivcc) {
 
     openli_encoding_job_t job;
-    int ret = 1;
+    int ret = 1, attempts = 0;
     size_t index;
     size_t shutdown_retries = 0;
 
@@ -592,12 +593,9 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     if (recvd->type == OPENLI_EXPORT_RAW_CC ||
             recvd->type == OPENLI_EXPORT_RAW_IRI ||
             recvd->type == OPENLI_EXPORT_RAW_SYNC) {
-        job.cinstr = NULL;
         job.operatorid = NULL;
         job.delivcc = NULL;
     } else {
-        job.cinstr = strdup(cinseq->cin_string);
-
         if (intstate->details.operatorid) {
             job.operatorid = strdup(intstate->details.operatorid);
         } else {
@@ -617,9 +615,9 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     index = intstate->encoder_index;
     (*seqno)++;
 
-    while (1) {
+    while (attempts < 5) {
         if ((ret = zmq_send(seqdata->zmq_pushjobsocks[index], (char *)&job,
-                sizeof(openli_encoding_job_t), 0)) < 0) {
+                sizeof(openli_encoding_job_t), ZMQ_DONTWAIT)) < 0) {
             if (errno == EAGAIN || errno == EINTR) {
                 if (collector_halt) {
                     shutdown_retries ++;
@@ -631,7 +629,8 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
                         return -1;
                     }
                 }
-                usleep(1000);
+                attempts ++;
+                sched_yield();
                 continue;
             }
             logger(LOG_INFO,
@@ -641,6 +640,15 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
             return -1;
         }
         break;
+    }
+
+    if (attempts >= 5) {
+        /* worker queue is congested -- drop the packet but preserve
+         * the seqno increment so the LEA can detect the missing sequence
+         * number.
+         */
+        destroy_encoding_job(&job, 1);
+        return 0;
     }
 
     return ret;
@@ -768,7 +776,6 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     }
 
     if (!cinseq) {
-        char cinstr[sizeof(liid_key) + 16];
         struct cinstate_t init_cinstate;
 
         establish_cinstate_dbconn(seqdata);
@@ -780,8 +787,6 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
             return -1;
         }
 
-        snprintf(cinstr, sizeof(cinstr), "%s-%u", liid_key, cin);
-
         memset(&init_cinstate, 0, sizeof(init_cinstate));
         if (seqdata->cinstatedb.dbptr) {
             cinstate_db_lookup(&seqdata->cinstatedb, liid_key, cin,
@@ -791,7 +796,6 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         cinseq->cin = cin;
         cinseq->iri_seqno = 0;
         cinseq->cc_seqno = 0;
-        cinseq->cin_string = strdup(cinstr);
         cinseq->iri_begin = 0;
         cinseq->iri_end = 0;
         cinseq->last_cindb_update = 0;
