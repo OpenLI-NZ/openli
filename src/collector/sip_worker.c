@@ -1497,8 +1497,8 @@ void create_sip_ipmmiri(openli_sip_worker_t *sipworker,
             if (pkts[i] == NULL) {
                 continue;
             }
-            copy = create_rawip_iri_job(vint->common.liid, vint->common.destid,
-                vint->common.authcc, pkts[i]);
+            copy = create_rawip_iri_job(vint->common.liid_key,
+                    vint->common.destid, pkts[i]);
             publish_openli_msg(
                     sipworker->zmq_pubsocks[vint->common.seqtrackerid],
                     copy);

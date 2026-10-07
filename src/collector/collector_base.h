@@ -376,8 +376,6 @@ typedef struct shared_liid_to_agency_mapping {
 
 typedef struct encoder_liid_state {
     char *liid_key;
-    char *liid;
-    char *authcc;
     char *delivcc;
     uint8_t no_agency_map_warning;
     time_t last_agency_check;

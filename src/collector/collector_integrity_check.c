@@ -315,15 +315,21 @@ uint8_t update_integrity_check_state(integrity_check_state_t **map,
         /** map key is LIID, CIN and msgtype, separated by space characters. */
         HASH_FIND(hh, *map, dmk->keystring, strlen(dmk->keystring), found);
         if (!found) {
+            char *sep;
             found = calloc(1, sizeof(integrity_check_state_t));
             found->key = strdup(dmk->keystring);
             found->agency = NULL;
             found->cin = cin;
             found->msgtype = msgtype;
             found->liid_key = strdup(known->liid_key);
-            found->liid = strdup(known->liid);
-            found->authcc = strdup(known->authcc);
-            found->delivcc = strdup(known->delivcc);
+            sep = strchr(known->liid_key, '-');
+            if (sep) {
+                found->liid = strdup(sep + 1);
+                found->authcc = strndup(known->liid_key, sep - known->liid_key);
+            }
+            if (known->delivcc) {
+                found->delivcc = strdup(known->delivcc);
+            }
 
             if (known->digest_config.hash_pdulimit > 32) {
                 found->hashed_seqnos = calloc(

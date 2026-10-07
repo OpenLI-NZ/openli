@@ -633,9 +633,9 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             if (ipint->common.targetagency == NULL ||
                     strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
-                expmsg = create_rawip_job_from_ip(ipint->common.liid,
+                expmsg = create_rawip_job_from_ip(ipint->common.liid_key,
                         ipint->common.destid, payload, plen, tv,
-                        OPENLI_EXPORT_RAW_CC, ipint->common.authcc);
+                        OPENLI_EXPORT_RAW_CC);
 
             } else if (sess->gtp_version == 2) {
                 /* TODO define ICE types and figure out how we decide what

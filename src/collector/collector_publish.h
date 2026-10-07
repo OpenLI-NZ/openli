@@ -225,8 +225,7 @@ typedef struct openli_ipiri_job {
 }  openli_ipiri_job_t;
 
 typedef struct openli_rawip_job {
-    char *liid;
-    char *authcc;
+    char *liid_key;
     uint8_t *ipcontent;
     uint32_t ipclen;
     uint32_t seqno;
@@ -366,7 +365,7 @@ openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
  *  Used to export IP packets that are being intercepted by pcapdisk
  *  IP data intercepts.
  *
- *  @param liid     The LIID that this packet has been intercepted for
+ *  @param liid_key The LIID key string that this packet was intercepted for
  *  @param destid   The mediator that should receive the raw IP packet
  *  @param l3       Pointer to the start of the IP header from the packet
  *                  that is being intercepted
@@ -375,46 +374,43 @@ openli_export_recv_t *create_epscc_job_from_ip(uint32_t cin, char *liid,
  *  @param tv       The timestamp for the intercepted packet
  *  @param msgtype  The type of job to encode (either OPENLI_EXPORT_RAW_CC
  *                  or OPENLI_EXPORT_RAW_IRI)
- *  @param authcc   The authorized country code for the intercept recipient
  *
  *  @return an encoding job that is ready to be published using
  *          publish_openli_msg()
  */
-openli_export_recv_t *create_rawip_job_from_ip(char *liid,
-        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
-        uint8_t msgtype, char *authcc);
+openli_export_recv_t *create_rawip_job_from_ip(char *liid_key,
+        uint32_t destid, void *l3,
+        uint32_t l3_len, struct timeval tv, uint8_t msgtype);
 
 /** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_CC type.
  *
  *  Used to export IP packets that are being intercepted by pcapdisk
  *  IP data intercepts.
  *
- *  @param liid     The LIID that this packet has been intercepted for
+ *  @param liid_key The LIID key string that this packet was intercepted for
  *  @param destid   The mediator that should receive the raw IP packet
- *  @param authcc   The authorized country code for the intercept recipient
  *  @param pkt      The packet that was intercepted
  *
  *  @return an encoding job that is ready to be published using
  *          publish_openli_msg()
  */
-openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
-        char *authcc, libtrace_packet_t *pkt);
+openli_export_recv_t *create_rawip_cc_job(char *liid_key, uint32_t destid,
+        libtrace_packet_t *pkt);
 
 /** Creates a raw IP packet encoding job using the OPENLI_EXPORT_RAW_IRI type.
  *
  *  Used to export SIP packets that are being intercepted by pcapdisk
  *  VOIP intercepts.
  *
- *  @param liid     The LIID that this packet has been intercepted for
+ *  @param liid_key The LIID key string that this packet was intercepted for
  *  @param destid   The mediator that should receive the raw IP packet
- *  @param authcc   The authorized country code for the intercept recipient
  *  @param pkt      The packet that was intercepted
  *
  *  @return an encoding job that is ready to be published using
  *          publish_openli_msg()
  */
-openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
-        char *authcc, libtrace_packet_t *pkt);
+openli_export_recv_t *create_rawip_iri_job(char *liid_key, uint32_t destid,
+        libtrace_packet_t *pkt);
 
 int push_vendor_mirrored_ipcc_job(void *pubqueue,
         intercept_common_t *common, struct timeval tv,

@@ -55,6 +55,7 @@
 #include "util.h"
 #include "collector_integrity_check.h"
 #include "cinstatedb.h"
+#include "collector_publish.h"
 
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
@@ -510,18 +511,19 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     }
     loc->tick_counter = 0;
     flush_local_stats(loc, glob);
+    flush_publish_batches(loc);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
-	gettimeofday(&tv, NULL);
+        gettimeofday(&tv, NULL);
         stats = trace_create_statistics();
         trace_get_statistics(trace, stats);
 
-	if (tv.tv_sec - loc->startedat > 1) {
-	    /* ignore drops in the first second -- they probably happened
-	     * while our processing threads were starting because of the order
-	     * that libtrace does all the tasks necessary to start an input.
-	     */
+        if (tv.tv_sec - loc->startedat > 1) {
+            /* ignore drops in the first second -- they probably happened
+             * while our processing threads were starting because of the order
+             * that libtrace does all the tasks necessary to start an input.
+             */
             pthread_mutex_lock(&(glob->stats_mutex));
             glob->stats.packets_dropped += (stats->dropped - loc->dropped);
             glob->stats.packets_accepted += (stats->accepted - loc->accepted);
@@ -534,7 +536,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
                         stats->dropped - loc->dropped,
                         stats->accepted - loc->accepted);
             }
-	}
+        }
         loc->dropped = stats->dropped;
 
         pthread_rwlock_rdlock(&(glob->config_mutex));
@@ -557,7 +559,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
 
 static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
-    int i, hwm=1000;
+    int i, hwm=2000;
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
             sizeof(openli_pushed_t));
 
@@ -584,6 +586,10 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->pkts_since_msg_read = 0;
     loc->tick_counter = 0;
     loc->ipcc_filters = NULL;
+
+    loc->pub_batches = calloc(glob->seqtracker_threads, sizeof(col_publish_batch_t));
+    loc->pub_batch_count = glob->seqtracker_threads;
+    loc->has_pending_publish = 0;
 
     memset(&(loc->local_stats), 0, sizeof(loc->local_stats));
 
@@ -845,6 +851,9 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         }
         zmq_close(loc->zmq_packet_return);
     }
+
+    flush_publish_batches(loc);
+    free(loc->pub_batches);
 
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
 
@@ -1758,7 +1767,12 @@ processdone:
         loc->local_stats.packets_intercepted ++;
         if (__builtin_expect(loc->local_stats.packets_intercepted >= 4096, 0)) {
             flush_local_stats(loc, glob);
+            if (loc->has_pending_publish) {
+                flush_publish_batches(loc);
+            }
         }
+    } else if (__builtin_expect(loc->has_pending_publish > 0, 0)) {
+        flush_publish_batches(loc);
     }
 
     return pkt;

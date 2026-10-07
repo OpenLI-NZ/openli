@@ -633,6 +633,10 @@ void handle_update_ipcc_filters(colthread_local_t *loc,
         return;
     }
 
+    // invalidate cache
+    loc->last_ipcc_filter_liid = NULL;
+    loc->last_ipcc_filter = NULL;
+
     HASH_FIND(hh, loc->ipcc_filters, cc_exclude->liid,
             strlen(cc_exclude->liid), found);
     if (found) {
@@ -657,6 +661,9 @@ void handle_remove_ipcc_filters(colthread_local_t *loc, char *liid) {
         return;
     }
 
+    // invalidate cache
+    loc->last_ipcc_filter_liid = NULL;
+    loc->last_ipcc_filter = NULL;
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
     if (found) {
         HASH_DELETE(hh, loc->ipcc_filters, found);

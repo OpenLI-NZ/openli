@@ -37,6 +37,7 @@
 #include "emailiri.h"
 #include "export_buffer.h"
 #include "intercept.h"
+#include "collector.h"
 
 int publish_openli_msg(void *pubsock, openli_export_recv_t *msg) {
 
@@ -257,14 +258,11 @@ void free_published_message(openli_export_recv_t *msg) {
     } else if (msg->type == OPENLI_EXPORT_RAW_SYNC ||
             msg->type == OPENLI_EXPORT_RAW_CC ||
             msg->type == OPENLI_EXPORT_RAW_IRI) {
-        if (msg->data.rawip.liid) {
-            free(msg->data.rawip.liid);
-        }
         if (msg->data.rawip.ipcontent) {
             free(msg->data.rawip.ipcontent);
         }
-        if (msg->data.rawip.authcc) {
-            free(msg->data.rawip.authcc);
+        if (msg->data.rawip.liid_key) {
+            free(msg->data.rawip.liid_key);
         }
     } else if (msg->type == OPENLI_EXPORT_UDP_SINK_ARGS) {
         if (msg->data.udpargs.sourceport) {
@@ -299,9 +297,8 @@ void free_published_message(openli_export_recv_t *msg) {
     free(msg);
 }
 
-openli_export_recv_t *create_rawip_job_from_ip(char *liid,
-        uint32_t destid, void *l3, uint32_t l3_len, struct timeval tv,
-        uint8_t msgtype, char *authcc) {
+openli_export_recv_t *create_rawip_job_from_ip(char *liid_key, uint32_t destid,
+        void *l3, uint32_t l3_len, struct timeval tv, uint8_t msgtype) {
 
     openli_export_recv_t *msg = NULL;
     openli_pcap_header_t *pcap;
@@ -315,8 +312,7 @@ openli_export_recv_t *create_rawip_job_from_ip(char *liid,
     msg->destid = destid;
     msg->ts = tv;
 
-    msg->data.rawip.liid = strdup(liid);
-    msg->data.rawip.authcc = strdup(authcc);
+    msg->data.rawip.liid_key = strdup(liid_key);
     msg->data.rawip.ipcontent = malloc(l3_len + sizeof(openli_pcap_header_t));
 
     pcap = (openli_pcap_header_t *)msg->data.rawip.ipcontent;
@@ -334,8 +330,8 @@ openli_export_recv_t *create_rawip_job_from_ip(char *liid,
     return msg;
 }
 
-openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
-        char *authcc, libtrace_packet_t *pkt) {
+openli_export_recv_t *create_rawip_cc_job(char *liid_key, uint32_t destid,
+        libtrace_packet_t *pkt) {
 
     void *l3;
     uint32_t rem;
@@ -350,13 +346,13 @@ openli_export_recv_t *create_rawip_cc_job(char *liid, uint32_t destid,
     }
 
     tv = trace_get_timeval(pkt);
-    return create_rawip_job_from_ip(liid, destid, l3, rem, tv,
-            OPENLI_EXPORT_RAW_CC, authcc);
+    return create_rawip_job_from_ip(liid_key, destid, l3, rem, tv,
+            OPENLI_EXPORT_RAW_CC);
 
 }
 
-openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
-        char *authcc, libtrace_packet_t *pkt) {
+openli_export_recv_t *create_rawip_iri_job(char *liid_key, uint32_t destid,
+        libtrace_packet_t *pkt) {
 
     void *l3;
     uint32_t rem;
@@ -371,8 +367,8 @@ openli_export_recv_t *create_rawip_iri_job(char *liid, uint32_t destid,
     }
 
     tv = trace_get_timeval(pkt);
-    return create_rawip_job_from_ip(liid, destid, l3, rem, tv,
-            OPENLI_EXPORT_RAW_IRI, authcc);
+    return create_rawip_job_from_ip(liid_key, destid, l3, rem, tv,
+            OPENLI_EXPORT_RAW_IRI);
 
 }
 
@@ -384,9 +380,8 @@ int push_vendor_mirrored_ipcc_job(void *pubqueue,
 
     if (common->targetagency == NULL || strcmp(common->targetagency,
             "pcapdisk") == 0) {
-        msg = create_rawip_job_from_ip(common->liid,
-                common->destid, l3, rem, tv, OPENLI_EXPORT_RAW_CC,
-                common->authcc);
+        msg = create_rawip_job_from_ip(common->liid_key,
+                common->destid, l3, rem, tv, OPENLI_EXPORT_RAW_CC);
     } else {
         msg = calloc(1, sizeof(openli_export_recv_t));
 
@@ -654,6 +649,72 @@ void copy_location_into_ipmmiri_job(openli_export_recv_t *dest,
         dest->data.ipmmiri.location_types = 0;
         dest->data.ipmmiri.locations = NULL;
     }
+}
+
+static inline void flush_single_batch(void *pubsock,
+        col_publish_batch_t *batch) {
+
+    int attempts = 0, i;
+    if (batch->count == 0) {
+        return;
+    }
+    while (attempts < 5) {
+        if (zmq_send(pubsock, batch->msgs,
+                batch->count * sizeof(openli_export_recv_t *),
+                ZMQ_DONTWAIT) < 0) {
+            if (errno == EINTR || errno == EAGAIN) {
+                attempts ++;
+                sched_yield();
+                continue;
+            }
+            logger(LOG_INFO, "OpenLI Collector: error while publishing batched messages inside collector thread: %s", strerror(errno));
+            break;
+        }
+        break;
+    }
+    if (attempts >= 5) {
+        for (i = 0; i < batch->count; i++) {
+            free_published_message(batch->msgs[i]);
+        }
+    }
+    batch->count = 0;
+}
+
+int publish_openli_msg_buffered(colthread_local_t *loc, int trackerid,
+        openli_export_recv_t *msg) {
+    col_publish_batch_t *batch;
+    int i;
+
+    if (msg == NULL) {
+        return 0;
+    }
+
+    batch = &(loc->pub_batches[trackerid]);
+    batch->msgs[batch->count] = msg;
+    batch->count ++;
+    if (batch->count >= OPENLI_PUBLISH_BATCH_SIZE) {
+        flush_single_batch(loc->zmq_pubsocks[trackerid], batch);
+        loc->has_pending_publish = 0;
+        for (i = 0; i < loc->pub_batch_count; i++) {
+            if (loc->pub_batches[i].count > 0) {
+                loc->has_pending_publish = 1;
+                break;
+            }
+        }
+    } else {
+        loc->has_pending_publish = 1;
+    }
+
+    return 0;
+}
+
+void flush_publish_batches(colthread_local_t *loc) {
+    int i;
+
+    for (i = 0; i < loc->pub_batch_count; i++) {
+        flush_single_batch(loc->zmq_pubsocks[i], &(loc->pub_batches[i]));
+    }
+    loc->has_pending_publish = 0;
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

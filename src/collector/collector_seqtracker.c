@@ -41,6 +41,8 @@
 
 #define MAX_CONTENT_PER_JOB 64000
 
+#define SEQTRACKER_INGEST_BURST_LIMIT 2048
+
 #if HAVE_SQLCIPHER
 #include <sqlcipher/sqlite3.h>
 #endif
@@ -93,10 +95,6 @@ static inline char *extract_authcc_from_job(openli_export_recv_t *recvd) {
             return recvd->data.mobiri.authcc;
         case OPENLI_EXPORT_GSM_SMS_IRI:
             return recvd->data.gsmsms.authcc;
-        case OPENLI_EXPORT_RAW_SYNC:
-        case OPENLI_EXPORT_RAW_CC:
-        case OPENLI_EXPORT_RAW_IRI:
-            return recvd->data.rawip.authcc;
         case OPENLI_EXPORT_EMAILIRI:
             return recvd->data.emailiri.authcc;
         case OPENLI_EXPORT_EMAILCC:
@@ -151,10 +149,6 @@ static inline char *extract_liid_from_job(openli_export_recv_t *recvd) {
         case OPENLI_EXPORT_UMTSIRI:
         case OPENLI_EXPORT_EPSIRI:
             return recvd->data.mobiri.liid;
-        case OPENLI_EXPORT_RAW_SYNC:
-        case OPENLI_EXPORT_RAW_CC:
-        case OPENLI_EXPORT_RAW_IRI:
-            return recvd->data.rawip.liid;
         case OPENLI_EXPORT_EMAILIRI:
             return recvd->data.emailiri.liid;
         case OPENLI_EXPORT_EMAILCC:
@@ -570,9 +564,15 @@ static int generate_encoding_job(seqtracker_thread_data_t *seqdata,
     job.seqno = *seqno;
 	job.preencoded = intstate->preencoded;
 	job.origreq = recvd;
-	job.liid = strdup(liid);
+
+    if (liid) {
+    	job.liid = strdup(liid);
+    }
     job.liid_key = strdup(intstate->details.liid_key);
-    job.authcc = strdup(authcc);
+
+    if (authcc) {
+        job.authcc = strdup(authcc);
+    }
     job.cin = (int64_t)cinseq->cin;
     job.cept_version = intstate->version;
     job.encryptmethod = intstate->details.encryptmethod;
@@ -716,8 +716,8 @@ static int handle_emailcc_job(seqtracker_thread_data_t *seqdata,
 static int run_encoding_job(seqtracker_thread_data_t *seqdata,
         openli_export_recv_t *recvd) {
 
-    char *liid, *authcc, *delivcc;
-    char liid_key[2048];
+    char *liid, *authcc, *delivcc, *liid_key;
+    char liid_key_local[2048];
     uint32_t cin;
     cin_seqno_t *cinseq;
     exporter_intercept_state_t *intstate;
@@ -731,25 +731,41 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
     size_t liidlen, authcclen;
 
     memset(&job, 0, sizeof(job));
+
     liid = extract_liid_from_job(recvd);
     authcc = extract_authcc_from_job(recvd);
     delivcc = extract_delivcc_from_job(recvd);
     cin = extract_cin_from_job(recvd);
     iritype = extract_iritype_from_job(recvd);
 
-    if (authcc && strcmp(authcc, "CH") == 0) {
+    if (recvd->type == OPENLI_EXPORT_RAW_CC ||
+            recvd->type == OPENLI_EXPORT_RAW_IRI ||
+            recvd->type == OPENLI_EXPORT_RAW_SYNC) {
+        liid_key = recvd->data.rawip.liid_key;
         cinreset_forbid = 1;
     } else {
-        cinreset_forbid = 0;
+        if (authcc && strcmp(authcc, "CH") == 0) {
+            cinreset_forbid = 1;
+        } else {
+            cinreset_forbid = 0;
+        }
+
+        authcclen = authcc ? strlen(authcc) : 0;
+        liidlen = liid ? strlen(liid) : 0;
+
+        if (authcclen + 1 + liidlen < sizeof(liid_key_local)) {
+            memcpy(liid_key_local, authcc, authcclen);
+            liid_key_local[authcclen] = '-';
+            memcpy(liid_key_local + authcclen + 1, liid, liidlen + 1);
+        }
+
+        liid_key = liid_key_local;
     }
 
-    authcclen = authcc ? strlen(authcc) : 0;
-    liidlen = liid ? strlen(liid) : 0;
-
-    if (authcclen + 1 + liidlen < sizeof(liid_key)) {
-        memcpy(liid_key, authcc, authcclen);
-        liid_key[authcclen] = '-';
-        memcpy(liid_key + authcclen + 1, liid, liidlen + 1);
+    if (liid_key == NULL) {
+        logger(LOG_INFO, "OpenLI collector: seqtracker was unable to derive LIID key from a received job");
+        free_published_message(recvd);
+        return 0;
     }
 
     if (seqdata->last_intstate &&
@@ -763,7 +779,7 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
 
     if (!intstate) {
         logger(LOG_INFO, "Received encoding job for an unknown LIID: %s??",
-                liid);
+                liid_key);
         free_published_message(recvd);
         return 0;
     }
@@ -817,9 +833,9 @@ static int run_encoding_job(seqtracker_thread_data_t *seqdata,
                 resetjob = calloc(1, sizeof(openli_export_recv_t));
                 resetjob->type = OPENLI_EXPORT_CIN_RESET;
                 resetjob->destid = recvd->destid;
-                resetjob->data.cininfo.liid = strdup(liid);
+                resetjob->data.cininfo.liid = strdup(intstate->details.liid);
                 resetjob->data.cininfo.cin = cin;
-                resetjob->data.cininfo.authcc = strdup(authcc);
+                resetjob->data.cininfo.authcc = strdup(intstate->details.authcc);
 
                 generate_encoding_job(seqdata, resetjob, intstate, cinseq,
                         liid, &dummyseqno, authcc, delivcc);
@@ -920,15 +936,80 @@ postencodepush:
 
 }
 
+static inline void handle_published_job(seqtracker_thread_data_t *seqdata,
+        openli_export_recv_t *job, int *halted) {
+
+    switch(job->type) {
+        case OPENLI_EXPORT_HALT:
+            *halted = 1;
+            seqdata->haltinfo = job->data.haltinfo;
+            free_published_message(job);
+            break;
+
+        case OPENLI_EXPORT_RECONFIGURE_INTERCEPTS:
+            reconfigure_intercepts(seqdata);
+            free_published_message(job);
+            break;
+
+        case OPENLI_EXPORT_INTERCEPT_DETAILS:
+            track_new_intercept(seqdata, &(job->data.cept));
+            free_published_message(job);
+            break;
+
+        case OPENLI_EXPORT_INTERCEPT_OVER:
+            remove_tracked_intercept(seqdata, &(job->data.cept));
+            free_published_message(job);
+            break;
+
+        case OPENLI_EXPORT_INTERCEPT_CHANGED:
+            modify_tracked_intercept(seqdata, &(job->data.cept));
+            free_published_message(job);
+            break;
+
+        case OPENLI_EXPORT_CIN_CLOSE:
+            // a worker has determined that a CIN is no longer
+            // active for a session where an IRI End is not suitable
+            // e.g. SIP REGISTER exchanges
+            {
+                char closekey[2048];
+                snprintf(closekey, sizeof(closekey), "%s-%s",
+                        job->data.cininfo.authcc,
+                        job->data.cininfo.liid);
+                cinstate_db_remove_by_cin(&seqdata->cinstatedb,
+                        closekey, job->data.cininfo.cin);
+            }
+            free_published_message(job);
+            break;
+
+        case OPENLI_EXPORT_IPMMCC:
+        case OPENLI_EXPORT_IPMMIRI:
+        case OPENLI_EXPORT_IPIRI:
+        case OPENLI_EXPORT_UMTSCC:
+        case OPENLI_EXPORT_UMTSIRI:
+        case OPENLI_EXPORT_EPSIRI:
+        case OPENLI_EXPORT_EMAILIRI:
+        case OPENLI_EXPORT_EMAILCC:
+        case OPENLI_EXPORT_RAW_SYNC:
+        case OPENLI_EXPORT_RAW_CC:
+        case OPENLI_EXPORT_RAW_IRI:
+        case OPENLI_EXPORT_IPCC:
+        case OPENLI_EXPORT_EPSCC:
+        case OPENLI_EXPORT_GSM_SMS_IRI:
+            run_encoding_job(seqdata, job);
+            break;
+    }
+}
+
 
 static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
 
-    openli_export_recv_t *job = NULL;
+    openli_export_recv_t *jobs[64];
     int halted = 0, x;
     int sincepurge = 0;
+    int drained = 0;
 
     while (!halted) {
-        x = zmq_recv(seqdata->zmq_recvpublished, &job, sizeof(job), 0);
+        x = zmq_recv(seqdata->zmq_recvpublished, jobs, sizeof(jobs), 0);
         if (x < 0) {
             if (errno == EINTR) {
                 continue;
@@ -941,66 +1022,29 @@ static void seqtracker_main(seqtracker_thread_data_t *seqdata) {
             break;
         }
 
-        if (job) {
-            switch(job->type) {
-                case OPENLI_EXPORT_HALT:
-                    halted = 1;
-		            seqdata->haltinfo = job->data.haltinfo;
-                    free_published_message(job);
-                    break;
+        drained = 0;
+        while (x > 0 && !halted) {
+            int jobc = x / sizeof(openli_export_recv_t *);
+            int i;
 
-                case OPENLI_EXPORT_RECONFIGURE_INTERCEPTS:
-                    reconfigure_intercepts(seqdata);
-                    free_published_message(job);
+            for (i = 0; i < jobc; i++) {
+                if (halted) {
                     break;
+                }
 
-                case OPENLI_EXPORT_INTERCEPT_DETAILS:
-                    track_new_intercept(seqdata, &(job->data.cept));
-                    free_published_message(job);
-                    break;
+                handle_published_job(seqdata, jobs[i], &halted);
+                sincepurge ++;
+                drained ++;
+            }
 
-                case OPENLI_EXPORT_INTERCEPT_OVER:
-					remove_tracked_intercept(seqdata, &(job->data.cept));
-                    free_published_message(job);
-					break;
+            if (drained >= SEQTRACKER_INGEST_BURST_LIMIT || halted) {
+                break;
+            }
 
-                case OPENLI_EXPORT_INTERCEPT_CHANGED:
-                    modify_tracked_intercept(seqdata, &(job->data.cept));
-                    free_published_message(job);
-                    break;
-
-                case OPENLI_EXPORT_CIN_CLOSE:
-                    // a worker has determined that a CIN is no longer
-                    // active for a session where an IRI End is not suitable
-                    // e.g. SIP REGISTER exchanges
-                    {
-                        char closekey[2048];
-                        snprintf(closekey, sizeof(closekey), "%s-%s",
-                                job->data.cininfo.authcc,
-                                job->data.cininfo.liid);
-                        cinstate_db_remove_by_cin(&seqdata->cinstatedb,
-                                closekey, job->data.cininfo.cin);
-                    }
-                    free_published_message(job);
-                    break;
-
-                case OPENLI_EXPORT_IPMMCC:
-                case OPENLI_EXPORT_IPMMIRI:
-                case OPENLI_EXPORT_IPIRI:
-                case OPENLI_EXPORT_UMTSCC:
-                case OPENLI_EXPORT_UMTSIRI:
-                case OPENLI_EXPORT_EPSIRI:
-                case OPENLI_EXPORT_EMAILIRI:
-                case OPENLI_EXPORT_EMAILCC:
-                case OPENLI_EXPORT_RAW_SYNC:
-                case OPENLI_EXPORT_RAW_CC:
-                case OPENLI_EXPORT_RAW_IRI:
-                case OPENLI_EXPORT_IPCC:
-                case OPENLI_EXPORT_EPSCC:
-                case OPENLI_EXPORT_GSM_SMS_IRI:
-					run_encoding_job(seqdata, job);
-                    sincepurge ++;
-                    break;
+            x = zmq_recv(seqdata->zmq_recvpublished, jobs, sizeof(jobs),
+                    ZMQ_DONTWAIT);
+            if (x <= 0) {
+                break;
             }
         }
 
@@ -1020,7 +1064,7 @@ void *start_seqtracker_thread(void *data) {
     char sockname[128];
     seqtracker_thread_data_t *seqdata = (seqtracker_thread_data_t *)data;
     openli_export_recv_t *job = NULL;
-    int x, zero = 0, large=1000, sndtimeo=1000;
+    int x, zero = 0, large=5000, sndtimeo=1000;
     size_t i;
     exporter_intercept_state_t *intstate, *tmpexp;
 

@@ -40,21 +40,6 @@ typedef struct alushimhdr {
     uint32_t sessionid;
 } PACKED alushimhdr_t;
 
-static inline openli_cc_prefix_filter_t *alushim_lookup_cc_prefix_filter(
-        colthread_local_t *loc, char *liid) {
-
-    cc_prefix_exclusion_map_t *found;
-    if (loc->ipcc_filters == NULL) {
-        return NULL;
-    }
-
-    HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
-    if (found) {
-        return found->cc_exclude;
-    }
-    return NULL;
-}
-
 static inline uint32_t alushim_get_interceptid(alushimhdr_t *aluhdr) {
     uint32_t intid = ntohl(aluhdr->interceptid);
 
@@ -222,7 +207,7 @@ int check_alu_intercept(colthread_local_t *loc,
             continue;
         }
 
-        cc_exclude = alushim_lookup_cc_prefix_filter(loc, alu->common.liid);
+        cc_exclude = lookup_cc_prefix_filter(loc, alu->common.liid);
         if (cc_exclude) {
             if (openli_cc_prefix_filter_match_l3(cc_exclude, l3, bodylen)) {
                 continue;

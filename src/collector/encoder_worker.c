@@ -49,12 +49,6 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->liid_key) {
         free(known->liid_key);
     }
-    if (known->liid) {
-        free(known->liid);
-    }
-    if (known->authcc) {
-        free(known->authcc);
-    }
     if (known->delivcc) {
         free(known->delivcc);
     }
@@ -130,7 +124,7 @@ static void release_liid_from_forwarder(forwarder_assignment_t *assign,
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0;
-    int hwm = 1000;
+    int hwm = 20000;
     int i, zmq_fd;
     char sockname[128];
     size_t fdlen;
@@ -524,17 +518,12 @@ static void check_agency_digest_config(openli_encoder_t *enc,
 }
 
 static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
-        char *liid, char *authcc, char *delivcc, char *operatorid) {
+        char *liid_key, char *delivcc, char *operatorid) {
 
     encoder_liid_state_t *found;
-    int keylen;
 
     found = calloc(1, sizeof(encoder_liid_state_t));
-    keylen = strlen(authcc) + strlen(liid) + 2;
-    found->liid_key = malloc(keylen);
-    snprintf(found->liid_key, keylen, "%s-%s", authcc, liid);
-    found->liid = strdup(liid);
-    found->authcc = strdup(authcc);
+    found->liid_key = strdup(liid_key);
     if (delivcc) {
         found->delivcc = strdup(delivcc);
     }
@@ -1399,7 +1388,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             break;
         }
 
-        if (job.liid == NULL || job.authcc == NULL) {
+        if (job.liid_key == NULL) {
             goto encodejoberror;
         }
 
@@ -1442,7 +1431,7 @@ static int process_job(openli_encoder_t *enc, void *socket) {
         }
 
         if (!found) {
-            found = create_new_known_liid(enc, job.liid, job.authcc,
+            found = create_new_known_liid(enc, job.liid_key,
                     job.delivcc, job.operatorid);
             enc->last_known = found;
         }

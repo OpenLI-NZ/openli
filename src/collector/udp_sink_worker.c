@@ -55,6 +55,7 @@ typedef struct udp_sink_local {
 
     char *expectedliid;
     char *authcc;
+    char expectedliid_key[64];
     char *delivcc;
     openli_export_recv_t *cept;
     uint32_t dest_mediator;
@@ -171,6 +172,13 @@ static udp_sink_local_t *init_local_state(udp_sink_worker_args_t *args) {
 
     local->authcc = args->authcc;
     args->authcc = NULL;
+
+    if (local->authcc && local->expectedliid) {
+        snprintf(local->expectedliid_key, 64, "%s-%s", local->authcc,
+                local->expectedliid);
+    } else {
+        local->expectedliid_key[0] = '\0';
+    }
 
     local->delivcc = args->delivcc;
     args->delivcc = NULL;
@@ -449,9 +457,9 @@ static int process_single_udp_datagram(udp_sink_local_t *local, char *key,
     if (local->outformat == OPENLI_EXPORT_RAW_CC) {
         struct timeval tv;
         gettimeofday(&tv, NULL);
-        job = create_rawip_job_from_ip(local->expectedliid,
+        job = create_rawip_job_from_ip(local->expectedliid_key,
                 local->dest_mediator, skipptr, iplen, tv,
-                OPENLI_EXPORT_RAW_CC, local->authcc);
+                OPENLI_EXPORT_RAW_CC);
     } else {
         if (cin == 0) {
             // no useful CIN was configured, just use '1' in its place

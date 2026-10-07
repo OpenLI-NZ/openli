@@ -857,13 +857,12 @@ static int export_raw_sync_packet_content(access_plugin_t *p,
         msg = (openli_export_recv_t *)calloc(1, sizeof(openli_export_recv_t));
         msg->type = OPENLI_EXPORT_RAW_SYNC;
         msg->destid = ipint->common.destid;
-        msg->data.rawip.liid = strdup(ipint->common.liid);
-        msg->data.rawip.authcc = strdup(ipint->common.authcc);
 
         msg->data.rawip.ipcontent = malloc(iplen +
                 sizeof(openli_pcap_header_t));
         memcpy(msg->data.rawip.ipcontent + sizeof(openli_pcap_header_t), ipptr,
                 iplen);
+        msg->data.rawip.liid_key = strdup(ipint->common.liid_key);
         msg->data.rawip.ipclen = iplen + sizeof(openli_pcap_header_t);
         msg->data.rawip.seqno = seqno;
         msg->data.rawip.cin = cin;
