@@ -165,27 +165,31 @@ static int generate_tagged_userid(user_identity_t *userid, char *taggedid,
         int space) {
 
     char *ptr = taggedid;
-    memset(taggedid, 0, space);
+    int used = 0;
 
     if (userid->method == USER_IDENT_GTP_MSISDN) {
-        memcpy(ptr, "msisdn:", strlen("msisdn:"));
-        ptr += strlen("msisdn:");
+        memcpy(ptr, "msisdn:", 7);
+        ptr += 7;
     } else if (userid->method == USER_IDENT_GTP_IMSI) {
-        memcpy(ptr, "imsi:", strlen("imsi:"));
-        ptr += strlen("imsi:");
+        memcpy(ptr, "imsi:", 5);
+        ptr += 5;
     } else if (userid->method == USER_IDENT_GTP_IMEI) {
-        memcpy(ptr, "imei:", strlen("imei:"));
-        ptr += strlen("imei:");
+        memcpy(ptr, "imei:", 5);
+        ptr += 5;
     }
 
-    if ((ptr - taggedid) + userid->idlength + 1 > space) {
+    used = ptr - taggedid;
+    if (used + userid->idlength + 1 > space) {
         logger(LOG_INFO,
                 "OpenLI: user identity string is too long!");
         return -1;
     }
 
     memcpy(ptr, userid->idstr, userid->idlength);
-    return userid->idlength + (ptr - taggedid);
+    ptr += userid->idlength;
+    *ptr = '\0';
+
+    return (ptr - taggedid);
 }
 
 internet_user_t *lookup_user_by_identity(internet_user_t *allusers,
@@ -193,11 +197,13 @@ internet_user_t *lookup_user_by_identity(internet_user_t *allusers,
 
     char taggedid[2048];
     internet_user_t *found = NULL;
+    int taglen;
 
-    if (generate_tagged_userid(userid, taggedid, 2048) < 0) {
+    taglen = generate_tagged_userid(userid, taggedid, 2048);
+    if (taglen < 0) {
         return NULL;
     }
-    HASH_FIND(hh, allusers, taggedid, strlen(taggedid), found);
+    HASH_FIND(hh, allusers, taggedid, taglen, found);
     return found;
 }
 
@@ -206,11 +212,13 @@ internet_user_t *lookup_user_by_intercept(internet_user_t *allusers,
 
     char taggedid[2048];
     internet_user_t *found = NULL;
+    int taglen;
 
-    if (generate_ipint_userkey(ipint, taggedid, 2048) < 0) {
+    taglen = generate_ipint_userkey(ipint, taggedid, 2048);
+    if (taglen < 0) {
         return NULL;
     }
-    HASH_FIND(hh, allusers, taggedid, strlen(taggedid), found);
+    HASH_FIND(hh, allusers, taggedid, taglen, found);
     return found;
 }
 
@@ -218,13 +226,14 @@ int add_userid_to_allusers_map(internet_user_t **allusers,
         internet_user_t *newuser, user_identity_t *userid) {
 
     char taggedid[2048];
+    int taglen;
 
-    if (generate_tagged_userid(userid, taggedid, 2048) < 0) {
+    taglen = generate_tagged_userid(userid, taggedid, 2048);
+    if (taglen < 0) {
         return -1;
     }
-    newuser->userid = strdup(taggedid);
-    HASH_ADD_KEYPTR(hh, *allusers, newuser->userid, strlen(newuser->userid),
-            newuser);
+    newuser->userid = fast_strdup(taggedid, taglen);
+    HASH_ADD_KEYPTR(hh, *allusers, newuser->userid, taglen, newuser);
     return 0;
 }
 

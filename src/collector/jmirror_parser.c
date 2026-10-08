@@ -81,7 +81,8 @@ int check_jmirror_intercept(colthread_local_t *loc,
     uint8_t *l3, *start;
     openli_cc_prefix_filter_t *cc_exclude;
 
-    if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1)) == NULL) {
+    if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1,
+            NULL)) == NULL) {
         return 0;
     }
 

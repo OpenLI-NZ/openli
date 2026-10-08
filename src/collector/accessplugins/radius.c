@@ -209,6 +209,11 @@ typedef struct radius_global {
     radius_parsed_t *parsedpkt;
 
     Pvoid_t server_map;
+
+    struct sockaddr_storage last_radiusip;
+    struct sockaddr_storage last_nasip;
+    radius_server_t *last_srv;
+    radius_nas_t *last_nas;
 } radius_global_t;
 
 typedef struct radius_header {
@@ -317,7 +322,7 @@ static void radius_init_plugin_data(access_plugin_t *p) {
     radius_global_t *glob;
     int i;
 
-    glob = (radius_global_t *)(malloc(sizeof(radius_global_t)));
+    glob = (radius_global_t *)(calloc(1, sizeof(radius_global_t)));
     glob->freeattrs = NULL;
     glob->freeaccreqs = NULL;
     glob->server_map = (Pvoid_t)NULL;
@@ -744,6 +749,18 @@ static inline void update_known_servers(radius_global_t *glob,
     unsigned char hashkey[20];
     PWord_t pval;
 
+    if (glob->last_srv && glob->last_nas) {
+        if (memcmp(&(glob->last_radiusip), &(parsed->radiusip),
+                sizeof(struct sockaddr_storage)) == 0) {
+            if (memcmp(&(glob->last_nasip), &(parsed->nasip),
+                    sizeof(struct sockaddr_storage)) == 0) {
+                parsed->matchedserv = glob->last_srv;
+                parsed->matchednas = glob->last_nas;
+                return;
+            }
+        }
+    }
+
     memset(hashkey, 0, sizeof(hashkey));
 
     sockkey = sockaddr_to_key((struct sockaddr *)&(parsed->radiusip),
@@ -767,7 +784,7 @@ static inline void update_known_servers(radius_global_t *glob,
     }
 
 
-    sockkey = sockaddr_to_key((struct sockaddr *)&(parsed->radiusip),
+    sockkey = sockaddr_to_key((struct sockaddr *)&(parsed->nasip),
             &socklen);
 
     if (sockkey == NULL) {
@@ -793,6 +810,11 @@ static inline void update_known_servers(radius_global_t *glob,
 
     parsed->matchednas = nas;
     parsed->matchedserv = srv;
+
+    glob->last_srv = srv;
+    glob->last_nas = nas;
+    glob->last_nasip = parsed->nasip;
+    glob->last_radiusip = parsed->radiusip;
 
 }
 
@@ -838,6 +860,14 @@ static void *radius_parse_packet(access_plugin_t *p, libtrace_packet_t *pkt) {
 
     parsed->msgtype = hdr->code;
     parsed->msgident = hdr->identifier;
+
+    if (hdr->code == RADIUS_CODE_ACCOUNT_RESPONSE) {
+        /* Acct-Response carries no useful information for us, so we can
+         * just skip it entirely
+         */
+        return parsed;
+    }
+
     parsed->authptr = hdr->auth;
     parsed->origpkt = pkt;
     parsed->tvsec = trace_get_seconds(pkt);
@@ -1602,9 +1632,7 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
 
     uint32_t reqid;
     char sessionid[5000];
-    char tempstr[24];
-    char *ptr;
-    int rem = 5000, i;
+    int sesslen, i;
     PWord_t pval;
 
     glob = (radius_global_t *)(p->plugindata);
@@ -1619,19 +1647,16 @@ static access_session_t *radius_update_session_state(access_plugin_t *p,
         raduser->nasid_len = strlen(raduser->nasidentifier);
     }
 
-    ptr = sessionid;
-    ptr = quickcat(ptr, &rem, raduser->userid, strlen(raduser->userid));
-    ptr = quickcat(ptr, &rem, "-", 1);
-    ptr = quickcat(ptr, &rem, raduser->nasidentifier, raduser->nasid_len);
-    ptr = quickcat(ptr, &rem, "-", 1);
+    sesslen = snprintf(sessionid, sizeof(sessionid), "%s-%s-%u",
+            raduser->userid, raduser->nasidentifier, raddata->acctsess_hash);
+    if (sesslen < 0 || sesslen >= (int)sizeof(sessionid)) {
+        return NULL;
+    }
 
-    snprintf(tempstr, 24, "%u", raddata->acctsess_hash);
-    ptr = quickcat(ptr, &rem, tempstr, strlen(tempstr));
-
-    HASH_FIND(hh, *sesslist, sessionid, strlen(sessionid), thissess);
+    HASH_FIND(hh, *sesslist, sessionid, sesslen, thissess);
 
     if (!thissess) {
-        thissess = create_access_session(p, sessionid, 5000 - rem);
+        thissess = create_access_session(p, sessionid, sesslen);
         thissess->cin = assign_cin(raddata);
         thissess->identifier_type = OPENLI_ACCESS_SESSION_IP;
 

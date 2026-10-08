@@ -3758,8 +3758,12 @@ static int update_user_sessions(collector_sync_t *sync, libtrace_packet_t *pkt,
             continue;
         }
 
-        HASH_FIND(hh, sync->userintercepts, iuser->userid,
-                strlen(iuser->userid), userint);
+        if (sync->userintercepts != NULL) {
+            HASH_FIND(hh, sync->userintercepts, iuser->userid,
+                    strlen(iuser->userid), userint);
+        } else {
+            userint = NULL;
+        }
 
         if (oldstate != newstate) {
             if (newstate == SESSION_STATE_ACTIVE) {

@@ -167,7 +167,7 @@ int check_alu_intercept(colthread_local_t *loc,
     uint8_t direction;
     openli_cc_prefix_filter_t *cc_exclude;
 
-    if ((cs = match_packet_to_coreserver(alusources, pinfo, 1)) == NULL) {
+    if ((cs = match_packet_to_coreserver(alusources, pinfo, 1, NULL)) == NULL) {
         return 0;
     }
 
