@@ -526,12 +526,14 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
 
     check_for_messages(loc, glob, 0);
     loc->tick_counter ++;
+    if (loc->has_pending_publish) {
+        flush_publish_batches(loc);
+    }
     if (loc->tick_counter < 100) {
         return;
     }
     loc->tick_counter = 0;
     flush_local_stats(loc, glob);
-    flush_publish_batches(loc);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 

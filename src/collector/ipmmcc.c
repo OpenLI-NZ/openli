@@ -160,7 +160,8 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
                         OPENLI_IPMMCC_MMCC_PROTOCOL_RTP, rtp->common.authcc,
                         rtp->common.delivcc);
             }
-            publish_openli_msg_buffered(loc, rtp->common.seqtrackerid, msg);
+            publish_openli_msg(loc->zmq_pubsocks[rtp->common.seqtrackerid],
+                    msg);
             matched ++;
             continue;
         }
@@ -181,7 +182,8 @@ static inline int generic_mm_comm_contents(libtrace_packet_t *pkt,
                         rtp->common.authcc, rtp->common.delivcc);
                 msg->type = OPENLI_EXPORT_IPMMCC;
             }
-            publish_openli_msg_buffered(loc, rtp->common.seqtrackerid, msg);
+            publish_openli_msg(loc->zmq_pubsocks[rtp->common.seqtrackerid],
+                    msg);
             matched ++;
             continue;
         }
