@@ -10,6 +10,8 @@ openli (1.1.23-1) unstable; urgency=medium
     from the body of a PUT request sent to an intercept endpoint in the
     REST API would cause those fields to be reset to their default
     values.
+  * REST API: fix bug where changes to handover ports or IPs would not
+    be propogated to the mediator.
   * SIP: reduced the timeout for a completed call from 30s to 5s, to
     reduce the amount of useless zombie session state that is retained
     by a collector.
@@ -33,8 +35,50 @@ openli (1.1.23-1) unstable; urgency=medium
     handles for intercepts that were never assigned to it.
   * Mediator: set explicit prefetch limits for all internal RMQ queues so
     that they do not overwhelm their own TCP sockets under load.
+  * Mediator: fix bug where the pcapdisk output thread could hang if the
+    record length was stored at the very end of an export buffer.
+  * Mediator: fix high CPU use by the pcapdisk thread.
+  * Mediator: improve performance by caching the last LIID state lookup.
+  * Mediator: improve pcapdisk performance by removing unnecessary buffering
+    layer.
+  * Mediator: improve performance by recycling ring buffer slots in the
+    collector receive threads.
+  * Collector: reduce lock contention when updating statistic counters.
+  * Collector: improve performance by caching the last lookup in various
+    LIID-keyed maps throughout the packet processing pipeline.
+  * Collector: improve performance by ensuring that we detect cases where
+    certain processing tasks are unnecessary (e.g. skipping lookups in maps
+    that we know are empty, skipping duplication of intercept parameters that
+    are not used for certain intercept types, etc.)
+  * Collector: replace fixed length post-block delay in the sequence tracking
+    thread with a yield and place a limit on the number of attempts to publish
+    a job to a full queue.
+  * Collector: improved performance by allowing packet processing threads to
+    use batching to publish multiple consecutive packets with a single call to
+    ZMQ rather than 1 ZMQ call per packet.
+  * Collector: increase queue sizes for internal ZMQ sockets to improve
+    ability to withstand microbursts.
+  * Collector: intercepts being written to the pcapdisk agency no longer
+    generate useless CIN reset encoding jobs.
+  * RADIUS: detect Acct-Response earlier so as to avoid wasting cycles on
+    decoding useless AVPs.
+  * RADIUS: fix bug where NAS IP was not being used to differentiate sessions
+    like it should have.
+  * RADIUS: general performance improvements by removing/replacing wasteful
+    string operations and caching previous lookup results.
+  * Collector: remove duplicate lookups when determining if a packet matches
+    a defined core server.
+  * Collector: cap the number of messages from the sync thread that a packet
+    processing thread will process in a single pass, so that large volumes
+    of sync messages won't disrupt packet processing.
+  * Collector: fix bug where recycled packet structures from the sync thread
+    were never consumed by the packet processing threads.
+  * Collector: sending a packet to the sync thread no longer blocks; if the
+    sync thread is too busy to receive the packet, it is dropped.
+  * Collector: remove unnecessary usleep in the sync thread when the thread
+    has no immediate work to do.
 
- -- Shane Alcock <salcock@searchlight.nz>  Thu, 1 Oct 2026 11:36:41 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Fi, 9 Oct 2026 16:20:03 +1300
 
 openli (1.1.22-1) unstable; urgency=medium
 
