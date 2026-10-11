@@ -364,6 +364,7 @@ static void track_new_intercept(seqtracker_thread_data_t *seqdata,
         intstate->details.liid_key = strdup(liid_key);
         intstate->details.liid_key_len = strlen(liid_key);
         intstate->cinsequencing = NULL;
+        intstate->last_cinseq = NULL;
         intstate->version = 0;
         intstate->encoder_index = seqdata->rr_next_encoder_assign;
         seqdata->rr_next_encoder_assign ++;
