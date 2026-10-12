@@ -77,8 +77,16 @@ openli (1.1.23-1) unstable; urgency=medium
     sync thread is too busy to receive the packet, it is dropped.
   * Collector: remove unnecessary usleep in the sync thread when the thread
     has no immediate work to do.
+  * SIP: fix crash when the URI in a Proxy Authorization header does not
+    include a realm.
+  * RADIUS: fix bug where an Accounting-Request would not trigger a
+    Begin IRI if the session had an unanswered Access-Request.
+  * RADIUS: add heuristic that infers whether an assigned address in
+    an Access-Accept message is static or from a dynamic pool.
+  * RADIUS: add support for Framed-Netmask, Framed-Route and Framed-Pool
+    attributes, as well as their IPv6 equivalents.
 
- -- Shane Alcock <salcock@searchlight.nz>  Fi, 9 Oct 2026 16:20:03 +1300
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 13 Oct 2026 12:41:32 +1300
 
 openli (1.1.22-1) unstable; urgency=medium
 
