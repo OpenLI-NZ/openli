@@ -263,6 +263,7 @@ access_session_t *create_access_session(access_plugin_t *p, char *sessid,
     newsess->teids_mapped = 0;
     newsess->gtp_tunnel_endpoints[0] = NULL;
     newsess->gtp_tunnel_endpoints[1] = NULL;
+    newsess->ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_DYNAMIC;
 	return newsess;
 }
 

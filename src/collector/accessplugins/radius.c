@@ -34,6 +34,7 @@
 #include "logger.h"
 #include "internetaccess.h"
 #include "util.h"
+#include "patricia.h"
 
 #define ORPHAN_EXPIRY (1.0)
 
@@ -58,6 +59,8 @@ enum {
     RADIUS_ATTR_NASIP = 4,
     RADIUS_ATTR_NASPORT = 5,
     RADIUS_ATTR_FRAMED_IP_ADDRESS = 8,
+    RADIUS_ATTR_FRAMED_NETMASK = 9,
+    RADIUS_ATTR_FRAMED_ROUTE = 22,
     RADIUS_ATTR_CALLED_STATION_ID = 30,
     RADIUS_ATTR_CALLING_STATION_ID = 31,
     RADIUS_ATTR_NASIDENTIFIER = 32,
@@ -66,7 +69,10 @@ enum {
     RADIUS_ATTR_ACCT_OUTOCTETS = 43,
     RADIUS_ATTR_ACCT_SESSION_ID = 44,
     RADIUS_ATTR_ACCT_TERMINATE_CAUSE = 49,
+    RADIUS_ATTR_FRAMED_POOL = 88,
     RADIUS_ATTR_FRAMED_IPV6_PREFIX = 97,
+    RADIUS_ATTR_FRAMED_IPV6_ROUTE = 99,
+    RADIUS_ATTR_FRAMED_IPV6_POOL = 100,
     RADIUS_ATTR_DELEGATED_IPV6_PREFIX = 123,
     RADIUS_ATTR_FRAMED_IPV6_ADDRESS = 168,
 };
@@ -269,6 +275,7 @@ static inline int interesting_attribute(uint8_t attrnum) {
         case RADIUS_ATTR_NASIDENTIFIER:
         case RADIUS_ATTR_NASPORT:
         case RADIUS_ATTR_FRAMED_IP_ADDRESS:
+        case RADIUS_ATTR_FRAMED_NETMASK:
         case RADIUS_ATTR_FRAMED_IPV6_ADDRESS:
         case RADIUS_ATTR_FRAMED_IPV6_PREFIX:
         case RADIUS_ATTR_ACCT_INOCTETS:
@@ -279,11 +286,45 @@ static inline int interesting_attribute(uint8_t attrnum) {
         case RADIUS_ATTR_CALLING_STATION_ID:
         case RADIUS_ATTR_ACCT_TERMINATE_CAUSE:
         case RADIUS_ATTR_DELEGATED_IPV6_PREFIX:
+        case RADIUS_ATTR_FRAMED_POOL:
+        case RADIUS_ATTR_FRAMED_IPV6_POOL:
+        case RADIUS_ATTR_FRAMED_ROUTE:
+        case RADIUS_ATTR_FRAMED_IPV6_ROUTE:
             return 1;
     }
 
     return 0;
 
+}
+
+static inline void parse_framed_route(access_session_t *sess,
+        radius_attribute_t *attr) {
+
+    char str[256];
+    char *sp;
+    prefix_t *pfx;
+    int len;
+
+    len = attr->att_len;
+    if (len > 255) len = 255;
+    memcpy(str, attr->att_val, len);
+    str[len] = '\0';
+
+    sp = strchr(str, ' ');
+    if (sp) {
+        *sp = '\0';
+    }
+
+    pfx = ascii2prefix(0, str);
+    if (pfx) {
+        if (pfx->family == AF_INET) {
+            add_new_session_ip(sess, &(pfx->add.sin), AF_INET, pfx->bitlen, 4);
+        } else if (pfx->family == AF_INET6) {
+            add_new_session_ip(sess, &(pfx->add.sin6), AF_INET6, pfx->bitlen,
+                    16);
+        }
+        free(pfx);
+    }
 }
 
 static inline radius_attribute_t *create_new_attribute(radius_global_t *glob,
@@ -1191,6 +1232,13 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
         radius_attribute_t *attrlist, access_session_t *sess) {
 
     radius_attribute_t *attr;
+    uint8_t has_pool = 0;
+    uint8_t has_ip_in_accept = 0;
+    uint32_t ip4;
+    uint8_t pfxlen4 = 32;
+    uint32_t mask4;
+    radius_attribute_t *framed = NULL;
+    radius_v6_prefix_attr_t *prefattr;
 
     if (!raddata->muser_count) {
         return;
@@ -1199,31 +1247,59 @@ static inline void extract_assigned_ip_address(radius_parsed_t *raddata,
         return;
     }
 
-    attr = attrlist;
-    while (attr) {
-        if (attr->att_type == RADIUS_ATTR_FRAMED_IP_ADDRESS) {
-            add_new_session_ip(sess, attr->att_val, AF_INET, 32, attr->att_len);
+    for (attr = attrlist; attr != NULL; attr = attr->next) {
+        switch(attr->att_type) {
+            case RADIUS_ATTR_FRAMED_POOL:
+            case RADIUS_ATTR_FRAMED_IPV6_POOL:
+                has_pool = 1;
+                break;
+            case RADIUS_ATTR_FRAMED_NETMASK:
+                if (attr->att_len == sizeof(uint32_t)) {
+                    mask4 = ntohl(*((uint32_t *)attr->att_val));
+                    pfxlen4 = __builtin_popcount(mask4);
+                }
+                break;
+            case RADIUS_ATTR_FRAMED_IP_ADDRESS:
+                // need to handle this later in case there is a netmask AVP
+                framed = attr;
+                break;
+            case RADIUS_ATTR_FRAMED_IPV6_ADDRESS:
+                add_new_session_ip(sess, attr->att_val, AF_INET6, 128,
+                        attr->att_len);
+                has_ip_in_accept = 1;
+                break;
+            case RADIUS_ATTR_DELEGATED_IPV6_PREFIX:
+            case RADIUS_ATTR_FRAMED_IPV6_PREFIX:
+                prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
+
+                if (attr->att_len > 2) {
+                    add_new_session_ip(sess, prefattr->address, AF_INET6,
+                            prefattr->preflength, attr->att_len - 2);
+                    has_ip_in_accept = 1;
+                }
+                break;
+            case RADIUS_ATTR_FRAMED_ROUTE:
+            case RADIUS_ATTR_FRAMED_IPV6_ROUTE:
+                parse_framed_route(sess, attr);
+                has_ip_in_accept = 1;
+                break;
         }
+    }
 
-        if (attr->att_type == RADIUS_ATTR_FRAMED_IPV6_ADDRESS) {
-            add_new_session_ip(sess, attr->att_val, AF_INET6, 128, attr->att_len);
+    if (framed) {
+        ip4 = *((uint32_t *)framed->att_val);
+        if (ip4 != 0xFFFFFFFF && ip4 != 0xFFFFFFFE) {
+            add_new_session_ip(sess, framed->att_val, AF_INET, pfxlen4,
+                    framed->att_len);
+            has_ip_in_accept = 1;
         }
+    }
 
-        if (attr->att_type == RADIUS_ATTR_DELEGATED_IPV6_PREFIX ||
-                attr->att_type == RADIUS_ATTR_FRAMED_IPV6_PREFIX) {
-
-            radius_v6_prefix_attr_t *prefattr;
-            prefattr = (radius_v6_prefix_attr_t *)(attr->att_val);
-
-            if (attr->att_len > 2) {
-                add_new_session_ip(sess, prefattr->address, AF_INET6,
-                        prefattr->preflength, attr->att_len - 2);
-            }
-
-            return;
-        }
-
-        attr = attr->next;
+    if (raddata->msgtype == RADIUS_CODE_ACCESS_ACCEPT && has_ip_in_accept &&
+            !has_pool) {
+        sess->ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_STATIC;
+    } else if (has_pool) {
+        sess->ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_DYNAMIC;
     }
 
 }
@@ -1363,7 +1439,8 @@ static inline void apply_fsm_logic(
         radsess->current = SESSION_STATE_AUTHING;
         *action = ACCESS_ACTION_ATTEMPT;
     } else if ((radsess->current == SESSION_STATE_NEW ||
-            radsess->current == SESSION_STATE_OVER) && (
+            radsess->current == SESSION_STATE_OVER ||
+            radsess->current == SESSION_STATE_AUTHING) && (
             msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
                 accttype == RADIUS_ACCT_START)) {
 
@@ -1391,15 +1468,13 @@ static inline void apply_fsm_logic(
     } else if ((radsess->current == SESSION_STATE_ACTIVE ||
                 radsess->current == SESSION_STATE_ACTIVE_NO_IP) &&
             (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
-            (accttype == RADIUS_ACCT_START ||
-                accttype == RADIUS_ACCT_INTERIM_UPDATE))) {
+                accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
 
         /* Always set to "active" -- we'll later reset to "active NO IP"
          * if we still don't have an IP before we return the sync thread.
          */
         radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_INTERIM_UPDATE;
-
     } else if ((radsess->current == SESSION_STATE_ACTIVE ||
                 radsess->current == SESSION_STATE_ACTIVE_NO_IP) &&
             (msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
@@ -1409,7 +1484,8 @@ static inline void apply_fsm_logic(
         *action = ACCESS_ACTION_END;
 
     } else if ((radsess->current == SESSION_STATE_NEW ||
-            radsess->current == SESSION_STATE_OVER) && (
+            radsess->current == SESSION_STATE_OVER ||
+            radsess->current == SESSION_STATE_AUTHING) && (
             msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
             accttype == RADIUS_ACCT_INTERIM_UPDATE)) {
 
@@ -1419,6 +1495,17 @@ static inline void apply_fsm_logic(
 
         radsess->current = SESSION_STATE_ACTIVE;
         *action = ACCESS_ACTION_ALREADY_ACTIVE;
+    } else if ((radsess->current == SESSION_STATE_NEW ||
+            radsess->current == SESSION_STATE_AUTHING) && (
+            msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
+            accttype == RADIUS_ACCT_STOP)) {
+
+        /* Session stopped before we managed to transition to the active
+         * state, somehow?
+         */
+
+        radsess->current = SESSION_STATE_OVER;
+        *action = ACCESS_ACTION_END;
     }
 
     *newstate = radsess->current;

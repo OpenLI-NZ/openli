@@ -314,7 +314,7 @@ static inline void finish_ipiri_job(collector_sync_t *sync,
             sizeof(internetaccess_ip_t));
     irimsg->data.ipiri.ipcount = sess->sessipcount;
     irimsg->data.ipiri.ipversioning = sess->sessipversion;
-    irimsg->data.ipiri.ipassignmentmethod = OPENLI_IPIRI_IPMETHOD_DYNAMIC;
+    irimsg->data.ipiri.ipassignmentmethod = sess->ipassignmentmethod;
 
     for (i = 0; i < sess->sessipcount; i++) {
         memcpy(&(irimsg->data.ipiri.assignedips[i]), &(sess->sessionips[i]),
