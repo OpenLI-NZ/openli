@@ -844,14 +844,22 @@ int get_sip_to_uri_identity(openli_sip_parser_t *parser,
             return -1;
         }
         sipid->username = strdup(sipid->username);
-        sipid->username_len = strlen(sipid->username);
+        if (sipid->username) {
+            sipid->username_len = strlen(sipid->username);
+        } else {
+            return -1;
+        }
 
         sipid->realm = get_sip_to_uri_realm(parser);
         if (sipid->realm == NULL) {
             return -1;
         }
         sipid->realm = strdup(sipid->realm);
-        sipid->realm_len = strlen(sipid->realm);
+        if (sipid->realm) {
+            sipid->realm_len = strlen(sipid->realm);
+        } else {
+            return -1;
+        }
     } else {
         logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",
                 scheme);
@@ -899,14 +907,22 @@ int get_sip_from_uri_identity(openli_sip_parser_t *parser,
             return -1;
         }
         sipid->username = strdup(sipid->username);
-        sipid->username_len = strlen(sipid->username);
+        if (sipid->username) {
+            sipid->username_len = strlen(sipid->username);
+        } else {
+            return -1;
+        }
 
         sipid->realm = get_sip_from_uri_realm(parser);
         if (sipid->realm == NULL) {
             return -1;
         }
         sipid->realm = strdup(sipid->realm);
-        sipid->realm_len = strlen(sipid->realm);
+        if (sipid->realm) {
+            sipid->realm_len = strlen(sipid->realm);
+        } else {
+            return -1;
+        }
     } else {
         logger(LOG_INFO, "OpenLI: unexpected SIP scheme '%s', ignoring",
                 scheme);
@@ -1026,9 +1042,18 @@ int get_sip_proxy_auth_identity(openli_sip_parser_t *parser, int index,
     }
 
     sipid->username = osip_proxy_authorization_get_username(auth);
-    sipid->username_len = strlen(sipid->username);
+    if (sipid->username) {
+        sipid->username_len = strlen(sipid->username);
+    } else {
+        sipid->username_len = 0;
+    }
     sipid->realm = osip_proxy_authorization_get_realm(auth);
-    sipid->realm_len = strlen(sipid->realm);
+
+    if (sipid->realm) {
+        sipid->realm_len = strlen(sipid->realm);
+    } else {
+        sipid->realm_len = 0;
+    }
 
     strip_quotes(sipid);
     return 1;
@@ -1095,7 +1120,7 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
             *end = '\0';
         }
 
-        if (ptr[strlen(ptr) - 1] == '>') {
+        if ((*ptr) != '\0' && ptr[strlen(ptr) - 1] == '>') {
             ptr[strlen(ptr) - 1] = '\0';
         }
     }
@@ -1104,13 +1129,27 @@ static inline int extract_identity(openli_sip_identity_t *sipid, char *start) {
     if (at == NULL) {
         sipid->realm = NULL;
         sipid->realm_len = 0;
-        sipid->username_len = strlen(ptr);
         sipid->username = strdup(ptr);
+        if (sipid->username == NULL) {
+            free(idstring);
+            return -1;
+        }
+        sipid->username_len = strlen(sipid->username);
     } else {
         sipid->realm = strdup(at + 1);
-        sipid->realm_len = strlen(sipid->realm);
+        if (sipid->realm) {
+            sipid->realm_len = strlen(sipid->realm);
+        } else {
+            sipid->realm_len = 0;
+        }
         sipid->username_len = at - ptr;
         sipid->username = strdup(ptr);
+        if (sipid->username == NULL) {
+            if (sipid->realm) free(sipid->realm);
+            sipid->realm = NULL;
+            free(idstring);
+            return -1;
+        }
         sipid->username[sipid->username_len] = '\0';
     }
 
