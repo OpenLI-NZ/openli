@@ -1667,7 +1667,8 @@ static inline void update_first_action(radius_parsed_t *raddata,
              * accept message -- seen this in the wild */
             raddata->firstattrs = raddata->savedreq->attrs;
             if (raddata->msgtype == RADIUS_CODE_ACCOUNT_REQUEST &&
-                    raddata->accttype == RADIUS_ACCT_START &&
+                    (raddata->accttype == RADIUS_ACCT_START ||
+                     raddata->accttype == RADIUS_ACCT_INTERIM_UPDATE) &&
                     sess->sessipcount == 0) {
                 extract_assigned_ip_address(raddata, raddata->firstattrs,
                         sess);
