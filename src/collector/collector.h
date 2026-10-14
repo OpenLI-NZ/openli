@@ -344,6 +344,8 @@ typedef struct colthread_local {
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
     patricia_tree_t *dynamicv6ranges;
+    patricia_tree_t *dynamicv4ranges;
+    ipsession_t *activedynamicsubnets;
     static_ipcache_t *staticcache;
 
     ipfrag_reassembler_t *fragreass;

@@ -239,6 +239,44 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
     return 0;
 }
 
+static int add_ipv4_subnet_intercept(colthread_local_t *loc, ipsession_t *sess)
+{
+    struct sockaddr_in *sin;
+    ipsession_t *check;
+    char prefixstr[100];
+    char inet[INET6_ADDRSTRLEN];
+
+    sin = (struct sockaddr_in *)(sess->targetip);
+    if (sin == NULL) {
+        logger(LOG_INFO, "OpenLI: attempted to add IPv4 subnet intercept but target address was NULL?");
+        return -1;
+    }
+
+    if (inet_ntop(AF_INET, &(sin->sin_addr), inet, INET6_ADDRSTRLEN) == NULL) {
+        logger(LOG_INFO, "OpenLI: IPv4 subnet intercept prefix does not contain a valid IPv4 address");
+        return -1;
+    }
+
+    snprintf(prefixstr, 100, "%s/%u", inet, sess->prefixlen);
+
+    if (add_iprange_to_patricia(loc->dynamicv4ranges, prefixstr,
+            &(sess->common), sess->cin) < 0) {
+        return -1;
+    }
+
+    HASH_FIND(hh, loc->activedynamicsubnets, sess->streamkey,
+            strlen(sess->streamkey), check);
+    if (check) {
+        logger(LOG_INFO, "OpenLI: encountered duplicate stream key '%s' for IPv4 subnet %s -- replacing...", sess->streamkey, prefixstr);
+        HASH_DELETE(hh, loc->activedynamicsubnets, check);
+        free_single_ipsession(check);
+    }
+    HASH_ADD_KEYPTR(hh, loc->activedynamicsubnets, sess->streamkey,
+            strlen(sess->streamkey), sess);
+
+    return 0;
+}
+
 static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     struct sockaddr_in6 *sin6;
@@ -333,6 +371,21 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
     return 1;
 }
 
+static int update_ipv4_subnet_intercept(colthread_local_t *loc,
+        ipsession_t *toup) {
+
+    ipsession_t *found;
+
+    HASH_FIND(hh, loc->activedynamicsubnets, toup->streamkey,
+            strlen(toup->streamkey), found);
+    if (!found) {
+        return 0;
+    }
+
+    update_intercept_common(&(found->common), &(toup->common));
+    return 1;
+}
+
 static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     ipsession_t *found;
@@ -399,6 +452,43 @@ static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
     }
 
     update_intercept_common(&(found->common), &(toup->common));
+    return 1;
+}
+
+static int remove_ipv4_subnet_intercept(colthread_local_t *loc,
+        ipsession_t *torem) {
+
+    ipsession_t *found;
+    struct sockaddr_in *sin;
+    char prefixstr[100];
+    char inet[INET6_ADDRSTRLEN];
+
+    HASH_FIND(hh, loc->activedynamicsubnets, torem->streamkey,
+            strlen(torem->streamkey), found);
+    if (!found) {
+        return 0;
+    }
+
+    HASH_DELETE(hh, loc->activedynamicsubnets, found);
+
+    sin = (struct sockaddr_in *)(found->targetip);
+    if (sin == NULL) {
+        logger(LOG_INFO, "OpenLI: attempted to remove IPv4 subnet intercept but target address was NULL?");
+        free_single_ipsession(found);
+        return 0;
+    }
+
+    if (inet_ntop(AF_INET, &(sin->sin_addr), inet, INET6_ADDRSTRLEN) == NULL) {
+        logger(LOG_INFO, "OpenLI: removed IPv4 subnet intercept prefix does not contain a valid IPv4 address");
+        free_single_ipsession(found);
+        return 0;
+    }
+
+    snprintf(prefixstr, 100, "%s/%u", inet, found->prefixlen);
+
+    remove_iprange_from_patricia(loc->dynamicv4ranges, prefixstr,
+            &(found->common));
+    free_single_ipsession(found);
     return 1;
 }
 
@@ -494,9 +584,16 @@ void handle_push_ipintercept(colthread_local_t *loc,
         ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        if (add_ipv4_intercept(loc, sess) != 0) {
-            free_single_ipsession(sess);
-            return;
+        if (sess->prefixlen == 32) {
+            if (add_ipv4_intercept(loc, sess) != 0) {
+                free_single_ipsession(sess);
+                return;
+            }
+        } else {
+            if (add_ipv4_subnet_intercept(loc, sess) != 0) {
+                free_single_ipsession(sess);
+                return;
+            }
         }
     } else if (sess->ai_family == AF_INET6) {
         if (add_ipv6_intercept(loc, sess) != 0) {
@@ -531,7 +628,11 @@ void handle_halt_ipmmintercept(colthread_local_t *loc,
 void handle_halt_ipintercept(colthread_local_t *loc, ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        remove_ipv4_intercept(loc, sess);
+        if (sess->prefixlen == 32) {
+            remove_ipv4_intercept(loc, sess);
+        } else {
+            remove_ipv4_subnet_intercept(loc, sess);
+        }
     } else if (sess->ai_family == AF_INET6) {
         remove_ipv6_intercept(loc, sess);
     } else {
@@ -882,8 +983,10 @@ void handle_change_iprange_intercept(colthread_local_t *loc,
 void handle_change_ipint_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        if (update_ipv4_intercept(loc, sess) > 0) {
-
+        if (sess->prefixlen == 32) {
+            update_ipv4_intercept(loc, sess);
+        } else {
+            update_ipv4_subnet_intercept(loc, sess);
         }
     } else if (sess->ai_family == AF_INET6) {
         if (update_ipv6_intercept(loc, sess) > 0) {

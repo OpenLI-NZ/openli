@@ -186,6 +186,18 @@ static void log_collector_stats(collector_global_t *glob) {
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
 }
 
+static void free_staticrange_data(void *data) {
+    liid_set_t *all, *iter, *tmp;
+
+    all = (liid_set_t *)data;
+    HASH_ITER(hh, all, iter, tmp) {
+        HASH_DELETE(hh, all, iter);
+        free(iter->liid);
+        free(iter->key);
+        free(iter);
+    }
+}
+
 static void free_coreserver_fast_filters(colthread_local_t *loc) {
     coreserver_fast_filter_v4_t *fast, *tmp;
 
@@ -344,12 +356,17 @@ static void purge_active_sessions(colthread_local_t *loc) {
         free(v4);
     }
 
+    free_all_ipsessions(&(loc->activedynamicsubnets));
+
     HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
         free_all_ipsessions(&(v6->intercepts));
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
         free(v6->prefixstr);
         free(v6);
     }
+
+    Clear_Patricia(loc->dynamicv6ranges, free_staticrange_data);
+    Clear_Patricia(loc->dynamicv4ranges, free_staticrange_data);
 
 }
 
@@ -600,6 +617,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
+    loc->dynamicv4ranges = New_Patricia(32);
+    loc->activedynamicsubnets = NULL;
     loc->staticcache = NULL;
     loc->tosyncq_ip = NULL;
 
@@ -829,18 +848,6 @@ static void *start_processing_thread(libtrace_t *trace,
     return loc;
 }
 
-static void free_staticrange_data(void *data) {
-    liid_set_t *all, *iter, *tmp;
-
-    all = (liid_set_t *)data;
-    HASH_ITER(hh, all, iter, tmp) {
-        HASH_DELETE(hh, all, iter);
-        free(iter->liid);
-        free(iter->key);
-        free(iter);
-    }
-}
-
 static void free_staticcache(static_ipcache_t *cache) {
     static_ipcache_t *ent, *tmp;
 
@@ -1001,6 +1008,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
     Destroy_Patricia(loc->dynamicv6ranges, free_staticrange_data);
+    Destroy_Patricia(loc->dynamicv4ranges, free_staticrange_data);
 
     free_staticcache(loc->staticcache);
 
