@@ -113,7 +113,7 @@ int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
     PWord_t jval;
 	liid_map_entry_t *m;
 
-    JSLG(jval, map->liid_array, (unsigned char *)(toadd->liid));
+    JSLG(jval, map->liid_array, (unsigned char *)(toadd->liid_key));
     if (jval != NULL) {
         int ret = 0;
 
@@ -145,7 +145,7 @@ int add_liid_agency_mapping(liid_map_t *map, added_liid_t *toadd) {
 
     m->withdrawn = 0;
     m->unconfirmed = 0;
-    m->liid = strdup(toadd->liid);
+    m->liid = strdup(toadd->liid_key);
     m->ccqueue_deleted = 0;
     m->iriqueue_deleted = 0;
     m->encrypt = toadd->encrypt;

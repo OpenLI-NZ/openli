@@ -732,8 +732,8 @@ static void sctp_worker_init_voip_intercept(openli_sctp_worker_t *sctp,
                 sctp->tracker_threads;
     }
 
-    HASH_ADD_KEYPTR(hh_liid, sctp->voipintercepts, vint->common.liid,
-            vint->common.liid_len, vint);
+    HASH_ADD_KEYPTR(hh_liid, sctp->voipintercepts, vint->common.liid_key,
+            vint->common.liid_key_len, vint);
     vint->awaitingconfirm = 0;
 
     if (sctp->sip_worker_threads == 0 && sctp->workerid == 0) {
@@ -793,8 +793,8 @@ static int add_new_sigtran_intercept(openli_sctp_worker_t *sctp,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sctp->voipintercepts, vint->common.liid,
-            vint->common.liid_len, found);
+    HASH_FIND(hh_liid, sctp->voipintercepts, vint->common.liid_key,
+            vint->common.liid_key_len, found);
     if (found) {
         openli_sip_identity_t *tgt;
         libtrace_list_node_t *n;
@@ -830,8 +830,8 @@ static int modify_sigtran_intercept(openli_sctp_worker_t *sctp,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sctp->voipintercepts, vint->common.liid,
-            vint->common.liid_len, found);
+    HASH_FIND(hh_liid, sctp->voipintercepts, vint->common.liid_key,
+            vint->common.liid_key_len, found);
     if (!found) {
         sctp_worker_init_voip_intercept(sctp, vint);
     } else {
@@ -852,12 +852,12 @@ static int halt_sigtran_intercept(openli_sctp_worker_t *sctp,
         return -1;
     }
 
-    HASH_FIND(hh_liid, sctp->voipintercepts, decode->common.liid,
-            decode->common.liid_len, found);
+    HASH_FIND(hh_liid, sctp->voipintercepts, decode->common.liid_key,
+            decode->common.liid_key_len, found);
     if (!found) {
         if (sctp->sip_worker_threads == 0 && sctp->workerid == 0) {
             logger(LOG_INFO,
-                    "OpenLI: tried to halt VOIP intercept %s within SCTP worker but it was not present in the active intercept map?", decode->common.liid);
+                    "OpenLI: tried to halt VOIP intercept %s within SCTP worker but it was not present in the active intercept map?", decode->common.liid_key);
         }
         free_single_voipintercept(decode);
         return -1;
@@ -866,7 +866,7 @@ static int halt_sigtran_intercept(openli_sctp_worker_t *sctp,
     if (sctp->workerid == 0) {
         logger(LOG_INFO,
                 "OpenLI: SCTP worker threads are withdrawing VOIP intercept: %s",
-                found->common.liid);
+                found->common.liid_key);
 
         if (sctp->sip_worker_threads == 0) {
             openli_export_recv_t *expmsg;
@@ -907,7 +907,7 @@ static inline voipintercept_t *lookup_sigtran_target_intercept(
     if (!found) {
         logger(LOG_INFO,
                 "OpenLI: SCTP worker thread %d received a target for unknown VoIP LIID %s.",
-                liidspace);
+                sctp->workerid, liidspace);
     }
     return found;
 }
@@ -929,7 +929,7 @@ static int add_sigtran_target_identity(openli_sctp_worker_t *sctp,
     r = add_new_sip_target_to_list(found, &sipid);
     if (r == 1 && sctp->workerid == 0) {
         logger(LOG_INFO,
-                "OpenLI: collector SCTP workers have received a new target identity for LIID %s.", found->common.liid);
+                "OpenLI: collector SCTP workers have received a new target identity for LIID %s.", found->common.liid_key);
     }
     return r;
 }
@@ -950,7 +950,7 @@ static int remove_sigtran_target_identity(openli_sctp_worker_t *sctp,
     disable_sip_target_from_list(found, &sipid);
     if (sctp->workerid == 0) {
         logger(LOG_INFO,
-                "OpenLI: collector SCTP workers have disabled a target identity for LIID %s.", found->common.liid);
+                "OpenLI: collector SCTP workers have disabled a target identity for LIID %s.", found->common.liid_key);
     }
 
     if (sipid.username) free(sipid.username);

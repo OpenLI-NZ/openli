@@ -187,6 +187,37 @@ static inline int add_new_block_to_export_buffer(export_buffer_t *buf) {
     return 1;
 }
 
+uint64_t append_rawip_record_to_buffer(export_buffer_t *buf,
+        const uint8_t *record, uint32_t record_len, uint64_t beensent UNUSED) {
+    uint32_t required;
+    uint32_t start;
+    int rcint;
+
+    if (buf == NULL || record == NULL || record_len == 0 ||
+            record_len > EXPORT_BLOCK_SIZE - sizeof(record_len)) {
+        return 0;
+    }
+
+    required = sizeof(record_len) + record_len;
+    if (buf->tail == NULL ||
+            (EXPORT_BLOCK_SIZE - buf->tail->write_pos < required)) {
+        if (add_new_block_to_export_buffer(buf) == 0) {
+            return 0;
+        }
+    }
+
+    start = buf->tail->write_pos;
+    memcpy(buf->tail->data + buf->tail->write_pos, &record_len,
+            sizeof(record_len));
+    buf->tail->write_pos += sizeof(record_len);
+    memcpy(buf->tail->data + buf->tail->write_pos, record, record_len);
+    buf->tail->write_pos += record_len;
+    J1S(rcint, buf->tail->record_offsets, start);
+    buf->total_buffered += required;
+
+    return buf->total_buffered;
+}
+
 uint64_t append_etsipdu_to_buffer(export_buffer_t *buf,
         uint8_t *pdustart, uint32_t pdulen, uint64_t beensent UNUSED) {
 

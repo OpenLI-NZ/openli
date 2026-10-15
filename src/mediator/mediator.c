@@ -701,14 +701,15 @@ freehi1:
 static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    char *liid = NULL;
+    char *liid = NULL, *authcc = NULL;
+    char liid_key[2048];
     lea_thread_msg_t msg;
     lea_thread_state_t *lea_t, *tmp;
     col_thread_msg_t cmsg;
     coll_recv_t *col_t, *ctmp;
 
     /** See netcomms.c for this method */
-    if (decode_cease_mediation(msgbody, msglen, &liid) == -1) {
+    if (decode_cease_mediation(msgbody, msglen, &liid, &authcc) == -1) {
         if (state->provisioner.disable_log == 0) {
             logger(LOG_INFO,
                     "OpenLI Mediator: received invalid cease mediation command from provisioner.");
@@ -717,9 +718,13 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     }
 
     /* Error while decoding, stop */
-    if (liid == NULL) {
+    if (liid == NULL || authcc == NULL) {
+        free(liid);
+        free(authcc);
         return -1;
     }
+
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", authcc, liid);
 
     /* Send the remove message to all LEA threads -- this shouldn't be a
      * huge workload for the LEA threads to deal with.
@@ -729,7 +734,7 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     memset(&msg, 0, sizeof(msg));
     HASH_ITER(hh, state->agency_threads.threads, lea_t, tmp) {
         msg.type = MED_LEA_MESSAGE_REMOVE_LIID;
-        msg.data = strdup(liid);
+        msg.data = strdup(liid_key);
 
         libtrace_message_queue_put(&(lea_t->in_main), &msg);
     }
@@ -737,11 +742,12 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
     memset(&cmsg, 0, sizeof(cmsg));
     HASH_ITER(hh, state->collector_threads.threads, col_t, ctmp) {
         cmsg.type = MED_COLL_LIID_WITHDRAW;
-        cmsg.arg = (uint64_t)strdup(liid);
+        cmsg.arg = (uint64_t)strdup(liid_key);
         libtrace_message_queue_put(&(col_t->in_main), &cmsg);
     }
 
     free(liid);
+    free(authcc);
     return 0;
 }
 
@@ -758,7 +764,8 @@ static int receive_cease(mediator_state_t *state, uint8_t *msgbody,
 static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    char *agencyid = NULL, *liid = NULL;
+    char *agencyid = NULL, *liid = NULL, *authcc = NULL;
+    char liid_key[2048];
     int found = 0, ret = 0;
     lea_thread_msg_t msg;
     lea_thread_state_t *target;
@@ -773,17 +780,19 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
     liid = NULL;
 
     /* See netcomms.c for this method */
-    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid, encryptkey,
-            &encryptlen, &encmethod, &liidfmt) == -1) {
+    if (decode_liid_mapping(msgbody, msglen, &agencyid, &liid, &authcc,
+            encryptkey, &encryptlen, &encmethod, &liidfmt) == -1) {
         logger(LOG_INFO, "OpenLI Mediator: receive invalid LIID mapping from provisioner.");
         ret = -1;
         goto tidyup;
     }
 
-    if (agencyid == NULL || liid == NULL) {
+    if (agencyid == NULL || liid == NULL || authcc == NULL) {
         ret = -1;
         goto tidyup;
     }
+
+    snprintf(liid_key, sizeof(liid_key), "%s-%s", authcc, liid);
 
     /*
      * Include agencyid and LIID in msg.data and send msg to ALL LEA
@@ -807,6 +816,7 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 
         added = calloc(1, sizeof(added_liid_t));
         added->liid = strdup(liid);
+        added->liid_key = strdup(liid_key);
         added->liid_format = liidfmt;
         added->agencyid = strdup(agencyid);
         if (encryptlen > 0) {
@@ -832,6 +842,9 @@ static int receive_liid_mapping(mediator_state_t *state, uint8_t *msgbody,
 tidyup:
     if (liid) {
         free(liid);
+    }
+    if (authcc) {
+        free(authcc);
     }
     if (agencyid) {
         free(agencyid);

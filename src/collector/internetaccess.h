@@ -134,6 +134,7 @@ struct access_session {
     uint8_t sessipcount;
     session_ipversion_t sessipversion;
     uint8_t ips_mapped;
+    uint8_t ipassignmentmethod;
 
     access_plugin_t *plugin;
     void *sessionid;

@@ -247,8 +247,8 @@ static int init_gtp_intercept(openli_gtp_worker_t *worker,
     }
 
     add_intercept_to_user_intercept_list(&worker->userintercepts, ipint);
-    HASH_ADD_KEYPTR(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, ipint);
+    HASH_ADD_KEYPTR(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, ipint);
     ipint->awaitingconfirm = 0;
 
     return 1;
@@ -301,8 +301,8 @@ static int add_new_gtp_intercept(openli_gtp_worker_t *worker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, found);
+    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, found);
 
     if (found) {
         update_modified_gtp_intercept(worker, found, ipint);
@@ -324,8 +324,8 @@ static int modify_gtp_intercept(openli_gtp_worker_t *worker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, found);
+    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, found);
     if (!found) {
         return init_gtp_intercept(worker, ipint);
     } else {
@@ -344,8 +344,8 @@ static int halt_gtp_intercept(openli_gtp_worker_t *worker,
         return -1;
     }
 
-    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid,
-            ipint->common.liid_len, found);
+    HASH_FIND(hh_liid, worker->ipintercepts, ipint->common.liid_key,
+            ipint->common.liid_key_len, found);
     if (found) {
         remove_gtp_intercept(worker, found);
     }
@@ -633,9 +633,9 @@ static void process_gtp_u_packet(openli_gtp_worker_t *worker,
         HASH_ITER(hh_user, userint->intlist, ipint, tmp) {
             if (ipint->common.targetagency == NULL ||
                     strcmp(ipint->common.targetagency, "pcapdisk") == 0) {
-                expmsg = create_rawip_job_from_ip(ipint->common.liid,
+                expmsg = create_rawip_job_from_ip(ipint->common.liid_key,
                         ipint->common.destid, payload, plen, tv,
-                        OPENLI_EXPORT_RAW_CC, ipint->common.authcc);
+                        OPENLI_EXPORT_RAW_CC);
 
             } else if (sess->gtp_version == 2) {
                 /* TODO define ICE types and figure out how we decide what

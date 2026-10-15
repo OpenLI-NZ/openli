@@ -118,14 +118,14 @@ int add_iprange_to_patricia(patricia_tree_t *ptree, char *iprangestr,
         prefix->ref_count --;
     }
 
-    HASH_FIND(hh, *all, common->liid, common->liid_len, found);
+    HASH_FIND(hh, *all, common->liid_key, common->liid_key_len, found);
     if (found) {
         return 0;
     } else {
         char key[128];
 
         found = (liid_set_t *)malloc(sizeof(liid_set_t));
-        found->liid = strdup(common->liid);
+        found->liid = strdup(common->liid_key);
         found->cin = cin;
 
         snprintf(key, 127, "%s-%u", found->liid, found->cin);
@@ -169,7 +169,7 @@ void remove_iprange_from_patricia(patricia_tree_t *ptree, char *iprangestr,
     }
 
     all = (liid_set_t **)&(node->data);
-    HASH_FIND(hh, *all, common->liid, common->liid_len, found);
+    HASH_FIND(hh, *all, common->liid_key, common->liid_key_len, found);
     if (!found) {
         logger(LOG_INFO,
                 "OpenLI: supposed to remove IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
@@ -234,6 +234,44 @@ static int add_ipv4_intercept(colthread_local_t *loc, ipsession_t *sess) {
     }
 
     HASH_ADD_KEYPTR(hh, tgt->intercepts, sess->streamkey,
+            strlen(sess->streamkey), sess);
+
+    return 0;
+}
+
+static int add_ipv4_subnet_intercept(colthread_local_t *loc, ipsession_t *sess)
+{
+    struct sockaddr_in *sin;
+    ipsession_t *check;
+    char prefixstr[100];
+    char inet[INET6_ADDRSTRLEN];
+
+    sin = (struct sockaddr_in *)(sess->targetip);
+    if (sin == NULL) {
+        logger(LOG_INFO, "OpenLI: attempted to add IPv4 subnet intercept but target address was NULL?");
+        return -1;
+    }
+
+    if (inet_ntop(AF_INET, &(sin->sin_addr), inet, INET6_ADDRSTRLEN) == NULL) {
+        logger(LOG_INFO, "OpenLI: IPv4 subnet intercept prefix does not contain a valid IPv4 address");
+        return -1;
+    }
+
+    snprintf(prefixstr, 100, "%s/%u", inet, sess->prefixlen);
+
+    if (add_iprange_to_patricia(loc->dynamicv4ranges, prefixstr,
+            &(sess->common), sess->cin) < 0) {
+        return -1;
+    }
+
+    HASH_FIND(hh, loc->activedynamicsubnets, sess->streamkey,
+            strlen(sess->streamkey), check);
+    if (check) {
+        logger(LOG_INFO, "OpenLI: encountered duplicate stream key '%s' for IPv4 subnet %s -- replacing...", sess->streamkey, prefixstr);
+        HASH_DELETE(hh, loc->activedynamicsubnets, check);
+        free_single_ipsession(check);
+    }
+    HASH_ADD_KEYPTR(hh, loc->activedynamicsubnets, sess->streamkey,
             strlen(sess->streamkey), sess);
 
     return 0;
@@ -333,6 +371,21 @@ static int update_ipv4_intercept(colthread_local_t *loc, ipsession_t *toup) {
     return 1;
 }
 
+static int update_ipv4_subnet_intercept(colthread_local_t *loc,
+        ipsession_t *toup) {
+
+    ipsession_t *found;
+
+    HASH_FIND(hh, loc->activedynamicsubnets, toup->streamkey,
+            strlen(toup->streamkey), found);
+    if (!found) {
+        return 0;
+    }
+
+    update_intercept_common(&(found->common), &(toup->common));
+    return 1;
+}
+
 static int remove_ipv4_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     ipsession_t *found;
@@ -402,6 +455,43 @@ static int update_ipv6_intercept(colthread_local_t *loc, ipsession_t *toup) {
     return 1;
 }
 
+static int remove_ipv4_subnet_intercept(colthread_local_t *loc,
+        ipsession_t *torem) {
+
+    ipsession_t *found;
+    struct sockaddr_in *sin;
+    char prefixstr[100];
+    char inet[INET6_ADDRSTRLEN];
+
+    HASH_FIND(hh, loc->activedynamicsubnets, torem->streamkey,
+            strlen(torem->streamkey), found);
+    if (!found) {
+        return 0;
+    }
+
+    HASH_DELETE(hh, loc->activedynamicsubnets, found);
+
+    sin = (struct sockaddr_in *)(found->targetip);
+    if (sin == NULL) {
+        logger(LOG_INFO, "OpenLI: attempted to remove IPv4 subnet intercept but target address was NULL?");
+        free_single_ipsession(found);
+        return 0;
+    }
+
+    if (inet_ntop(AF_INET, &(sin->sin_addr), inet, INET6_ADDRSTRLEN) == NULL) {
+        logger(LOG_INFO, "OpenLI: removed IPv4 subnet intercept prefix does not contain a valid IPv4 address");
+        free_single_ipsession(found);
+        return 0;
+    }
+
+    snprintf(prefixstr, 100, "%s/%u", inet, found->prefixlen);
+
+    remove_iprange_from_patricia(loc->dynamicv4ranges, prefixstr,
+            &(found->common));
+    free_single_ipsession(found);
+    return 1;
+}
+
 static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     ipsession_t *found;
@@ -446,11 +536,11 @@ void handle_push_mirror_intercept(colthread_local_t *loc,
                 sizeof(vmi->sessionid), vmilist);
     }
 
-    HASH_FIND(hh, vmilist->intercepts, vmi->common.liid, (vmi->common.liid_len),
-            found);
+    HASH_FIND(hh, vmilist->intercepts, vmi->common.liid_key,
+            vmi->common.liid_key_len, found);
     if (!found) {
-        HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid,
-                vmi->common.liid_len, vmi);
+        HASH_ADD_KEYPTR(hh, vmilist->intercepts, vmi->common.liid_key,
+                vmi->common.liid_key_len, vmi);
     } else {
         logger(LOG_INFO, "OpenLI: collector received duplicate vendmirror intercept %u:%s, ignoring.", vmi->sessionid, vmi->common.liid);
         free_single_vendmirror_intercept(vmi);
@@ -472,8 +562,8 @@ void handle_halt_mirror_intercept(colthread_local_t *loc,
         return;
     }
 
-    HASH_FIND(hh, parent->intercepts, vmi->common.liid, vmi->common.liid_len,
-            found);
+    HASH_FIND(hh, parent->intercepts, vmi->common.liid_key,
+            vmi->common.liid_key_len, found);
     if (found == NULL) {
         logger(LOG_INFO, "OpenLI: collector thread was unable to remove JMirror intercept %u:%s, as the LIID was not present in its intercept list.",
                 vmi->sessionid, vmi->common.liid);
@@ -494,9 +584,16 @@ void handle_push_ipintercept(colthread_local_t *loc,
         ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        if (add_ipv4_intercept(loc, sess) != 0) {
-            free_single_ipsession(sess);
-            return;
+        if (sess->prefixlen == 32) {
+            if (add_ipv4_intercept(loc, sess) != 0) {
+                free_single_ipsession(sess);
+                return;
+            }
+        } else {
+            if (add_ipv4_subnet_intercept(loc, sess) != 0) {
+                free_single_ipsession(sess);
+                return;
+            }
         }
     } else if (sess->ai_family == AF_INET6) {
         if (add_ipv6_intercept(loc, sess) != 0) {
@@ -531,7 +628,11 @@ void handle_halt_ipmmintercept(colthread_local_t *loc,
 void handle_halt_ipintercept(colthread_local_t *loc, ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        remove_ipv4_intercept(loc, sess);
+        if (sess->prefixlen == 32) {
+            remove_ipv4_intercept(loc, sess);
+        } else {
+            remove_ipv4_subnet_intercept(loc, sess);
+        }
     } else if (sess->ai_family == AF_INET6) {
         remove_ipv6_intercept(loc, sess);
     } else {
@@ -633,6 +734,10 @@ void handle_update_ipcc_filters(colthread_local_t *loc,
         return;
     }
 
+    // invalidate cache
+    loc->last_ipcc_filter_liid = NULL;
+    loc->last_ipcc_filter = NULL;
+
     HASH_FIND(hh, loc->ipcc_filters, cc_exclude->liid,
             strlen(cc_exclude->liid), found);
     if (found) {
@@ -657,6 +762,9 @@ void handle_remove_ipcc_filters(colthread_local_t *loc, char *liid) {
         return;
     }
 
+    // invalidate cache
+    loc->last_ipcc_filter_liid = NULL;
+    loc->last_ipcc_filter = NULL;
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
     if (found) {
         HASH_DELETE(hh, loc->ipcc_filters, found);
@@ -727,7 +835,7 @@ void handle_modify_iprange(colthread_local_t *loc, staticipsession_t *ipr) {
     }
 
     all = (liid_set_t **)&(node->data);
-    HASH_FIND(hh, *all, ipr->common.liid, ipr->common.liid_len, found);
+    HASH_FIND(hh, *all, ipr->common.liid_key, ipr->common.liid_key_len, found);
     if (!found) {
         logger(LOG_INFO,
                 "OpenLI: processing thread was supposed to modify IP prefix %s for LIID %s but the LIID is not associated with that prefix.",
@@ -846,7 +954,7 @@ void handle_change_vendmirror_intercept(colthread_local_t *loc,
         return;
     }
 
-    HASH_FIND(hh, parent->intercepts, vend->common.liid, vend->common.liid_len,
+    HASH_FIND(hh, parent->intercepts, vend->common.liid_key, vend->common.liid_key_len,
             found);
     if (found == NULL) {
         logger(LOG_INFO, "OpenLI: collector thread was unable to modify Vendor Mirror intercept %u:%s, as the LIID was not present in its intercept list.",
@@ -875,8 +983,10 @@ void handle_change_iprange_intercept(colthread_local_t *loc,
 void handle_change_ipint_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     if (sess->ai_family == AF_INET) {
-        if (update_ipv4_intercept(loc, sess) > 0) {
-
+        if (sess->prefixlen == 32) {
+            update_ipv4_intercept(loc, sess);
+        } else {
+            update_ipv4_subnet_intercept(loc, sess);
         }
     } else if (sess->ai_family == AF_INET6) {
         if (update_ipv6_intercept(loc, sess) > 0) {

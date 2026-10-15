@@ -55,10 +55,12 @@
 #include "util.h"
 #include "collector_integrity_check.h"
 #include "cinstatedb.h"
+#include "collector_publish.h"
 
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
 volatile sig_atomic_t collector_halt = 0;
+volatile int purge_session_flag = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -67,6 +69,10 @@ static void cleanup_signal(int signal UNUSED)
 
 static void reload_signal(int signal UNUSED) {
     reload_config = 1;
+}
+
+static void purge_sessions(int signal UNUSED) {
+    purge_session_flag = 1;
 }
 
 static void usage(char *prog) {
@@ -178,6 +184,18 @@ static void log_collector_stats(collector_global_t *glob) {
             glob->stats.emailsessions_ended_total);
 
     logger(LOG_INFO, "OpenLI: === statistics complete ===");
+}
+
+static void free_staticrange_data(void *data) {
+    liid_set_t *all, *iter, *tmp;
+
+    all = (liid_set_t *)data;
+    HASH_ITER(hh, all, iter, tmp) {
+        HASH_DELETE(hh, all, iter);
+        free(iter->liid);
+        free(iter->key);
+        free(iter);
+    }
 }
 
 static void free_coreserver_fast_filters(colthread_local_t *loc) {
@@ -327,6 +345,31 @@ static void remove_mirrors_from_coreserver_fast_filters(colthread_local_t *loc)
 
 }
 
+static void purge_active_sessions(colthread_local_t *loc) {
+
+    ipv4_target_t *v4, *tmp;
+    ipv6_target_t *v6, *tmp2;
+
+    HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
+        free_all_ipsessions(&(v4->intercepts));
+        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
+        free(v4);
+    }
+
+    free_all_ipsessions(&(loc->activedynamicsubnets));
+
+    HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
+        free_all_ipsessions(&(v6->intercepts));
+        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
+        free(v6->prefixstr);
+        free(v6);
+    }
+
+    Clear_Patricia(loc->dynamicv6ranges, free_staticrange_data);
+    Clear_Patricia(loc->dynamicv4ranges, free_staticrange_data);
+
+}
+
 static void process_incoming_messages(colthread_local_t *loc,
         openli_pushed_t *syncpush, collector_global_t *glob) {
 
@@ -336,6 +379,10 @@ static void process_incoming_messages(colthread_local_t *loc,
         populate_coreserver_fast_filters_from_global(loc, glob);
         pthread_rwlock_unlock(&(glob->config_mutex));
 
+    }
+
+    if (syncpush->type == OPENLI_PUSH_PURGE_SESSIONS) {
+        purge_active_sessions(loc);
     }
 
     if (syncpush->type == OPENLI_PUSH_IPINTERCEPT) {
@@ -407,18 +454,51 @@ static void process_incoming_messages(colthread_local_t *loc,
     }
 }
 
+static inline void flush_local_stats(colthread_local_t *loc,
+        collector_global_t *glob) {
+
+    if (loc->local_stats.packets_intercepted == 0 &&
+            loc->local_stats.ipcc_created == 0 &&
+            loc->local_stats.ipmmcc_created == 0 &&
+            loc->local_stats.packets_sync_email == 0 &&
+            loc->local_stats.packets_sync_ip == 0 &&
+            loc->local_stats.packets_sync_voip == 0 &&
+            loc->local_stats.packets_gtp == 0) {
+        return;
+    }
+
+    pthread_mutex_lock(&(glob->stats_mutex));
+    glob->stats.packets_intercepted += loc->local_stats.packets_intercepted;
+    glob->stats.ipcc_created += loc->local_stats.ipcc_created;
+    glob->stats.ipmmcc_created += loc->local_stats.ipmmcc_created;
+    glob->stats.packets_sync_email += loc->local_stats.packets_sync_email;
+    glob->stats.packets_sync_ip += loc->local_stats.packets_sync_ip;
+    glob->stats.packets_sync_voip += loc->local_stats.packets_sync_voip;
+    glob->stats.packets_gtp += loc->local_stats.packets_gtp;
+    pthread_mutex_unlock(&(glob->stats_mutex));
+
+    memset(&(loc->local_stats), 0, sizeof(loc->local_stats));
+}
+
 #define PACKETS_PER_READ_THRESH 100
 
 static void check_for_messages(colthread_local_t *loc,
-        collector_global_t *glob) {
+        collector_global_t *glob, uint8_t budget) {
     openli_pushed_t syncpush;
     int i;
+    uint8_t count = 0;
 
     /* Check for any messages from the sync threads */
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
         process_incoming_messages(loc, &syncpush, glob);
+        if (budget > 0) {
+            count ++;
+            if (count >= budget) {
+                goto budgetexceed;
+            }
+        }
     }
 
     for (i = 0; i < loc->gtpq_count; i++) {
@@ -426,6 +506,12 @@ static void check_for_messages(colthread_local_t *loc,
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
             process_incoming_messages(loc, &syncpush, glob);
+            if (budget > 0) {
+                count ++;
+                if (count >= budget) {
+                    goto budgetexceed;
+                }
+            }
         }
     }
 
@@ -434,8 +520,15 @@ static void check_for_messages(colthread_local_t *loc,
                 (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
 
             process_incoming_messages(loc, &syncpush, glob);
+            if (budget > 0) {
+                count ++;
+                if (count >= budget) {
+                    goto budgetexceed;
+                }
+            }
         }
     }
+budgetexceed:
     loc->pkts_since_msg_read = 0;
 }
 
@@ -448,24 +541,28 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     libtrace_stat_t *stats;
     struct timeval tv;
 
-    check_for_messages(loc, glob);
+    check_for_messages(loc, glob, 0);
     loc->tick_counter ++;
+    if (loc->has_pending_publish) {
+        flush_publish_batches(loc);
+    }
     if (loc->tick_counter < 100) {
         return;
     }
     loc->tick_counter = 0;
+    flush_local_stats(loc, glob);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
 
-	gettimeofday(&tv, NULL);
+        gettimeofday(&tv, NULL);
         stats = trace_create_statistics();
         trace_get_statistics(trace, stats);
 
-	if (tv.tv_sec - loc->startedat > 1) {
-	    /* ignore drops in the first second -- they probably happened
-	     * while our processing threads were starting because of the order
-	     * that libtrace does all the tasks necessary to start an input.
-	     */
+        if (tv.tv_sec - loc->startedat > 1) {
+            /* ignore drops in the first second -- they probably happened
+             * while our processing threads were starting because of the order
+             * that libtrace does all the tasks necessary to start an input.
+             */
             pthread_mutex_lock(&(glob->stats_mutex));
             glob->stats.packets_dropped += (stats->dropped - loc->dropped);
             glob->stats.packets_accepted += (stats->accepted - loc->accepted);
@@ -478,7 +575,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
                         stats->dropped - loc->dropped,
                         stats->accepted - loc->accepted);
             }
-	}
+        }
         loc->dropped = stats->dropped;
 
         pthread_rwlock_rdlock(&(glob->config_mutex));
@@ -501,7 +598,7 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
 
 static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
 
-    int i, hwm=1000;
+    int i, hwm=2000;
     libtrace_message_queue_init(&(loc->fromsyncq_ip),
             sizeof(openli_pushed_t));
 
@@ -520,6 +617,8 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->staticv4ranges = New_Patricia(32);
     loc->staticv6ranges = New_Patricia(128);
     loc->dynamicv6ranges = New_Patricia(128);
+    loc->dynamicv4ranges = New_Patricia(32);
+    loc->activedynamicsubnets = NULL;
     loc->staticcache = NULL;
     loc->tosyncq_ip = NULL;
 
@@ -528,6 +627,12 @@ static void init_collocal(colthread_local_t *loc, collector_global_t *glob) {
     loc->pkts_since_msg_read = 0;
     loc->tick_counter = 0;
     loc->ipcc_filters = NULL;
+
+    loc->pub_batches = calloc(glob->seqtracker_threads, sizeof(col_publish_batch_t));
+    loc->pub_batch_count = glob->seqtracker_threads;
+    loc->has_pending_publish = 0;
+
+    memset(&(loc->local_stats), 0, sizeof(loc->local_stats));
 
     loc->zmq_pubsocks = calloc(glob->seqtracker_threads, sizeof(void *));
     for (i = 0; i < glob->seqtracker_threads; i++) {
@@ -690,6 +795,11 @@ static void *start_processing_thread(libtrace_t *trace,
         }
     }
 
+    if (zmq_connect(loc->zmq_packet_return, PACKET_RETURN_ZMQ) < 0) {
+        logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to connect to ZMQ for packet object returns from IP sync: %s",
+                loc->localname, strerror(errno));
+    }
+
     if (zmq_setsockopt(loc->zmq_packet_return, ZMQ_LINGER, &zero,
             sizeof(zero)) != 0) {
         logger(LOG_INFO, "OpenLI collector: packet processing thread %s failed to configure ZMQ for packet object returns: %s", loc->localname,
@@ -738,18 +848,6 @@ static void *start_processing_thread(libtrace_t *trace,
     return loc;
 }
 
-static void free_staticrange_data(void *data) {
-    liid_set_t *all, *iter, *tmp;
-
-    all = (liid_set_t *)data;
-    HASH_ITER(hh, all, iter, tmp) {
-        HASH_DELETE(hh, all, iter);
-        free(iter->liid);
-        free(iter->key);
-        free(iter);
-    }
-}
-
 static void free_staticcache(static_ipcache_t *cache) {
     static_ipcache_t *ent, *tmp;
 
@@ -765,13 +863,13 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     colinput_t *inp = (colinput_t *)global;
     collector_global_t *glob = inp->global;
     colthread_local_t *loc = (colthread_local_t *)tls;
-    ipv4_target_t *v4, *tmp;
-    ipv6_target_t *v6, *tmp2;
     openli_pushed_t syncpush;
     int zero = 0, i;
     sync_sendq_t *syncq, *sendq_hash;
     libtrace_packet_t *pkt = NULL;
     cc_prefix_exclusion_map_t *flt, *tmpflt;
+
+    flush_local_stats(loc, glob);
 
     while (libtrace_message_queue_try_get(&(loc->fromsyncq_ip),
             (void *)&syncpush) != LIBTRACE_MQ_FAILED) {
@@ -787,6 +885,9 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         }
         zmq_close(loc->zmq_packet_return);
     }
+
+    flush_publish_batches(loc);
+    free(loc->pub_batches);
 
     libtrace_message_queue_destroy(&(loc->fromsyncq_ip));
 
@@ -883,19 +984,7 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
         free(loc->sctp_worker_queues);
     }
 
-    HASH_ITER(hh, loc->activeipv4intercepts, v4, tmp) {
-        free_all_ipsessions(&(v4->intercepts));
-        HASH_DELETE(hh, loc->activeipv4intercepts, v4);
-        free(v4);
-    }
-
-    HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
-        free_all_ipsessions(&(v6->intercepts));
-        HASH_DELETE(hh, loc->activeipv6intercepts, v6);
-        free(v6->prefixstr);
-        free(v6);
-    }
-
+    purge_active_sessions(loc);
 
     HASH_ITER(hh, loc->ipcc_filters, flt, tmpflt) {
         HASH_DELETE(hh, loc->ipcc_filters, flt);
@@ -919,12 +1008,13 @@ static void stop_processing_thread(libtrace_t *trace UNUSED,
     Destroy_Patricia(loc->staticv4ranges, free_staticrange_data);
     Destroy_Patricia(loc->staticv6ranges, free_staticrange_data);
     Destroy_Patricia(loc->dynamicv6ranges, free_staticrange_data);
+    Destroy_Patricia(loc->dynamicv4ranges, free_staticrange_data);
 
     free_staticcache(loc->staticcache);
 
 }
 
-static inline void send_packet_to_sync(void *returnq, libtrace_packet_t *pkt,
+static inline int send_packet_to_sync(void *returnq, libtrace_packet_t *pkt,
         packet_info_t *pinfo, void *q, uint8_t updatetype) {
 
     openli_state_update_t syncup;
@@ -932,7 +1022,7 @@ static inline void send_packet_to_sync(void *returnq, libtrace_packet_t *pkt,
     int rc;
 
     if (collector_halt) {
-        return;
+        return 0;
     }
 
     if (returnq == NULL) {
@@ -943,11 +1033,11 @@ static inline void send_packet_to_sync(void *returnq, libtrace_packet_t *pkt,
             // no spare packets available
             copy = trace_copy_packet(pkt);
             if (copy == NULL) {
-                return;
+                return 0;
             }
         } else {
             if (openli_deepcopy_packet(pkt, copy) < 0) {
-                return;
+                return 0;
             }
         }
     }
@@ -978,21 +1068,26 @@ static inline void send_packet_to_sync(void *returnq, libtrace_packet_t *pkt,
         memset(&(syncup.data.packet.pinfo), 0, sizeof(packet_info_t));
     }
 
-    zmq_send(q, (void *)(&syncup), sizeof(syncup), 0);
+    rc = zmq_send(q, (void *)(&syncup), sizeof(syncup), ZMQ_DONTWAIT);
+    if (rc < 0) {
+        trace_destroy_packet(copy);
+        return 0;
+    }
+    return 1;
 }
 
-static void send_packet_to_emailworker(void *returnq, libtrace_packet_t *pkt,
+static int send_packet_to_emailworker(void *returnq, libtrace_packet_t *pkt,
         packet_info_t *pinfo, void **queues, int qcount, uint32_t hashval,
         uint8_t pkttype) {
 
     int destind;
 
     if (qcount == 0) {
-        return;
+        return 0;
     }
     assert(hashval != 0);
     destind = (hashval - 1) % qcount;
-    send_packet_to_sync(returnq, pkt, pinfo, queues[destind], pkttype);
+    return send_packet_to_sync(returnq, pkt, pinfo, queues[destind], pkttype);
 }
 
 static void add_payload_info_from_packet(libtrace_packet_t *pkt,
@@ -1102,17 +1197,7 @@ static inline uint32_t is_core_server_packet(
     coreserver_t *found = NULL;
     uint32_t hashval = 0;
 
-    found = match_packet_to_coreserver(servers, pinfo, 1);
-    if (found) {
-        if (matched_dest) {
-            *matched_dest = 1;
-        }
-    } else {
-        found = match_packet_to_coreserver(servers, pinfo, 0);
-        if (found && matched_dest) {
-            *matched_dest = 0;
-        }
-    }
+    found = match_packet_to_coreserver(servers, pinfo, 0, matched_dest);
 
     /* Doesn't match any of our known core servers */
     if (found == NULL) {
@@ -1334,13 +1419,13 @@ static uint8_t check_if_gtp(packet_info_t *pinfo, libtrace_packet_t *pkt,
         }
     }
 
-    send_packet_to_sync(loc->zmq_packet_return, pkt, pinfo,
-            loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP);
+    if (send_packet_to_sync(loc->zmq_packet_return, pkt, pinfo,
+            loc->gtp_worker_queues[fwdto], OPENLI_UPDATE_GTP)) {
 
-    pthread_mutex_lock(&(glob->stats_mutex));
-    glob->stats.packets_gtp ++;
-    pthread_mutex_unlock(&(glob->stats_mutex));
-    return 1;
+        loc->local_stats.packets_gtp ++;
+        return 1;
+    }
+    return 0;
 }
 
 static int apply_vxlan_stripping(libtrace_packet_t *pkt, colinput_t *inp) {
@@ -1397,6 +1482,12 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint32_t servhash = 0;
 
     packet_info_t pinfo;
+
+    if (__builtin_expect(loc->pkts_since_msg_read >= PACKETS_PER_READ_THRESH,
+            0)) {
+        check_for_messages(loc, glob, 32);
+    }
+    loc->pkts_since_msg_read ++;
 
     l3 = trace_get_layer3(pkt, &ethertype, &rem);
     if (l3 == NULL || rem == 0) {
@@ -1521,9 +1612,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             pthread_rwlock_unlock(&(glob->config_mutex));
             if (ret > 0) {
                 forwarded = 1;
-                pthread_mutex_lock(&(glob->stats_mutex));
-                glob->stats.ipcc_created += 1;
-                pthread_mutex_unlock(&(glob->stats_mutex));
+                loc->local_stats.ipcc_created ++;
                 goto processdone;
             }
             if (ret < 0) {
@@ -1538,9 +1627,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             pthread_rwlock_unlock(&(glob->config_mutex));
             if (ret > 0) {
                 forwarded = 1;
-                pthread_mutex_lock(&(glob->stats_mutex));
-                glob->stats.ipcc_created += 1;
-                pthread_mutex_unlock(&(glob->stats_mutex));
+                loc->local_stats.ipcc_created ++;
                 goto processdone;
             }
             if (ret < 0) {
@@ -1551,7 +1638,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         if (glob->ciscomirrors) {
             coreserver_t *cs;
             if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
-                    &pinfo, 1)) != NULL) {
+                    &pinfo, 1, NULL)) != NULL) {
                 if (glob->sharedinfo.cisco_noradius) {
                     pthread_rwlock_rdlock(&(glob->config_mutex));
                     ret = generate_cc_from_cisco(loc, pkt, &pinfo,
@@ -1559,9 +1646,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     pthread_rwlock_unlock(&(glob->config_mutex));
                     if (ret > 0) {
                         forwarded = 1;
-                        pthread_mutex_lock(&(glob->stats_mutex));
-                        glob->stats.ipcc_created += 1;
-                        pthread_mutex_unlock(&(glob->stats_mutex));
+                        loc->local_stats.ipcc_created ++;
                         goto processdone;
                     }
                     if (ret < 0) {
@@ -1589,9 +1674,10 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         /* Is this a RADIUS packet? -- if yes, create a state update */
         if (loc->radiusservers && is_core_server_packet(&pinfo,
                     loc->radiusservers, 0, NULL)) {
-            send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
-                    loc->tosyncq_ip, OPENLI_UPDATE_RADIUS);
-            ipsynced = 1;
+            if (send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->tosyncq_ip, OPENLI_UPDATE_RADIUS)) {
+                ipsynced = 1;
+            }
             goto processdone;
         }
 
@@ -1611,10 +1697,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                     sipthread = 0;
                 }
 
-                send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
+                if (send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
                         loc->sip_worker_queues[sipthread],
-                        OPENLI_UPDATE_SIP);
-                voipsynced = 1;
+                        OPENLI_UPDATE_SIP)) {
+                    voipsynced = 1;
+                }
             }
         }
     } else if (proto == TRACE_IPPROTO_TCP) {
@@ -1630,19 +1717,21 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                 sipthread = 0;
             }
             add_payload_info_from_packet(pkt, &pinfo);
-            send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
-                    loc->sip_worker_queues[sipthread], OPENLI_UPDATE_SIP);
-            voipsynced = 1;
+            if (send_packet_to_sync(loc->zmq_packet_return, pkt, &pinfo,
+                    loc->sip_worker_queues[sipthread], OPENLI_UPDATE_SIP)) {
+                voipsynced = 1;
+            }
         }
 
         else if (loc->smtpservers &&
                 (servhash = is_core_server_packet(&pinfo,
                     loc->smtpservers, 1, NULL))) {
             add_payload_info_from_packet(pkt, &pinfo);
-            send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
+            if (send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
                     loc->email_worker_queues,
-                    glob->email_threads, servhash, OPENLI_UPDATE_SMTP);
-            emailsynced = 1;
+                    glob->email_threads, servhash, OPENLI_UPDATE_SMTP)) {
+                emailsynced = 1;
+            }
 
         }
 
@@ -1650,20 +1739,22 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
                 (servhash = is_core_server_packet(&pinfo,
                     loc->imapservers, 1, NULL))) {
             add_payload_info_from_packet(pkt, &pinfo);
-            send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
+            if (send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
                     loc->email_worker_queues,
-                    glob->email_threads, servhash, OPENLI_UPDATE_IMAP);
-            emailsynced = 1;
+                    glob->email_threads, servhash, OPENLI_UPDATE_IMAP)) {
+                emailsynced = 1;
+            }
         }
 
         else if (loc->pop3servers &&
                 (servhash = is_core_server_packet(&pinfo,
                     loc->pop3servers, 1, NULL))) {
             add_payload_info_from_packet(pkt, &pinfo);
-            send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
+            if (send_packet_to_emailworker(loc->zmq_packet_return, pkt, &pinfo,
                     loc->email_worker_queues,
-                    glob->email_threads, servhash, OPENLI_UPDATE_POP3);
-            emailsynced = 1;
+                    glob->email_threads, servhash, OPENLI_UPDATE_POP3)) {
+                emailsynced = 1;
+            }
         }
     }
 
@@ -1673,9 +1764,7 @@ skipcoreservers:
         if ((ret = ipv4_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3, iprem,
                     loc))) {
             forwarded = 1;
-            pthread_mutex_lock(&(glob->stats_mutex));
-            glob->stats.ipcc_created += ret;
-            pthread_mutex_unlock(&(glob->stats_mutex));
+            loc->local_stats.ipcc_created += ret;
         }
 
         /* Is this an RTP packet? -- if yes, possible IPMM CC */
@@ -1683,9 +1772,7 @@ skipcoreservers:
             if ((ret = ip4mm_comm_contents(pkt, &pinfo, (libtrace_ip_t *)l3,
                         iprem, loc))) {
                 forwarded = 1;
-                pthread_mutex_lock(&(glob->stats_mutex));
-                glob->stats.ipmmcc_created += ret;
-                pthread_mutex_unlock(&(glob->stats_mutex));
+                loc->local_stats.ipmmcc_created += ret;
             }
         }
 
@@ -1694,46 +1781,42 @@ skipcoreservers:
         if ((ret = ipv6_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3, iprem,
                     loc))) {
             forwarded = 1;
-            pthread_mutex_lock(&(glob->stats_mutex));
-            glob->stats.ipcc_created += ret;
-            pthread_mutex_unlock(&(glob->stats_mutex));
+            loc->local_stats.ipcc_created += ret;
         }
 
         if (proto == TRACE_IPPROTO_UDP) {
             if ((ret = ip6mm_comm_contents(pkt, &pinfo, (libtrace_ip6_t *)l3,
                         iprem, loc))) {
                 forwarded = 1;
-                pthread_mutex_lock(&(glob->stats_mutex));
-                glob->stats.ipmmcc_created += ret;
-                pthread_mutex_unlock(&(glob->stats_mutex));
+                loc->local_stats.ipmmcc_created += ret;
             }
         }
     }
 
 processdone:
     if (emailsynced) {
-        pthread_mutex_lock(&(glob->stats_mutex));
-        glob->stats.packets_sync_email ++;
-        pthread_mutex_unlock(&(glob->stats_mutex));
+        loc->local_stats.packets_sync_email ++;
     }
 
     if (ipsynced) {
-        pthread_mutex_lock(&(glob->stats_mutex));
-        glob->stats.packets_sync_ip ++;
-        pthread_mutex_unlock(&(glob->stats_mutex));
+        loc->local_stats.packets_sync_ip ++;
     }
 
     if (voipsynced) {
-        pthread_mutex_lock(&(glob->stats_mutex));
-        glob->stats.packets_sync_voip ++;
-        pthread_mutex_unlock(&(glob->stats_mutex));
+        loc->local_stats.packets_sync_voip ++;
     }
 
 
     if (forwarded) {
-        pthread_mutex_lock(&(glob->stats_mutex));
-        glob->stats.packets_intercepted ++;
-        pthread_mutex_unlock(&(glob->stats_mutex));
+        loc->local_stats.packets_intercepted ++;
+        if (__builtin_expect(loc->local_stats.packets_intercepted >= 4096, 0)) {
+            flush_local_stats(loc, glob);
+            if (loc->has_pending_publish) {
+                flush_publish_batches(loc);
+            }
+        }
+    } else if (__builtin_expect(loc->has_pending_publish > 0, 0)) {
+        flush_publish_batches(loc);
     }
 
     return pkt;
@@ -3146,6 +3229,11 @@ static void *start_ip_sync_thread(void *params) {
             reload_config = 0;
         }
 
+        if (purge_session_flag) {
+            sync_thread_publish_session_purge(sync);
+            purge_session_flag = 0;
+        }
+
         if (reload_config) {
             if (reload_collector_config(glob, sync) == -1) {
                 break;
@@ -3172,9 +3260,6 @@ static void *start_ip_sync_thread(void *params) {
         ret = sync_thread_main(sync);
         if (ret == -1) {
             break;
-        }
-        if (ret == 0) {
-            usleep(200000);
         }
     }
 
@@ -3337,6 +3422,11 @@ int main(int argc, char *argv[]) {
     sigact.sa_flags = SA_RESTART;
 
     sigaction(SIGHUP, &sigact, NULL);
+
+    sigact.sa_handler = purge_sessions;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = SA_RESTART;
+    sigaction(SIGUSR1, &sigact, NULL);
 
     /* Read config to generate list of input sources */
     glob = parse_global_config(configfile);

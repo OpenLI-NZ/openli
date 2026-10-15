@@ -645,7 +645,7 @@ int announce_hi1_notification_to_mediators(provision_state_t *state,
 }
 
 int remove_liid_mapping(provision_state_t *state,
-        char *liid, int liid_len, int droppedmeds) {
+        intercept_common_t *common, int droppedmeds) {
 
     liid_hash_t *found;
     /* Don't need to find and remove the mapping from our LIID map, as
@@ -655,7 +655,8 @@ int remove_liid_mapping(provision_state_t *state,
         return 0;
     }
 
-    HASH_FIND(hh, state->interceptconf.liid_map, liid, strlen(liid), found);
+    HASH_FIND(hh, state->interceptconf.liid_map, common->liid_key,
+            strlen(common->liid_key), found);
     if (found) {
         HASH_DELETE(hh, state->interceptconf.liid_map, found);
         free(found);
@@ -668,11 +669,12 @@ int remove_liid_mapping(provision_state_t *state,
      */
 
         if (push_cease_mediation_onto_net_buffer(sock->outgoing,
-                    liid, liid_len) == -1) {
+                    common->liid, common->liid_len, common->authcc,
+                    common->authcc_len) == -1) {
             if (sock->log_allowed) {
                 logger(LOG_INFO,
                         "OpenLI provisioner: unable to halt mediation of intercept %s on mediator %u.",
-                        liid, med->mediatorid);
+                        common->liid, med->mediatorid);
             }
             disconnect_provisioner_client(state->epoll_fd, med->client,
                     med->details->ipstr);
@@ -706,7 +708,8 @@ int announce_liidmapping_to_mediators(provision_state_t *state,
 
     SEND_ALL_MEDIATORS_BEGIN
         if (push_liid_mapping_onto_net_buffer(sock->outgoing, liidmap->agency,
-                liidmap->liid, liidmap->encryptkey, liidmap->encryptkey_len,
+                liidmap->liid, liidmap->authcc, liidmap->encryptkey,
+                liidmap->encryptkey_len,
                 liidmap->encryptmethod, liidmap->liid_format)
                 == -1) {
             logger(LOG_INFO,
@@ -923,13 +926,17 @@ liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
 
     liid_hash_t *h, *found;
 
-    HASH_FIND(hh, conf->liid_map, common->liid, strlen(common->liid), found);
+    HASH_FIND(hh, conf->liid_map, common->liid_key, strlen(common->liid_key),
+            found);
     if (found) {
         h = found;
     } else {
         h = (liid_hash_t *)malloc(sizeof(liid_hash_t));
         h->liid = common->liid;
-        HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid, strlen(h->liid), h);
+        h->authcc = common->authcc;
+        h->liid_key = common->liid_key;
+        HASH_ADD_KEYPTR(hh, conf->liid_map, h->liid_key, strlen(h->liid_key),
+                h);
     }
     h->liid_format = common->liid_format;
     h->agency = common->targetagency;

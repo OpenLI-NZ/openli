@@ -57,7 +57,10 @@ any intercepts, you will need to set the pcap directory option in your
 mediator configuration. All pcap traces created by this mediator will be
 written into this directory; by default, the filenames for the pcap traces
 will include the LIID for the intercept so should be unique and easily
-identifiable.
+identifiable. Note that LIIDs are only required to be unique within an
+authorising country -- if two pcap-output intercepts from different
+authorising countries share an LIID, their packets will be written into the
+same output files (and a warning will be logged by the mediator).
 
 The pcap output files will be rotated every 30 minutes. If no traffic is
 observed for that intercept during the 30 minute period, no output file will

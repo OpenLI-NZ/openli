@@ -133,12 +133,17 @@ struct json_component_options {
     }
 
 #define MODIFY_STRING_MEMBER(newmem, oldmem, changeflag) \
-    if (newmem != NULL && oldmem != NULL && strcmp(newmem, oldmem) != 0) { \
-        free(oldmem); oldmem = newmem; *changeflag = 1; \
-        newmem = NULL; \
-    } else if (newmem) { \
-        if (oldmem == NULL) { \
+    if ((newmem) != NULL) { \
+        if (newmem[0] == '\0') { \
+            if (oldmem != NULL) { \
+                free(oldmem); oldmem = NULL; *changeflag = 1; \
+            } \
+            free(newmem); \
+            newmem = NULL; \
+        } else if (oldmem == NULL) { \
             oldmem = newmem; newmem = NULL; *changeflag = 1; \
+        } else if (strcmp(oldmem, newmem) != 0) { \
+            free(oldmem); oldmem = newmem; *changeflag = 1; newmem = NULL; \
         } else { \
             free(newmem); newmem = NULL; \
         } \
@@ -471,6 +476,7 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->local = NULL;
         common->xids = NULL;
         common->xid_count = 0;
+        common->tomediate = OPENLI_INTERCEPT_OUTPUTS_UNSPECIFIED;
     }
 
     if (common->liid == NULL) {
@@ -561,6 +567,12 @@ static int parse_intercept_common_json(struct json_intercept *jsonp,
         common->liid_len = strlen(common->liid);
     }
 
+    if (common->liid && common->authcc) {
+        if (set_intercept_liid_key(common, cinfo->answerstring, 4096) < 0) {
+            return -1;
+        }
+    }
+
 	if (is_new) {
 		if (common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NONE &&
                 common->encrypt != OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED) {
@@ -638,6 +650,13 @@ static int update_intercept_common(intercept_common_t *parsed,
         }
     }
 
+    if (parsed->authcc && strcmp(parsed->authcc, existing->authcc) != 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "the 'authcc' of an existing intercept cannot be modified -- withdraw intercept %s and create a new one instead",
+                existing->liid);
+        return -1;
+    }
+
     if (compare_xid_list(parsed, existing) != 0) {
         *changed = 1;
         free(existing->xids);
@@ -647,17 +666,16 @@ static int update_intercept_common(intercept_common_t *parsed,
         parsed->xid_count = 0;
     }
 
-    MODIFY_STRING_MEMBER(parsed->authcc, existing->authcc, changed);
-    existing->authcc_len  = strlen(existing->authcc);
     MODIFY_STRING_MEMBER(parsed->delivcc, existing->delivcc, changed);
     existing->delivcc_len  = strlen(existing->delivcc);
 
-    if (parsed->tomediate != existing->tomediate) {
+    if (parsed->tomediate != existing->tomediate &&
+            parsed->tomediate != OPENLI_INTERCEPT_OUTPUTS_UNSPECIFIED) {
         existing->tomediate = parsed->tomediate;
         *changed = 1;
     }
 
-    if (parsed->destid != existing->destid) {
+    if (parsed->destid != existing->destid && parsed->destid != 0) {
         existing->destid = parsed->destid;
         *changed = 1;
     }
@@ -708,21 +726,30 @@ static int update_intercept_common(intercept_common_t *parsed,
     return 0;
 }
 
-int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
+int remove_voip_intercept(update_con_info_t *cinfo,
         provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     voipintercept_t *found;
     char *target_info;
+    int ambiguous = 0;
 
-    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, idstr,
-            strlen(idstr), found);
+    FIND_INTERCEPT_BY_ID(voipintercept_t, state->interceptconf.voipintercepts,
+            idstr, found, ambiguous);
+
+    if (ambiguous) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>%d VOIP intercepts exist with the LIID %s -- specify the intercept to remove as '&lt;authcc&gt;-&lt;liid&gt;'. %s",
+                update_failure_page_start, ambiguous, idstr,
+                update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_CONFLICT;
+        return 0;
+    }
 
     if (found) {
         HASH_DELETE(hh_liid, state->interceptconf.voipintercepts, found);
         halt_existing_intercept(state, (void *)found,
                 OPENLI_PROTO_HALT_VOIPINTERCEPT);
-        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-                0);
+        remove_liid_mapping(state, &(found->common), 0);
         target_info = list_sip_targets(found, 256);
         if (send_deactivate) {
             announce_hi1_notification_to_mediators(state, &(found->common),
@@ -741,21 +768,30 @@ int remove_voip_intercept(update_con_info_t *cinfo UNUSED,
     return 0;
 }
 
-int remove_email_intercept(update_con_info_t *cinfo UNUSED,
+int remove_email_intercept(update_con_info_t *cinfo,
         provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     emailintercept_t *found;
     char *target_info;
+    int ambiguous = 0;
 
-    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, idstr,
-            strlen(idstr), found);
+    FIND_INTERCEPT_BY_ID(emailintercept_t,
+            state->interceptconf.emailintercepts, idstr, found, ambiguous);
+
+    if (ambiguous) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>%d Email intercepts exist with the LIID %s -- specify the intercept to remove as '&lt;authcc&gt;-&lt;liid&gt;'. %s",
+                update_failure_page_start, ambiguous, idstr,
+                update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_CONFLICT;
+        return 0;
+    }
 
     if (found) {
         HASH_DELETE(hh_liid, state->interceptconf.emailintercepts, found);
         halt_existing_intercept(state, (void *)found,
                 OPENLI_PROTO_HALT_EMAILINTERCEPT);
-        remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-                0);
+        remove_liid_mapping(state, &(found->common), 0);
         target_info = list_email_targets(found, 256);
         if (send_deactivate) {
             announce_hi1_notification_to_mediators(state, &(found->common),
@@ -774,13 +810,24 @@ int remove_email_intercept(update_con_info_t *cinfo UNUSED,
     return 0;
 }
 
-int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
+int remove_ip_intercept(update_con_info_t *cinfo,
         provision_state_t *state, const char *idstr, uint8_t send_deactivate) {
 
     ipintercept_t *found;
+    int ambiguous = 0;
 
-    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, idstr,
-            strlen(idstr), found);
+    FIND_INTERCEPT_BY_ID(ipintercept_t, state->interceptconf.ipintercepts,
+            idstr, found, ambiguous);
+
+    if (ambiguous) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>%d IP intercepts exist with the LIID %s -- specify the intercept to remove as '&lt;authcc&gt;-&lt;liid&gt;'. %s",
+                update_failure_page_start, ambiguous, idstr,
+                update_failure_page_end);
+        cinfo->answercode = MHD_HTTP_CONFLICT;
+        return 0;
+    }
+
     if (!found) {
         return 0;
     }
@@ -794,8 +841,7 @@ int remove_ip_intercept(update_con_info_t *cinfo UNUSED,
     HASH_DELETE(hh_liid, state->interceptconf.ipintercepts, found);
     halt_existing_intercept(state, (void *)found,
             OPENLI_PROTO_HALT_IPINTERCEPT);
-    remove_liid_mapping(state, found->common.liid, found->common.liid_len,
-            0);
+    remove_liid_mapping(state, &(found->common), 0);
     if (send_deactivate) {
         announce_hi1_notification_to_mediators(state, &(found->common),
                 found->username, HI1_LI_DEACTIVATED);
@@ -919,7 +965,7 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
                 // Will perform another hash lookup, but that's not a big
                 // deal in the overall scheme of things
                 logger(LOG_INFO, "OpenLI: removing email intercept '%s' as its parent agency '%s' has been removed", mailint->common.liid, idstr);
-                remove_email_intercept(cinfo, state, mailint->common.liid, 0);
+                remove_email_intercept(cinfo, state, mailint->common.liid_key, 0);
             }
         }
 
@@ -929,7 +975,7 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
                 // Will perform another hash lookup, but that's not a big
                 // deal in the overall scheme of things
                 logger(LOG_INFO, "OpenLI: removing VoIP intercept '%s' as its parent agency '%s' has been removed", vint->common.liid, idstr);
-                remove_voip_intercept(cinfo, state, vint->common.liid, 0);
+                remove_voip_intercept(cinfo, state, vint->common.liid_key, 0);
             }
         }
 
@@ -939,7 +985,7 @@ int remove_agency(update_con_info_t *cinfo, provision_state_t *state,
                 // Will perform another hash lookup, but that's not a big
                 // deal in the overall scheme of things
                 logger(LOG_INFO, "OpenLI: removing IP intercept '%s' as its parent agency '%s' has been removed", ipint->common.liid, idstr);
-                remove_ip_intercept(cinfo, state, ipint->common.liid, 0);
+                remove_ip_intercept(cinfo, state, ipint->common.liid_key, 0);
             }
         }
 
@@ -2245,6 +2291,7 @@ static int parse_ipintercept_staticips(ipintercept_t *ipint,
         newr = (static_ipranges_t *)malloc(sizeof(static_ipranges_t));
         newr->rangestr = NULL;
         newr->liid = NULL;
+        newr->authcc = NULL;
         newr->awaitingconfirm = 1;
         newr->cin = 1;
 
@@ -2416,19 +2463,19 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     HASH_FIND(hh_liid, state->interceptconf.emailintercepts,
-            mailint->common.liid, mailint->common.liid_len, found);
+            mailint->common.liid_key, mailint->common.liid_key_len, found);
 
     if (found) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>LIID %s already exists as an Email intercept, please use PUT method if you wish to modify it. %s",
+                "%s <p>LIID %s already exists as an Email intercept for authCC %s, please use PUT method if you wish to modify it. %s",
                 update_failure_page_start,
-                mailint->common.liid,
+                mailint->common.liid, mailint->common.authcc,
                 update_failure_page_end);
         goto cepterr;
     }
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.emailintercepts,
-            mailint->common.liid, mailint->common.liid_len, mailint);
+            mailint->common.liid_key, mailint->common.liid_key_len, mailint);
 
 
     new_intercept_liidmapping(state, &(mailint->common));
@@ -2469,10 +2516,10 @@ int add_new_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
-    if (mailint->common.local) {
-        free(mailint->common.local);
-    }
     if (mailint) {
+        if (mailint->common.local) {
+            free(mailint->common.local);
+        }
         free_single_emailintercept(mailint);
     }
     if (parsed) {
@@ -2552,19 +2599,19 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     HASH_FIND(hh_liid, state->interceptconf.voipintercepts,
-            vint->common.liid, vint->common.liid_len, found);
+            vint->common.liid_key, vint->common.liid_key_len, found);
 
     if (found) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>LIID %s already exists as an VOIP intercept, please use PUT method if you wish to modify it. %s",
+                "%s <p>LIID %s already exists as an VOIP intercept for authCC %s, please use PUT method if you wish to modify it. %s",
                 update_failure_page_start,
-                vint->common.liid,
+                vint->common.liid, vint->common.authcc,
                 update_failure_page_end);
         goto cepterr;
     }
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.voipintercepts,
-            vint->common.liid, vint->common.liid_len, vint);
+            vint->common.liid_key, vint->common.liid_key_len, vint);
 
     new_intercept_liidmapping(state, &(vint->common));
 
@@ -2604,10 +2651,10 @@ int add_new_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
-    if (vint->common.local) {
-        free(vint->common.local);
-    }
     if (vint) {
+        if (vint->common.local) {
+            free(vint->common.local);
+        }
         free_single_voipintercept(vint);
     }
     if (parsed) {
@@ -2732,19 +2779,19 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     }
 
     HASH_FIND(hh_liid, state->interceptconf.ipintercepts,
-            ipint->common.liid, ipint->common.liid_len, found);
+            ipint->common.liid_key, ipint->common.liid_key_len, found);
 
     if (found) {
         snprintf(cinfo->answerstring, 4096,
-                "%s <p>LIID %s already exists as an IP intercept, please use PUT method if you wish to modify it. %s",
+                "%s <p>LIID %s already exists as an IP intercept for authCC %s, please use PUT method if you wish to modify it. %s",
                 update_failure_page_start,
-                ipint->common.liid,
+                ipint->common.liid, ipint->common.authcc,
                 update_failure_page_end);
         goto cepterr;
     }
 
     HASH_ADD_KEYPTR(hh_liid, state->interceptconf.ipintercepts,
-            ipint->common.liid, ipint->common.liid_len, ipint);
+            ipint->common.liid_key, ipint->common.liid_key_len, ipint);
 
     new_intercept_liidmapping(state, &(ipint->common));
 
@@ -2774,10 +2821,10 @@ int add_new_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     return 0;
 
 cepterr:
-    if (ipint->common.local) {
-        free(ipint->common.local);
-    }
     if (ipint) {
+        if (ipint->common.local) {
+            free(ipint->common.local);
+        }
         free_single_ipintercept(ipint);
     }
     if (accessstring) {
@@ -2952,7 +2999,7 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
     char *target_info;
     char *delivcompressstring = NULL;
 
-    char *liidstr = NULL, *parsedliid = NULL;
+    char *liidstr = NULL, *parsedliid = NULL, *authccstr = NULL;
     int parseerr = 0, changed = 0, agencychanged = 0, timeschanged = 0;
 
     INIT_JSON_INTERCEPT_PARSING
@@ -2971,8 +3018,29 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         parsedliid = liidstr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.emailintercepts, parsedliid,
-            strlen(parsedliid), found);
+    EXTRACT_JSON_STRING_PARAM("authcc", "Email intercept", emailjson.authcc,
+            authccstr, &parseerr, false);
+    if (authccstr) {
+        char keybuf[2048];
+        snprintf(keybuf, sizeof(keybuf), "%s-%s", authccstr, parsedliid);
+        HASH_FIND(hh_liid, state->interceptconf.emailintercepts, keybuf,
+                strlen(keybuf), found);
+        free(authccstr);
+        authccstr = NULL;
+    } else {
+        int ambiguous = 0;
+        FIND_INTERCEPT_BY_ID(emailintercept_t,
+                state->interceptconf.emailintercepts, parsedliid, found,
+                ambiguous);
+        if (ambiguous) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>%d Email intercepts exist with the LIID %s -- an 'authcc' must be provided to identify the intercept to modify. %s",
+                    update_failure_page_start, ambiguous, parsedliid,
+                    update_failure_page_end);
+            free(liidstr);
+            goto cepterr;
+        }
+    }
 
     if (!found) {
         json_object_put(parsed);
@@ -2994,6 +3062,9 @@ int modify_emailintercept(update_con_info_t *cinfo, provision_state_t *state) {
         goto cepterr;
     }
 
+    if (mailint->common.targetagency == NULL && found->common.targetagency) {
+        mailint->common.targetagency = strdup(found->common.targetagency);
+    }
     if (set_agency_properties(state, &(mailint->common), cinfo) < 0) {
         goto cepterr;
     }
@@ -3119,6 +3190,7 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     libtrace_list_t *tmp;
 
     char *liidstr = NULL, *target_info, *parsedliid = NULL;
+    char *authccstr = NULL;
     int changed = 0, agencychanged = 0, parseerr = 0;
     int timeschanged = 0;
 
@@ -3138,8 +3210,29 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         parsedliid = liidstr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.voipintercepts, parsedliid,
-            strlen(parsedliid), found);
+    EXTRACT_JSON_STRING_PARAM("authcc", "VOIP intercept", voipjson.authcc,
+            authccstr, &parseerr, false);
+    if (authccstr) {
+        char keybuf[2048];
+        snprintf(keybuf, sizeof(keybuf), "%s-%s", authccstr, parsedliid);
+        HASH_FIND(hh_liid, state->interceptconf.voipintercepts, keybuf,
+                strlen(keybuf), found);
+        free(authccstr);
+        authccstr = NULL;
+    } else {
+        int ambiguous = 0;
+        FIND_INTERCEPT_BY_ID(voipintercept_t,
+                state->interceptconf.voipintercepts, parsedliid, found,
+                ambiguous);
+        if (ambiguous) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>%d VOIP intercepts exist with the LIID %s -- an 'authcc' must be provided to identify the intercept to modify. %s",
+                    update_failure_page_start, ambiguous, parsedliid,
+                    update_failure_page_end);
+            free(liidstr);
+            goto cepterr;
+        }
+    }
 
     if (!found) {
         json_object_put(parsed);
@@ -3160,6 +3253,10 @@ int modify_voipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     if (parse_intercept_common_json(&voipjson, &(vint->common),
             "VOIP intercept", cinfo, false, state->epoll_fd) < 0) {
         goto cepterr;
+    }
+
+    if (vint->common.targetagency == NULL && found->common.targetagency) {
+        vint->common.targetagency = strdup(found->common.targetagency);
     }
 
     if (set_agency_properties(state, &(vint->common), cinfo) < 0) {
@@ -3267,6 +3364,7 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
     ipintercept_t *ipint = NULL;
 
     char *liidstr = NULL, *parsedliid = NULL;
+    char *authccstr = NULL;
     char *accessstring = NULL;
     char *radiusidentstring = NULL;
     char *mobileidentstring = NULL;
@@ -3289,8 +3387,29 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         parsedliid = liidstr;
     }
 
-    HASH_FIND(hh_liid, state->interceptconf.ipintercepts, parsedliid,
-            strlen(parsedliid), found);
+    EXTRACT_JSON_STRING_PARAM("authcc", "IP intercept", ipjson.authcc,
+            authccstr, &parseerr, false);
+    if (authccstr) {
+        char keybuf[2048];
+        snprintf(keybuf, sizeof(keybuf), "%s-%s", authccstr, parsedliid);
+        HASH_FIND(hh_liid, state->interceptconf.ipintercepts, keybuf,
+                strlen(keybuf), found);
+        free(authccstr);
+        authccstr = NULL;
+    } else {
+        int ambiguous = 0;
+        FIND_INTERCEPT_BY_ID(ipintercept_t,
+                state->interceptconf.ipintercepts, parsedliid, found,
+                ambiguous);
+        if (ambiguous) {
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>%d IP intercepts exist with the LIID %s -- an 'authcc' must be provided to identify the intercept to modify. %s",
+                    update_failure_page_start, ambiguous, parsedliid,
+                    update_failure_page_end);
+            free(liidstr);
+            goto cepterr;
+        }
+    }
 
     if (!found) {
         json_object_put(parsed);
@@ -3339,6 +3458,9 @@ int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state) {
         ipint->common.tomediate = found->common.tomediate;
     }
 
+    if (ipint->common.targetagency == NULL && found->common.targetagency) {
+        ipint->common.targetagency = strdup(found->common.targetagency);
+    }
     if (set_agency_properties(state, &(ipint->common), cinfo) < 0) {
         goto cepterr;
     }
@@ -3903,17 +4025,15 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
         }
     }
 
-    MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc, &changed);
-    MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &changed);
-    MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &changed);
+    MODIFY_STRING_MEMBER(modified.hi3_ipstr, found->ag->hi3_ipstr, &medchanged);
+    MODIFY_STRING_MEMBER(modified.hi2_ipstr, found->ag->hi2_ipstr, &medchanged);
     MODIFY_STRING_MEMBER(modified.hi3_portstr, found->ag->hi3_portstr,
-            &changed);
+            &medchanged);
     MODIFY_STRING_MEMBER(modified.hi2_portstr, found->ag->hi2_portstr,
-            &changed);
+            &medchanged);
 
     if (modified.encrypt != 0xff &&
             modified.encrypt != found->ag->encrypt) {
-        changed = 1;
         medchanged = 1;
         found->ag->encrypt = modified.encrypt;
     }
@@ -3921,51 +4041,28 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     update_intercept_timeformats(state, found->ag->agencyid,
             modified.digest.time_fmt, modified.operatorid);
 
-    if (modified.operatorid && strlen(modified.operatorid) == 0) {
-        if (found->ag->operatorid) {
-            free(found->ag->operatorid);
-            found->ag->operatorid = NULL;
-            changed = 1;
-            colchanged = 1;
-            medchanged = 1;
-        }
-    } else {
-        prev = found->ag->operatorid;
-        MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
-                &changed);
-        if (prev != found->ag->operatorid) {
-            colchanged = 1;
-            medchanged = 1;
-        }
+    MODIFY_STRING_MEMBER(modified.agencycc, found->ag->agencycc,
+            &medchanged);
+
+    prev = found->ag->operatorid;
+    MODIFY_STRING_MEMBER(modified.operatorid, found->ag->operatorid,
+            &medchanged);
+    if (prev != found->ag->operatorid) {
+        colchanged = 1;
     }
 
-    if (modified.shortoperatorid && strlen(modified.shortoperatorid) == 0) {
-        if (found->ag->shortoperatorid) {
-            free(found->ag->shortoperatorid);
-            found->ag->shortoperatorid = NULL;
-            changed = 1;
-            medchanged = 1;
-        }
-    } else {
-        prev = found->ag->shortoperatorid;
-        MODIFY_STRING_MEMBER(modified.shortoperatorid,
-                found->ag->shortoperatorid, &changed);
-        if (prev != found->ag->shortoperatorid) {
-            medchanged = 1;
-        }
-    }
+    MODIFY_STRING_MEMBER(modified.shortoperatorid, found->ag->shortoperatorid,
+            &medchanged);
 
     if (modified.digest.time_fmt != 0xff &&
             modified.digest.time_fmt != found->ag->digest.time_fmt) {
         found->ag->digest.time_fmt = modified.digest.time_fmt;
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
     }
 
     if (modified.digest.required != 0xff &&
                 modified.digest.required != found->ag->digest.required) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.required = modified.digest.required;
@@ -3973,7 +4070,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (modified.digest.hash_method != 0xff &&
                 modified.digest.hash_method != found->ag->digest.hash_method) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.hash_method = modified.digest.hash_method;
@@ -3981,7 +4077,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (modified.digest.sign_method != 0xff &&
                 modified.digest.sign_method != found->ag->digest.sign_method) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.sign_method = modified.digest.sign_method;
@@ -3990,7 +4085,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.hash_timeout != 0xffffffff &&
                 modified.digest.hash_timeout !=
                         found->ag->digest.hash_timeout) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.hash_timeout = modified.digest.hash_timeout;
@@ -3999,7 +4093,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.hash_pdulimit != 0xffffffff &&
                 modified.digest.hash_pdulimit !=
                         found->ag->digest.hash_pdulimit) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.hash_pdulimit = modified.digest.hash_pdulimit;
@@ -4008,7 +4101,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.sign_timeout != 0xffffffff &&
                 modified.digest.sign_timeout !=
                         found->ag->digest.sign_timeout) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.sign_timeout = modified.digest.sign_timeout;
@@ -4017,7 +4109,6 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (modified.digest.sign_hashlimit != 0xffffffff &&
                 modified.digest.sign_hashlimit !=
                         found->ag->digest.sign_hashlimit) {
-        changed = 1;
         medchanged = 1;
         colchanged = 1;
         found->ag->digest.sign_hashlimit = modified.digest.sign_hashlimit;
@@ -4025,28 +4116,24 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
 
     if (modified.keepalivefreq != 0xffffffff &&
                 modified.keepalivefreq != found->ag->keepalivefreq) {
-        changed = 1;
         medchanged = 1;
         found->ag->keepalivefreq = modified.keepalivefreq;
     }
 
     if (modified.handover_retry != 0xffff &&
                 modified.handover_retry != found->ag->handover_retry) {
-        changed = 1;
         medchanged = 1;
         found->ag->handover_retry = modified.handover_retry;
     }
 
     if (modified.resend_window_kbs != 0xffffffff &&
             modified.resend_window_kbs != found->ag->resend_window_kbs) {
-        changed = 1;
         medchanged = 1;
         found->ag->resend_window_kbs = modified.resend_window_kbs;
     }
 
     if (modified.keepalivewait != 0xffffffff &&
                 modified.keepalivewait != found->ag->keepalivewait) {
-        changed = 1;
         medchanged = 1;
         found->ag->keepalivewait = modified.keepalivewait;
     }
@@ -4054,21 +4141,23 @@ int modify_agency(update_con_info_t *cinfo, provision_state_t *state) {
     if (medchanged) {
         /* TODO exclude digest config from "medchanged" */
         announce_lea_to_mediators(state, found);
-        logger(LOG_INFO,
-                "OpenLI: modified existing agency '%s' via update socket.",
-                found->ag->agencyid);
+        changed = 1;
     }
 
     if (colchanged) {
         announce_digest_config_to_collectors(state, found);
+        changed = 1;
     }
 
     if (!changed) {
         logger(LOG_INFO,
                 "OpenLI: did not modify existing agency '%s' via update socket, as no agency properties had changed.",
                 found->ag->agencyid);
+    } else {
+        logger(LOG_INFO,
+                "OpenLI: modified existing agency '%s' via update socket.",
+                found->ag->agencyid);
     }
-
 
     if (parsed) {
         json_object_put(parsed);

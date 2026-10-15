@@ -37,6 +37,8 @@
 typedef struct exporter_intercept_msg {
     char *liid;
     int liid_len;
+    char *liid_key;
+    int liid_key_len;
     char *authcc;
     int authcc_len;
     char *delivcc;
@@ -55,7 +57,6 @@ typedef struct cin_seqno {
     uint32_t cin;
     uint32_t cc_seqno;
     uint32_t iri_seqno;
-    char *cin_string;
     uint8_t iri_begin;
     uint8_t iri_end;
     time_t last_cindb_update;
@@ -65,6 +66,7 @@ typedef struct cin_seqno {
 typedef struct intercept_state {
     exporter_intercept_msg_t details;
     cin_seqno_t *cinsequencing;
+    cin_seqno_t *last_cinseq;
     size_t encoder_index;
     UT_hash_handle hh;
     wandder_encode_job_t *preencoded;

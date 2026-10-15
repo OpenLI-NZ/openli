@@ -150,6 +150,7 @@ typedef struct colsync_udp_sink {
     char *sourceport;
 
     char *attached_liid;
+    char *attached_authcc;
     pthread_t tid;
 
     void *zmq_control;
@@ -279,6 +280,7 @@ typedef struct seqtracker_thread_data {
     openli_cinstatedb_t cinstatedb;
 
     exporter_intercept_state_t *intercepts;
+    exporter_intercept_state_t *last_intstate;
     removed_intercept_t *removedints;
     uint8_t encoding_method;
     halt_info_t *haltinfo;
@@ -374,7 +376,6 @@ typedef struct shared_liid_to_agency_mapping {
 
 typedef struct encoder_liid_state {
     char *liid_key;
-    char *authcc;
     char *delivcc;
     uint8_t no_agency_map_warning;
     time_t last_agency_check;
@@ -387,6 +388,7 @@ typedef struct encoder_liid_state {
     encrypt_encode_state_t encrypt_iri;
 
     size_t fwd_index;
+    struct integrity_check_state *last_integrity_state;
 
     UT_hash_handle hh;
 } encoder_liid_state_t;
@@ -397,9 +399,9 @@ struct integrity_check_state {
 
     char *key;
     char *liid_key;
+    char *liid;
     char *authcc;
     char *delivcc;
-    char *cinstr;
     openli_liid_format_t liid_format;
     uint32_t cin;
     openli_proto_msgtype_t msgtype;
@@ -461,6 +463,11 @@ typedef struct encoder_state {
     Pvoid_t saved_intercept_templates;
     Pvoid_t saved_global_templates;
 
+    saved_encoding_templates_t *last_tplate_set;
+    uint32_t last_tplate_cin;
+    uint8_t last_tplate_timefmt;
+    char *last_tplate_liid_key;
+
     openli_encoded_result_t **result_array;
     size_t *result_batch;
 
@@ -477,6 +484,7 @@ typedef struct encoder_state {
      *  encryption.
      */
     encoder_liid_state_t *known_liids;
+    encoder_liid_state_t *last_known;
 
     /** The "integrity check" state for all observed "LIID + CIN + HI" streams
      *  going to agencies that require integrity check messages to be

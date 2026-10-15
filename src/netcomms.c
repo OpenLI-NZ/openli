@@ -339,19 +339,20 @@ int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
     return (int)totallen;
 }
 
-#define LIIDMAP_BODY_LEN(agency, liid, enclen) \
-    (strlen(agency) + strlen(liid) + sizeof(payload_encryption_method_t) + \
+#define LIIDMAP_BODY_LEN(agency, liid, authcc, enclen) \
+    (strlen(agency) + strlen(liid) + strlen(authcc) + \
+    sizeof(payload_encryption_method_t) + \
     sizeof(openli_liid_format_t) + \
-    ( enclen > 0 ? enclen + 4 : 0) + (4 * 4))
+    ( enclen > 0 ? enclen + 4 : 0) + (5 * 4))
 
 int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
-        char *liid, uint8_t *encryptkey, size_t encryptlen,
+        char *liid, char *authcc, uint8_t *encryptkey, size_t encryptlen,
         payload_encryption_method_t method, openli_liid_format_t liidformat) {
 
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = LIIDMAP_BODY_LEN(agency, liid, encryptlen);
+    totallen = LIIDMAP_BODY_LEN(agency, liid, authcc, encryptlen);
     populate_header(&hdr, OPENLI_PROTO_MEDIATE_INTERCEPT, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -366,6 +367,11 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)(liid),
                 strlen(liid)) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)(authcc),
+                strlen(authcc)) == -1) {
         return -1;
     }
 
@@ -390,11 +396,11 @@ int push_liid_mapping_onto_net_buffer(net_buffer_t *nb, char *agency,
 }
 
 int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
-        int liid_len) {
+        int liid_len, char *authcc, int authcc_len) {
     ii_header_t hdr;
     uint16_t totallen;
 
-    totallen = liid_len + 4;
+    totallen = liid_len + authcc_len + (2 * 4);
     populate_header(&hdr, OPENLI_PROTO_CEASE_MEDIATION, totallen, 0);
 
     if (push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -404,6 +410,11 @@ int push_cease_mediation_onto_net_buffer(net_buffer_t *nb, char *liid,
 
     if (push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)(liid),
                 liid_len) == -1) {
+        return -1;
+    }
+
+    if (push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC, (uint8_t *)(authcc),
+                authcc_len) == -1) {
         return -1;
     }
     return (int)totallen;
@@ -1107,11 +1118,13 @@ pushvoipintfail:
 }
 
 #define SIPTARGET_BODY_LEN_NOREALM(sipid, vint) \
-        (vint->common.liid_len + sipid->username_len + (2 * 4))
+        (vint->common.liid_len + vint->common.authcc_len + \
+        sipid->username_len + (3 * 4))
 
 #define SIPTARGET_BODY_LEN(sipid, vint) \
-        (vint->common.liid_len + sipid->username_len + sipid->realm_len \
-        + (3 * 4))
+        (vint->common.liid_len + vint->common.authcc_len + \
+        sipid->username_len + sipid->realm_len \
+        + (4 * 4))
 
 static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
         openli_sip_identity_t *sipid, voipintercept_t *vint,
@@ -1148,6 +1161,11 @@ static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
         goto pushsiptargetfail;
     }
 
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
+            (uint8_t *)vint->common.authcc, vint->common.authcc_len)) == -1) {
+        goto pushsiptargetfail;
+    }
+
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_SIP_USER,
             (uint8_t *)sipid->username, sipid->username_len)) == -1) {
         goto pushsiptargetfail;
@@ -1159,10 +1177,6 @@ static inline int push_sip_target_onto_net_buffer_generic(net_buffer_t *nb,
             goto pushsiptargetfail;
         }
     }
-
-    /* Technically, we should also include authCC in here too for
-     * multi-national operators but that can probably wait for now.
-     */
 
     return (int)totallen;
 
@@ -1194,8 +1208,8 @@ int push_sip_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
 }
 
 #define EMAILTARGET_BODY_LEN(tgt, em) \
-        (em->common.liid_len + strlen(tgt->address) \
-        + (2 * 4))
+        (em->common.liid_len + em->common.authcc_len + strlen(tgt->address) \
+        + (3 * 4))
 
 static inline int push_email_target_onto_net_buffer_generic(net_buffer_t *nb,
         email_target_t *tgt, emailintercept_t *em,
@@ -1228,14 +1242,15 @@ static inline int push_email_target_onto_net_buffer_generic(net_buffer_t *nb,
         goto pushtargetfail;
     }
 
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
+            (uint8_t *)em->common.authcc, em->common.authcc_len)) == -1) {
+        goto pushtargetfail;
+    }
+
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_EMAIL_TARGET,
             (uint8_t *)tgt->address, strlen(tgt->address))) == -1) {
         goto pushtargetfail;
     }
-
-    /* Technically, we should also include authCC in here too for
-     * multi-national operators but that can probably wait for now.
-     */
 
     return (int)totallen;
 
@@ -1260,9 +1275,10 @@ int push_email_target_withdrawal_onto_net_buffer(net_buffer_t *nb,
             OPENLI_PROTO_WITHDRAW_EMAIL_TARGET);
 }
 
-#define UDPSINK_BODY_LEN(liid, sink) \
+#define UDPSINK_BODY_LEN(common, sink) \
     (strlen(sink->key) + sizeof(sink->direction) + sizeof(sink->encapfmt) + \
-     strlen(liid) + sizeof(sink->cin) + (5 * 4) + \
+     strlen(common->liid) + strlen(common->authcc) + sizeof(sink->cin) + \
+     (6 * 4) + \
      (sink->sourcehost ? strlen(sink->sourcehost) + 4 : 0) + \
      (sink->sourceport ? strlen(sink->sourceport) + 4 : 0))
 
@@ -1278,7 +1294,7 @@ static int push_intercept_udpsink_generic(net_buffer_t *nb,
         return 0;
     }
 
-    totallen = UDPSINK_BODY_LEN(common->liid, sink);
+    totallen = UDPSINK_BODY_LEN(common, sink);
     populate_header(&hdr, msgtype, totallen, 0);
 
     if ((ret = push_generic_onto_net_buffer(nb, (uint8_t *)(&hdr),
@@ -1288,6 +1304,11 @@ static int push_intercept_udpsink_generic(net_buffer_t *nb,
 
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID, (uint8_t *)common->liid,
             common->liid_len)) == -1) {
+        goto pushudpsinkfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
+            (uint8_t *)common->authcc, common->authcc_len)) == -1) {
         goto pushudpsinkfail;
     }
 
@@ -1354,7 +1375,7 @@ int push_remove_intercept_udp_sink_onto_net_buffer(net_buffer_t *nb,
 
 #define STATICIP_RANGE_BODY_LEN(ipint, ipr) \
         (strlen(ipr->rangestr) + sizeof(ipr->cin) + \
-        ipint->common.liid_len + (3 * 4))
+        ipint->common.liid_len + ipint->common.authcc_len + (4 * 4))
 
 static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
         static_ipranges_t *ipr, openli_proto_msgtype_t msgtype) {
@@ -1383,6 +1404,12 @@ static int push_static_ipranges_generic(net_buffer_t *nb, ipintercept_t *ipint,
     if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_LIID,
                     (uint8_t *)ipint->common.liid,
                     ipint->common.liid_len)) == -1) {
+        goto pushstaticipfail;
+    }
+
+    if ((ret = push_tlv(nb, OPENLI_PROTO_FIELD_AUTHCC,
+                    (uint8_t *)ipint->common.authcc,
+                    ipint->common.authcc_len)) == -1) {
         goto pushstaticipfail;
     }
 
@@ -2112,6 +2139,8 @@ static inline void init_decoded_intercept_common(intercept_common_t *common) {
     common->liid = NULL;
     common->authcc = NULL;
     common->delivcc = NULL;
+    common->liid_key = NULL;
+    common->liid_key_len = 0;
     common->destid = 0;
     common->targetagency = NULL;
     common->operatorid = NULL;
@@ -2208,6 +2237,22 @@ static int assign_intercept_common_fields(intercept_common_t *common,
 
 }
 
+static int derive_decoded_liid_key(intercept_common_t *common) {
+    char errbuf[256];
+
+    if (common->liid == NULL || common->authcc == NULL) {
+        return 0;
+    }
+
+    if (set_intercept_liid_key(common, errbuf, sizeof(errbuf)) < 0) {
+        logger(LOG_INFO,
+                "OpenLI: unable to derive internal key for received intercept %s: %s",
+                common->liid, errbuf);
+        return -1;
+    }
+    return 0;
+}
+
 int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
         emailintercept_t *mailint) {
 
@@ -2249,7 +2294,7 @@ int decode_emailintercept_start(uint8_t *msgbody, uint16_t len,
         msgbody += (vallen + 4);
     }
 
-    return 0;
+    return derive_decoded_liid_key(&(mailint->common));
 }
 
 int decode_emailintercept_halt(uint8_t *msgbody, uint16_t len,
@@ -2310,7 +2355,7 @@ int decode_voipintercept_start(uint8_t *msgbody, uint16_t len,
         msgbody += (vallen + 4);
     }
 
-    return 0;
+    return derive_decoded_liid_key(&(vint->common));
 }
 
 int decode_voipintercept_halt(uint8_t *msgbody, uint16_t len,
@@ -2408,7 +2453,7 @@ int decode_ipintercept_start(uint8_t *msgbody, uint16_t len,
         msgbody += (vallen + 4);
     }
 
-    return 0;
+    return derive_decoded_liid_key(&(ipint->common));
 
 }
 
@@ -2525,9 +2570,12 @@ int decode_mediator_withdraw(uint8_t *msgbody, uint16_t len,
 }
 
 int decode_email_target_announcement(uint8_t *msgbody, uint16_t len,
-        email_target_t *tgt, char *liidspace, int spacelen) {
+        email_target_t *tgt, char *keyspace, int spacelen) {
 
     uint8_t *msgend = msgbody + len;
+    char *liid = NULL, *authcc = NULL;
+    int r = -1;
+
     tgt->address = NULL;
     tgt->awaitingconfirm = 0;
 
@@ -2537,25 +2585,21 @@ int decode_email_target_announcement(uint8_t *msgbody, uint16_t len,
         uint16_t vallen;
 
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
-            return -1;
+            goto decodetargetdone;
         }
 
         if (f == OPENLI_PROTO_FIELD_EMAIL_TARGET) {
             DECODE_STRING_FIELD(tgt->address, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            if (vallen >= spacelen) {
-                logger(LOG_INFO,
-                        "OpenLI: not enough space to save LIID from Email target message -- space provided %d, required %u\n", spacelen, vallen);
-                return -1;
-            }
-            strncpy(liidspace, (char *)valptr, vallen);
-            liidspace[vallen] = '\0';
+            DECODE_STRING_FIELD(liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(authcc, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
                 "OpenLI: invalid field in received Email target announcement: %d.",
                 f);
-            return -1;
+            goto decodetargetdone;
         }
         msgbody += (vallen + 4);
     }
@@ -2563,22 +2607,42 @@ int decode_email_target_announcement(uint8_t *msgbody, uint16_t len,
     if (tgt->address == NULL) {
         logger(LOG_INFO,
                 "OpenLI: received a Email target message with no address?");
-        return -1;
+        goto decodetargetdone;
     }
-    return 0;
+
+    if (liid == NULL || authcc == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received Email target message without an LIID and authCC -- is the provisioner running an older version of OpenLI?");
+        goto decodetargetdone;
+    }
+
+    if (snprintf(keyspace, spacelen, "%s-%s", authcc, liid) >= spacelen) {
+        logger(LOG_INFO,
+                "OpenLI: not enough space to save intercept key from Email target message -- space provided %d\n", spacelen);
+        goto decodetargetdone;
+    }
+    r = 0;
+
+decodetargetdone:
+    free(liid);
+    free(authcc);
+    return r;
 }
 
 int decode_email_target_withdraw(uint8_t *msgbody, uint16_t len,
-        email_target_t *tgt, char *liidspace, int spacelen) {
+        email_target_t *tgt, char *keyspace, int spacelen) {
 
-    return decode_email_target_announcement(msgbody, len, tgt, liidspace,
+    return decode_email_target_announcement(msgbody, len, tgt, keyspace,
             spacelen);
 }
 
 int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
-        openli_sip_identity_t *sipid, char *liidspace, int spacelen) {
+        openli_sip_identity_t *sipid, char *keyspace, int spacelen) {
 
     uint8_t *msgend = msgbody + len;
+    char *liid = NULL, *authcc = NULL;
+    int r = -1;
+
     sipid->realm = NULL;
     sipid->realm_len = 0;
     sipid->username = NULL;
@@ -2591,7 +2655,7 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
         uint16_t vallen;
 
         if (decode_tlv(msgbody, msgend, &f, &vallen, &valptr) == -1) {
-            return -1;
+            goto decodesiptargetdone;
         }
 
         if (f == OPENLI_PROTO_FIELD_SIP_USER) {
@@ -2601,19 +2665,15 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(sipid->realm, valptr, vallen);
             sipid->realm_len = strlen(sipid->realm);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
-            if (vallen >= spacelen) {
-                logger(LOG_INFO,
-                        "OpenLI: not enough space to save LIID from SIP target message -- space provided %d, required %u\n", spacelen, vallen);
-                return -1;
-            }
-            strncpy(liidspace, (char *)valptr, vallen);
-            liidspace[vallen] = '\0';
+            DECODE_STRING_FIELD(liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(authcc, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
                 "OpenLI: invalid field in received SIP target announcement: %d.",
                 f);
-            return -1;
+            goto decodesiptargetdone;
         }
         msgbody += (vallen + 4);
     }
@@ -2621,15 +2681,32 @@ int decode_sip_target_announcement(uint8_t *msgbody, uint16_t len,
     if (sipid->username == NULL) {
         logger(LOG_INFO,
                 "OpenLI: received a SIP target message with no username?");
-        return -1;
+        goto decodesiptargetdone;
     }
-    return 0;
+
+    if (liid == NULL || authcc == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received SIP target message without an LIID and authCC -- is the provisioner running an older version of OpenLI?");
+        goto decodesiptargetdone;
+    }
+
+    if (snprintf(keyspace, spacelen, "%s-%s", authcc, liid) >= spacelen) {
+        logger(LOG_INFO,
+                "OpenLI: not enough space to save intercept key from SIP target message -- space provided %d\n", spacelen);
+        goto decodesiptargetdone;
+    }
+    r = 0;
+
+decodesiptargetdone:
+    free(liid);
+    free(authcc);
+    return r;
 }
 
 int decode_sip_target_withdraw(uint8_t *msgbody, uint16_t len,
-        openli_sip_identity_t *sipid, char *liidspace, int spacelen) {
+        openli_sip_identity_t *sipid, char *keyspace, int spacelen) {
 
-    return decode_sip_target_announcement(msgbody, len, sipid, liidspace,
+    return decode_sip_target_announcement(msgbody, len, sipid, keyspace,
             spacelen);
 }
 
@@ -2746,6 +2823,7 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
     sink->encapfmt = INTERCEPT_UDP_ENCAP_FORMAT_RAW;
     sink->direction = ETSI_DIR_INDETERMINATE;
     sink->liid = NULL;
+    sink->authcc = NULL;
     sink->cin = 1;
     sink->sourceport = NULL;
     sink->sourcehost = NULL;
@@ -2766,6 +2844,8 @@ int decode_intercept_udpsink_announcement(uint8_t *msgbody, uint16_t len,
             DECODE_STRING_FIELD(sink->key, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(sink->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(sink->authcc, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_ACL_IPADDR) {
             DECODE_STRING_FIELD(sink->sourcehost, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_ACL_PORT) {
@@ -2846,6 +2926,7 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
     ipr->rangestr = NULL;
     ipr->awaitingconfirm = 0;
     ipr->liid = NULL;
+    ipr->authcc = NULL;
     ipr->cin = 1;
 
     while (msgbody < msgend) {
@@ -2858,6 +2939,8 @@ int decode_staticip_announcement(uint8_t *msgbody, uint16_t len,
         }
         if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(ipr->liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(ipr->authcc, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_STATICIP_RANGE) {
             DECODE_STRING_FIELD(ipr->rangestr, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_CIN) {
@@ -3198,7 +3281,7 @@ int decode_x2x3_listener(uint8_t *msgbody, uint16_t len, char **addr,
 
 
 int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
-        char **liid, uint8_t *encryptkey, size_t *encryptlen,
+        char **liid, char **authcc, uint8_t *encryptkey, size_t *encryptlen,
         payload_encryption_method_t *method, openli_liid_format_t *liidformat) {
 
     uint8_t *msgend = msgbody + len;
@@ -3206,6 +3289,7 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
     *encryptlen = 0;
     *method = OPENLI_PAYLOAD_ENCRYPTION_NOT_SPECIFIED;
     *liidformat = OPENLI_LIID_FORMAT_ASCII;
+    *authcc = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -3220,6 +3304,8 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
             DECODE_STRING_FIELD(*liid, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_LEAID) {
             DECODE_STRING_FIELD(*agency, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(*authcc, valptr, vallen);
         } else if (f == OPENLI_PROTO_FIELD_ENCRYPTION_KEY) {
 			if (vallen > OPENLI_MAX_ENCRYPTKEY_LEN) {
 				logger(LOG_INFO, "OpenLI: encryption key too long for buffer (%u)", vallen);
@@ -3247,11 +3333,20 @@ int decode_liid_mapping(uint8_t *msgbody, uint16_t len, char **agency,
         msgbody += (vallen + 4);
     }
 
+    if (*authcc == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received LIID mapping without an authCC -- is the provisioner running an older version of OpenLI?");
+        return -1;
+    }
+
     return 0;
 }
 
-int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
+int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid,
+        char **authcc) {
     uint8_t *msgend = msgbody + len;
+
+    *authcc = NULL;
 
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
@@ -3264,6 +3359,8 @@ int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
 
         if (f == OPENLI_PROTO_FIELD_LIID) {
             DECODE_STRING_FIELD(*liid, valptr, vallen);
+        } else if (f == OPENLI_PROTO_FIELD_AUTHCC) {
+            DECODE_STRING_FIELD(*authcc, valptr, vallen);
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -3272,6 +3369,12 @@ int decode_cease_mediation(uint8_t *msgbody, uint16_t len, char **liid) {
             return -1;
         }
         msgbody += (vallen + 4);
+    }
+
+    if (*authcc == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received cease mediation without an authCC -- is the provisioner running an older version of OpenLI?");
+        return -1;
     }
 
     return 0;

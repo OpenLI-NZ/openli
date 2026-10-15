@@ -39,15 +39,28 @@
 #include "etsili_core.h"
 #include "ipcc.h"
 
-static inline openli_cc_prefix_filter_t *lookup_cc_prefix_filter(
+inline openli_cc_prefix_filter_t *lookup_cc_prefix_filter(
         colthread_local_t *loc, char *liid) {
 
     cc_prefix_exclusion_map_t *found;
 
+    if (loc->ipcc_filters == NULL) {
+        return NULL;
+    }
+
+    if (loc->last_ipcc_filter_liid &&
+            (loc->last_ipcc_filter_liid == liid ||
+             strcmp(loc->last_ipcc_filter_liid, liid) == 0)) {
+        return loc->last_ipcc_filter;
+    }
+
     HASH_FIND(hh, loc->ipcc_filters, liid, strlen(liid), found);
+    loc->last_ipcc_filter_liid = liid;
     if (found) {
+        loc->last_ipcc_filter = found->cc_exclude;
         return found->cc_exclude;
     }
+    loc->last_ipcc_filter = NULL;
     return NULL;
 }
 
@@ -104,6 +117,89 @@ static inline int add_static_cached(prefix_t *prefix, patricia_node_t *pnode,
         }
     }
     return 0;
+}
+
+static inline int lookup_dynamic_v4_subnets(struct sockaddr *cmp,
+        libtrace_packet_t *pkt, uint8_t dir, colthread_local_t *loc,
+        packet_info_t *pinfo, struct timeval *tv) {
+
+    patricia_node_t *pnode = NULL;
+    openli_cc_prefix_filter_t *cc_exclude = NULL;
+    prefix_t prefix;
+    struct sockaddr_in *in = (struct sockaddr_in *)cmp;
+    openli_export_recv_t *msg;
+    int matched = 0;
+
+    memset(&prefix, 0, sizeof(prefix_t));
+    memcpy(&(prefix.add.sin), &(in->sin_addr), 4);
+    prefix.bitlen = 32;
+    prefix.family = AF_INET;
+    prefix.ref_count = 0;
+
+    pnode = patricia_search_best2(loc->dynamicv4ranges, &prefix, 1);
+    while (pnode) {
+        liid_set_t **all, *sliid, *tmp;
+
+        all = (liid_set_t **)(&(pnode->data));
+        HASH_ITER(hh, *all, sliid, tmp) {
+            ipsession_t *matchsess;
+            HASH_FIND(hh, loc->activedynamicsubnets, sliid->key,
+                    sliid->keylen, matchsess);
+            if (!matchsess) {
+                logger(LOG_INFO,
+                        "OpenLI: matched an IP range for intercept %s but this is not present in activedynamicsubnets",
+                        sliid->key);
+            } else {
+                if (matchsess->common.tomediate ==
+                        OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
+                    continue;
+                }
+
+                if (tv->tv_sec < matchsess->common.tostart_time) {
+                    continue;
+                }
+
+                if (matchsess->common.toend_time > 0 &&
+                        tv->tv_sec >= matchsess->common.toend_time) {
+                    continue;
+                }
+
+                if (matchsess->common.liid) {
+                    cc_exclude = lookup_cc_prefix_filter(loc,
+                            matchsess->common.liid);
+                    if (suppress_cc(cc_exclude, AF_INET, pinfo)) {
+                            continue;
+                    }
+                }
+
+                matched ++;
+                if (matchsess->common.targetagency == NULL ||
+                        strcmp(matchsess->common.targetagency, "pcapdisk") == 0)
+                {
+                    msg = create_rawip_cc_job(matchsess->common.liid_key,
+                            matchsess->common.destid, pkt);
+                } else if (matchsess->accesstype ==
+                        INTERNET_ACCESS_TYPE_MOBILE) {
+
+                    msg = create_epscc_job_from_ip(matchsess->cin,
+                            matchsess->common.liid, matchsess->common.destid,
+                            pkt, dir, matchsess->common.authcc,
+                            matchsess->common.delivcc);
+
+                } else {
+                    msg = create_ipcc_job(matchsess->cin,
+                        matchsess->common.liid, matchsess->common.destid, pkt,
+                        dir, matchsess->common.authcc,
+                        matchsess->common.delivcc);
+                }
+
+                publish_openli_msg_buffered(loc,
+                        matchsess->common.seqtrackerid, msg);
+            }
+        }
+        pnode = pnode->parent;
+    }
+    return matched;
 }
 
 static inline int lookup_static_ranges(struct sockaddr *cmp,
@@ -185,9 +281,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                 if (matchsess->common.targetagency == NULL ||
                         strcmp(matchsess->common.targetagency, "pcapdisk") == 0)
                 {
-                    msg = create_rawip_cc_job(matchsess->common.liid,
-                        matchsess->common.destid, matchsess->common.authcc,
-                        pkt);
+                    msg = create_rawip_cc_job(matchsess->common.liid_key,
+                            matchsess->common.destid, pkt);
                 } else {
                     msg = create_ipcc_job(matchsess->cin,
                         matchsess->common.liid, matchsess->common.destid, pkt,
@@ -195,8 +290,8 @@ static inline int lookup_static_ranges(struct sockaddr *cmp,
                         matchsess->common.delivcc);
                 }
 
-                publish_openli_msg(
-                        loc->zmq_pubsocks[matchsess->common.seqtrackerid], msg);
+                publish_openli_msg_buffered(loc,
+                        matchsess->common.seqtrackerid, msg);
             }
         }
         pnode = pnode->parent;
@@ -261,8 +356,8 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                     *matched = ((*matched) + 1);
                     if (sess->common.targetagency == NULL ||
                             strcmp(sess->common.targetagency,"pcapdisk") == 0) {
-                        msg = create_rawip_cc_job(sess->common.liid,
-                            sess->common.destid, sess->common.authcc, pkt);
+                        msg = create_rawip_cc_job(sess->common.liid_key,
+                                sess->common.destid, pkt);
                     } else if (sess->accesstype ==
                             INTERNET_ACCESS_TYPE_MOBILE) {
 
@@ -275,9 +370,8 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
                                 sess->common.authcc, sess->common.delivcc);
                     }
                     if (msg != NULL) {
-                        publish_openli_msg(
-                                loc->zmq_pubsocks[sess->common.seqtrackerid],
-                                msg);
+                        publish_openli_msg_buffered(loc,
+                                sess->common.seqtrackerid, msg);
                     }
                 }
             }
@@ -366,8 +460,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             if (sess->common.targetagency == NULL ||
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
-                msg = create_rawip_cc_job(sess->common.liid,
-                        sess->common.destid, sess->common.authcc, pkt);
+                msg = create_rawip_cc_job(sess->common.liid_key,
+                        sess->common.destid, pkt);
             } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
                 msg = create_epscc_job_from_ip(sess->cin,
                         sess->common.liid, sess->common.destid, pkt, 0,
@@ -378,8 +472,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                         sess->common.delivcc);
             }
             if (msg != NULL) {
-                publish_openli_msg(
-                    loc->zmq_pubsocks[sess->common.seqtrackerid], msg);
+                publish_openli_msg_buffered(loc,
+                        sess->common.seqtrackerid, msg);
             }
         }
     }
@@ -412,8 +506,8 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
             matched ++;
             if (sess->common.targetagency == NULL ||
                     strcmp(sess->common.targetagency, "pcapdisk") == 0) {
-                msg = create_rawip_cc_job(sess->common.liid,
-                        sess->common.destid, sess->common.authcc, pkt);
+                msg = create_rawip_cc_job(sess->common.liid_key,
+                        sess->common.destid, pkt);
             } else if (sess->accesstype == INTERNET_ACCESS_TYPE_MOBILE) {
                 msg = create_epscc_job_from_ip(sess->cin,
                         sess->common.liid, sess->common.destid, pkt, 1,
@@ -424,10 +518,18 @@ int ipv4_comm_contents(libtrace_packet_t *pkt, packet_info_t *pinfo,
                         sess->common.delivcc);
             }
             if (msg != NULL) {
-                publish_openli_msg( 
-                    loc->zmq_pubsocks[sess->common.seqtrackerid], msg);
+                publish_openli_msg_buffered(loc,
+                        sess->common.seqtrackerid, msg);
             }
         }
+    }
+
+    if (loc->dynamicv4ranges->head != NULL) {
+        matched += lookup_dynamic_v4_subnets((struct sockaddr *)(&pinfo->srcip),
+                pkt, 0, loc, pinfo, &pinfo->tv);
+        matched += lookup_dynamic_v4_subnets(
+                (struct sockaddr *)(&pinfo->destip), pkt, 1, loc, pinfo,
+                &pinfo->tv);
     }
 
     if (loc->activestaticintercepts == NULL) {

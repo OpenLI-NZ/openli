@@ -63,6 +63,7 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
         char *queueid, int channel) {
 
     amqp_bytes_t rmq_queueid;
+    amqp_rpc_reply_t reply;
 
 #if 0
     amqp_table_t queueargs;
@@ -84,8 +85,15 @@ static int declare_RMQ_queue(amqp_connection_state_t state,
 
     amqp_queue_declare(state, channel, rmq_queueid, 0, 1, 0, 0,
             amqp_empty_table);
-    if (amqp_get_rpc_reply(state).reply_type != AMQP_RESPONSE_NORMAL) {
-        logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %u", queueid, channel, amqp_get_rpc_reply(state).reply_type);
+    reply= amqp_get_rpc_reply(state);
+    if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
+
+        if (reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION) {
+            logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: %s (%d)", queueid, channel, amqp_error_string2(reply.library_error), reply.library_error);
+        } else if (reply.reply_type == AMQP_RESPONSE_SERVER_EXCEPTION) {
+            logger(LOG_INFO, "OpenLI Mediator: unable to declare RMQ queue for %s on channel %d: server exception", queueid, channel);
+
+        }
         return -1;
     }
 
@@ -555,6 +563,7 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         }
         goto consfailed;
     }
+    amqp_basic_qos(state, 2, 0, 1024, 0);
 
     amqp_channel_open(state, 3);
     if ((amqp_get_rpc_reply(state).reply_type) != AMQP_RESPONSE_NORMAL) {
@@ -563,6 +572,7 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         }
         goto consfailed;
     }
+    amqp_basic_qos(state, 3, 0, 1024, 0);
 
     amqp_channel_open(state, 4);
     if ((amqp_get_rpc_reply(state).reply_type) != AMQP_RESPONSE_NORMAL) {
@@ -571,6 +581,7 @@ amqp_connection_state_t join_mediator_RMQ_as_consumer(char *agencyid,
         }
         goto consfailed;
     }
+    amqp_basic_qos(state, 4, 0, 4096, 0);
 
     return state;
 
@@ -1090,10 +1101,8 @@ static uint32_t release_confirmed_messages(coll_recv_t *col, uint8_t channel,
             if (slot->delivtag == 0 || slot->delivtag > delivery_tag) {
                 break;
             }
-            if (slot->msgbody) {
-                free(slot->msgbody);
-                slot->msgbody = NULL;
-            }
+            slot->delivtag = 0;
+            slot->msglen = 0;
             q->head = (q->head + 1) % q->capacity;
             q->count --;
             released ++;
@@ -1233,6 +1242,11 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
  *  @param prependlength    Flag to indicate whether the message length
  *                          should be written into the export buffer ahead
  *                          of writing the message itself
+ *  @param rawip_cb         Callback function to invoke on each message
+ *                          consumed from a raw IP queue. If NULL, raw IP
+ *                          packets will be consumed via the export buffer.
+ *  @param rawip_cb_data    Pointer to custom data to pass into the raw IP
+ *                          callback function as an argument.
  *
  *  @return -1 if an error occurs, -2 if the RMQ connection has timed out
  *          due to a heartbeat failure, 0 if no messages were consumed, or
@@ -1240,12 +1254,12 @@ int consume_mediator_RMQ_producer_acks(coll_recv_t *col) {
  */
 static int consume_mediator_liid_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, int channel, uint64_t *last_deliv,
-        uint8_t prependlength) {
+        uint8_t prependlength, openli_rawip_handler_cb rawip_cb,
+        void *rawip_cb_data) {
 
     int msgread = 0;
     int rejects = 0;
     struct timeval tv;
-    uint32_t len;
     amqp_envelope_t envelope;
     amqp_rpc_reply_t ret;
 
@@ -1376,14 +1390,18 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
                     }
 
                     if (is_rawip_batch) {
-                        len = rec_len;
-                        if (append_etsipdu_to_buffer(buf, (uint8_t *)&len,
-                                sizeof(len), 0) == 0) {
+                        if (rawip_cb) {
+                            if (rawip_cb(cursor, rec_len, rawip_cb_data) < 0) {
+                                amqp_destroy_envelope(&envelope);
+                                return -1;
+                            }
+                        } else if (append_rawip_record_to_buffer(buf, cursor,
+                               rec_len, 0) == 0) {
                             amqp_destroy_envelope(&envelope);
                             return -1;
                         }
-                    }
-                    if (append_etsipdu_to_buffer(buf, cursor, rec_len, 0) == 0) {
+                    } else if (append_etsipdu_to_buffer(buf, cursor,
+                            rec_len, 0) == 0) {
                         amqp_destroy_envelope(&envelope);
                         return -1;
                     }
@@ -1401,15 +1419,23 @@ static int consume_mediator_liid_messages(amqp_connection_state_t state,
         }
 
         if (prependlength) {
-            len = envelope.message.body.len;
-            if (append_etsipdu_to_buffer(buf, (uint8_t *)(&len),
-                    sizeof(len), 0) == 0) {
-                logger(LOG_INFO, "OpenLI Mediator: unable to enqueue ETSI PDU length into export buffer");
+            if (envelope.message.body.len > UINT32_MAX) {
                 return -1;
             }
-        }
 
-        if (append_etsipdu_to_buffer(buf, envelope.message.body.bytes,
+            if (rawip_cb) {
+                if (rawip_cb(envelope.message.body.bytes,
+                            envelope.message.body.len, rawip_cb_data) < 0) {
+                    amqp_destroy_envelope(&envelope);
+                    return -1;
+                }
+            } else if (append_rawip_record_to_buffer(buf,
+                        envelope.message.body.bytes,
+                        envelope.message.body.len, 0) == 0) {
+                logger(LOG_INFO, "OpenLI Mediator: unable to enqueue raw IP record into export buffer");
+                return -1;
+            }
+        } else if (append_etsipdu_to_buffer(buf, envelope.message.body.bytes,
                 envelope.message.body.len, 0) == 0) {
             logger(LOG_INFO, "OpenLI Mediator: unable to enqueue ETSI PDU into export buffer");
             return -1;
@@ -1443,7 +1469,7 @@ int consume_mediator_iri_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv) {
 
     return consume_mediator_liid_messages(state, buf, maxread, 2, last_deliv,
-            0);
+            0, NULL, NULL);
 }
 
 /** Consumes CC records using an RMQ connection, writing them into the
@@ -1467,7 +1493,7 @@ int consume_mediator_cc_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv) {
 
     return consume_mediator_liid_messages(state, buf, maxread, 3, last_deliv,
-            0);
+            0, NULL, NULL);
 }
 
 /** Consumes raw IP packets using an RMQ connection, writing them into the
@@ -1491,7 +1517,15 @@ int consume_mediator_rawip_messages(amqp_connection_state_t state,
         export_buffer_t *buf, int maxread, uint64_t *last_deliv) {
 
     return consume_mediator_liid_messages(state, buf, maxread, 4, last_deliv,
-            1);
+            1, NULL, NULL);
+}
+
+int consume_mediator_rawip_messages_cb(amqp_connection_state_t state,
+        openli_rawip_handler_cb cb, void *userdata, int maxread,
+        uint64_t *last_deliv) {
+
+    return consume_mediator_liid_messages(state, NULL, maxread, 4, last_deliv,
+            1, cb, userdata);
 }
 
 /** Acknowledges messages for an RMQ connection, up to the provided
@@ -1568,8 +1602,7 @@ int ack_mediator_rawip_messages(amqp_connection_state_t state,
  *  @param liid             The LIID of the intercept to register
  *
  *  @return -1 if the queue declaration fails, -2 if the registration
- *          fails, 0 if either parameter is bad, 1 if everything was
- *          successful
+ *          fails, 1 if everything was successful
  */
 int register_mediator_iri_RMQ_consumer(amqp_connection_state_t state,
         char *liid) {
@@ -1600,8 +1633,7 @@ int register_mediator_iri_RMQ_consumer(amqp_connection_state_t state,
  *  @param liid             The LIID of the intercept to register
  *
  *  @return -1 if the queue declaration fails, -2 if the registration
- *          fails, 0 if either parameter is bad, 1 if everything was
- *          successful
+ *          fails, 1 if everything was successful
  */
 int register_mediator_cc_RMQ_consumer(amqp_connection_state_t state,
         char *liid) {

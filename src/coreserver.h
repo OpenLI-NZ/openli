@@ -94,7 +94,7 @@ coreserver_t *deep_copy_coreserver(coreserver_t *cs);
 int prepare_coreserver(coreserver_t *cs);
 
 coreserver_t *match_packet_to_coreserver(coreserver_t *serverlist,
-        packet_info_t *pinfo, uint8_t just_dest);
+        packet_info_t *pinfo, uint8_t just_dest, uint8_t *matched_dest);
 
 #define CS_TO_V4(cs) ((struct sockaddr_in *)(cs->info->ai_addr))
 #define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs->info->ai_addr))

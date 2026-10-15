@@ -81,6 +81,7 @@ enum {
     OPENLI_PUSH_HUP_RELOAD=18,
     OPENLI_PUSH_UPDATE_IPCC_FILTERS=19,
     OPENLI_PUSH_REMOVE_IPCC_FILTERS=20,
+    OPENLI_PUSH_PURGE_SESSIONS=21,
 };
 
 enum {
@@ -95,6 +96,12 @@ enum {
     OPENLI_UPDATE_SMS_SIP = 8,
     OPENLI_UPDATE_SCCP = 9,
 };
+
+#define OPENLI_PUBLISH_BATCH_SIZE 32
+typedef struct {
+    openli_export_recv_t *msgs[OPENLI_PUBLISH_BATCH_SIZE];
+    uint16_t count;
+} col_publish_batch_t;
 
 typedef struct openli_sip_content {
     uint8_t *content;
@@ -234,11 +241,24 @@ typedef struct cc_prefix_exclusion_map {
     UT_hash_handle hh;
 } cc_prefix_exclusion_map_t;
 
+typedef struct collector_local_stats {
+    uint64_t packets_intercepted;
+    uint64_t packets_sync_ip;
+    uint64_t packets_sync_voip;
+    uint64_t packets_sync_email;
+    uint64_t packets_gtp;
+    uint64_t ipcc_created;
+    uint64_t ipmmcc_created;
+} collector_local_stats_t;
+
+
 typedef struct colthread_local {
 
     char *localname;
 
     cc_prefix_exclusion_map_t *ipcc_filters;
+    char *last_ipcc_filter_liid;
+    openli_cc_prefix_filter_t *last_ipcc_filter;
 
     /* Message queue for pushing updates to sync IP thread */
     void *tosyncq_ip;
@@ -324,6 +344,8 @@ typedef struct colthread_local {
     patricia_tree_t *staticv4ranges;
     patricia_tree_t *staticv6ranges;
     patricia_tree_t *dynamicv6ranges;
+    patricia_tree_t *dynamicv4ranges;
+    ipsession_t *activedynamicsubnets;
     static_ipcache_t *staticcache;
 
     ipfrag_reassembler_t *fragreass;
@@ -331,11 +353,16 @@ typedef struct colthread_local {
     uint64_t accepted;
     uint64_t dropped;
 
+    collector_local_stats_t local_stats;
     time_t startedat;
     uint16_t pkts_since_msg_read;
     uint16_t tick_counter;
 
     void *zmq_packet_return;
+
+    col_publish_batch_t *pub_batches;
+    int pub_batch_count;
+    uint8_t has_pending_publish;
 
     UT_hash_handle hh;
 
@@ -433,6 +460,7 @@ struct collector_global {
 
 };
 
+
 // "dirty" flag that is used to signal when the sync thread has received
 // updated collector config from the provisioner that needs to be written
 // to disk
@@ -444,6 +472,9 @@ int register_sync_queues(sync_thread_global_t *glob,
 void deregister_sync_queues(sync_thread_global_t *glob,
         libtrace_thread_t *t);
 
+// implemented in ipcc.c
+openli_cc_prefix_filter_t *lookup_cc_prefix_filter(colthread_local_t *loc,
+        char *liid);
 
 // implemented in collector.c
 int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
@@ -453,5 +484,10 @@ void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
 
 // implemented in configwriter_collector.c
 int emit_collector_config(char *configfile, collector_global_t *conf);
+
+// implemented in collector_publish.c
+int publish_openli_msg_buffered(colthread_local_t *loc, int trackerid,
+        openli_export_recv_t *msg);
+void flush_publish_batches(colthread_local_t *loc);
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

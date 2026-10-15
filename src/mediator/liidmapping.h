@@ -38,6 +38,8 @@ typedef struct liidmapping liid_map_entry_t;
 typedef struct added_liid {
     /** The LIID */
     char *liid;
+    /** The authCC-qualified intercept key ("<authcc>-<liid>") */
+    char *liid_key;
     /** Whether the LIID should be encoded as ASCII or binary octets */
     openli_liid_format_t liid_format;
 
@@ -59,7 +61,7 @@ typedef struct added_liid {
  *  the intercepted records for that LIID
  */
 struct liidmapping {
-    /** The LIID, as a string */
+    /** The authCC-qualified intercept key ("<authcc>-<liid>"), as a string */
     char *liid;
 
     /** Flag that indicates whether this mapping is unconfirmed by the

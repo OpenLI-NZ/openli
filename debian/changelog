@@ -1,3 +1,93 @@
+openli (1.1.23-1) unstable; urgency=medium
+
+  * Intercepts are now keyed by (LIID, authCC) rather than just LIID, to
+    support cases where multiple jurisdictions happen to use the same
+    LIID.
+  * Fix bug where the REST API would reject requests to modify an
+    existing intercept if the 'agencyid' was not present in the message
+    body.
+  * Fix bug where omitting the 'mediator' or 'outputhandovers' fields
+    from the body of a PUT request sent to an intercept endpoint in the
+    REST API would cause those fields to be reset to their default
+    values.
+  * REST API: fix bug where changes to handover ports or IPs would not
+    be propogated to the mediator.
+  * SIP: reduced the timeout for a completed call from 30s to 5s, to
+    reduce the amount of useless zombie session state that is retained
+    by a collector.
+  * Fix bug where static IP interception would cease if the username
+    for an active IP intercept was modified via the REST API or via
+    a SIGHUP config reload.
+  * Provisioner: fix segfault when a JSON field received via the REST
+    API is not able to be parsed (e.g. a string value is received
+    for a numeric field).
+  * Mediator: fix bug where the internal RabbitMQ queues that serve the
+    pcapdisk thread are not re-registered if they are closed due to an
+    error.
+  * Mediator: improve error logging when an internal RabbitMQ queue is
+    not able to be declared.
+  * Mediator: fix bugs that would cause the pcapdisk thread's RabbitMQ
+    queues to disconnect due to timing out, especially when under heavy
+    traffic loads.
+  * Mediator: ensure file rotation triggers are halted for intercepts that
+    have been withdrawn.
+  * Mediator: fix bug where the pcapdisk thread would try to deregister RMQ
+    handles for intercepts that were never assigned to it.
+  * Mediator: set explicit prefetch limits for all internal RMQ queues so
+    that they do not overwhelm their own TCP sockets under load.
+  * Mediator: fix bug where the pcapdisk output thread could hang if the
+    record length was stored at the very end of an export buffer.
+  * Mediator: fix high CPU use by the pcapdisk thread.
+  * Mediator: improve performance by caching the last LIID state lookup.
+  * Mediator: improve pcapdisk performance by removing unnecessary buffering
+    layer.
+  * Mediator: improve performance by recycling ring buffer slots in the
+    collector receive threads.
+  * Collector: reduce lock contention when updating statistic counters.
+  * Collector: improve performance by caching the last lookup in various
+    LIID-keyed maps throughout the packet processing pipeline.
+  * Collector: improve performance by ensuring that we detect cases where
+    certain processing tasks are unnecessary (e.g. skipping lookups in maps
+    that we know are empty, skipping duplication of intercept parameters that
+    are not used for certain intercept types, etc.)
+  * Collector: replace fixed length post-block delay in the sequence tracking
+    thread with a yield and place a limit on the number of attempts to publish
+    a job to a full queue.
+  * Collector: improved performance by allowing packet processing threads to
+    use batching to publish multiple consecutive packets with a single call to
+    ZMQ rather than 1 ZMQ call per packet.
+  * Collector: increase queue sizes for internal ZMQ sockets to improve
+    ability to withstand microbursts.
+  * Collector: intercepts being written to the pcapdisk agency no longer
+    generate useless CIN reset encoding jobs.
+  * RADIUS: detect Acct-Response earlier so as to avoid wasting cycles on
+    decoding useless AVPs.
+  * RADIUS: fix bug where NAS IP was not being used to differentiate sessions
+    like it should have.
+  * RADIUS: general performance improvements by removing/replacing wasteful
+    string operations and caching previous lookup results.
+  * Collector: remove duplicate lookups when determining if a packet matches
+    a defined core server.
+  * Collector: cap the number of messages from the sync thread that a packet
+    processing thread will process in a single pass, so that large volumes
+    of sync messages won't disrupt packet processing.
+  * Collector: fix bug where recycled packet structures from the sync thread
+    were never consumed by the packet processing threads.
+  * Collector: sending a packet to the sync thread no longer blocks; if the
+    sync thread is too busy to receive the packet, it is dropped.
+  * Collector: remove unnecessary usleep in the sync thread when the thread
+    has no immediate work to do.
+  * SIP: fix crash when the URI in a Proxy Authorization header does not
+    include a realm.
+  * RADIUS: fix bug where an Accounting-Request would not trigger a
+    Begin IRI if the session had an unanswered Access-Request.
+  * RADIUS: add heuristic that infers whether an assigned address in
+    an Access-Accept message is static or from a dynamic pool.
+  * RADIUS: add support for Framed-Netmask, Framed-Route and Framed-Pool
+    attributes, as well as their IPv6 equivalents.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Tue, 13 Oct 2026 12:41:32 +1300
+
 openli (1.1.22-1) unstable; urgency=medium
 
   * Fix bug where the contents of some CCs contained random bytes rather

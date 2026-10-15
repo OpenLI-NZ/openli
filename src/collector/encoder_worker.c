@@ -49,9 +49,6 @@ static void destroy_known_liid(encoder_liid_state_t *known) {
     if (known->liid_key) {
         free(known->liid_key);
     }
-    if (known->authcc) {
-        free(known->authcc);
-    }
     if (known->delivcc) {
         free(known->delivcc);
     }
@@ -71,11 +68,11 @@ void destroy_encoding_job(openli_encoding_job_t *job, uint8_t free_request) {
     if (!job) {
         return;
     }
-    if (job->cinstr) {
-        free(job->cinstr);
-    }
     if (job->liid) {
         free(job->liid);
+    }
+    if (job->liid_key) {
+        free(job->liid_key);
     }
     if (job->authcc) {
         free(job->authcc);
@@ -127,7 +124,7 @@ static void release_liid_from_forwarder(forwarder_assignment_t *assign,
 
 static int init_worker(openli_encoder_t *enc) {
     int zero = 0;
-    int hwm = 1000;
+    int hwm = 20000;
     int i, zmq_fd;
     char sockname[128];
     size_t fdlen;
@@ -347,7 +344,6 @@ static int _send_integrity_check_pdu(openli_encoder_t *enc,
     res.liid = strdup(ics->liid_key);
     res.restype = ics->msgtype;
     res.encodedby = enc->workerid;
-    res.cinstr = strdup(ics->cinstr);
     res.destid = ics->destmediator;
 
     zmq_send(enc->zmq_pushresults[found->fwd_index], &res, sizeof(res), 0);
@@ -406,8 +402,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
     uint8_t integrity_res = INTEGRITY_CHECK_NO_ACTION;
     integrity_check_state_t *chain = NULL;
 
-    res->cinstr = strdup(job->cinstr);
-    res->liid = strdup(job->liid);
+    res->liid = NULL;
     res->seqno = job->seqno;
     res->destid = destid;
     res->encodedby = enc->workerid;
@@ -439,7 +434,7 @@ static inline int finalize_encoded_result(openli_encoded_result_t *res,
                 enc->etsidecoder, res->msgbody->encoded + res->preamblen,
                 res->msgbody->len - res->preamblen, job->encryptkey,
                 job->encryptkey_len) == NULL) {
-            logger(LOG_INFO, "OpenLI: unable to encrypt ETSI record (LIID: %s, type: %u) using aes-192-cbc", job->liid, type);
+            logger(LOG_INFO, "OpenLI: unable to encrypt ETSI record (LIID: %s, type: %u) using aes-192-cbc", job->liid_key, type);
             return -1;
         }
     }
@@ -523,13 +518,12 @@ static void check_agency_digest_config(openli_encoder_t *enc,
 }
 
 static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
-        char *liid, char *authcc, char *delivcc, char *operatorid) {
+        char *liid_key, char *delivcc, char *operatorid) {
 
     encoder_liid_state_t *found;
 
     found = calloc(1, sizeof(encoder_liid_state_t));
-    found->liid_key = strdup(liid);
-    found->authcc = strdup(authcc);
+    found->liid_key = strdup(liid_key);
     if (delivcc) {
         found->delivcc = strdup(delivcc);
     }
@@ -543,9 +537,9 @@ static encoder_liid_state_t *create_new_known_liid(openli_encoder_t *enc,
     }
 
     found->fwd_index = assign_liid_to_forwarder(enc->fwd_assigner);
-        logger(LOG_INFO,
+    logger(LOG_INFO,
             "OpenLI: encoder worker %d assigned LIID %s to forwarding thread %zu",
-            enc->workerid, liid, found->fwd_index);
+            enc->workerid, found->liid_key, found->fwd_index);
 
     HASH_ADD_KEYPTR(hh, enc->known_liids, found->liid_key,
             strlen(found->liid_key), found);
@@ -557,7 +551,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
 
     uint16_t liidlen, l;
 
-    liidlen = strlen(job->liid);
+    liidlen = strlen(job->liid_key);
     l = htons(liidlen);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
@@ -567,7 +561,7 @@ static int encode_rawip(openli_encoder_t *enc, openli_encoding_job_t *job,
     res->msgbody->encoded = malloc(liidlen + sizeof(uint16_t));
 
     memcpy(res->msgbody->encoded, &l, sizeof(uint16_t));
-    memcpy(res->msgbody->encoded + sizeof(uint16_t), job->liid, liidlen);
+    memcpy(res->msgbody->encoded + sizeof(uint16_t), job->liid_key, liidlen);
 
     res->msgbody->len = job->origreq->data.rawip.ipclen +
             (liidlen + sizeof(uint16_t));
@@ -629,7 +623,7 @@ static int encode_templated_ipiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             free_ipiri_parameters(params);
             return -1;
@@ -676,7 +670,7 @@ static int encode_templated_emailiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -745,7 +739,7 @@ static int encode_templated_cinreset(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, OPENLI_EXPORT_CIN_RESET, job->liid) < 0) {
+                body->len, NULL, 0, OPENLI_EXPORT_CIN_RESET, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -786,7 +780,7 @@ static int encode_templated_segflag(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, restype, job->liid) < 0) {
+                body->len, NULL, 0, restype, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -880,7 +874,7 @@ static int encode_templated_epscc(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -932,7 +926,7 @@ static int encode_templated_epsiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -984,7 +978,7 @@ static int encode_templated_umtsiri(openli_encoder_t *enc,
         }
     } else {
         if (create_etsi_encoded_result(res, hdr_tplate, body->encoded,
-                body->len, NULL, 0, job->origreq->type, job->liid) < 0) {
+                body->len, NULL, 0, job->origreq->type, job->liid_key) < 0) {
             wandder_release_encoded_result(enc->encoder, body);
             return -1;
         }
@@ -1045,7 +1039,7 @@ static int encode_templated_umtscc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 umtscc_tplate->cc_content.cc_wrap,
                 umtscc_tplate->cc_content.cc_wrap_len, NULL, 0,
-                job->origreq->type, job->liid) < 0) {
+                job->origreq->type, job->liid_key) < 0) {
             return -1;
         }
     }
@@ -1131,7 +1125,7 @@ static int encode_templated_emailcc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 emailcc_tplate->cc_content.cc_wrap,
                 emailcc_tplate->cc_content.cc_wrap_len,
-                NULL, 0, job->origreq->type, job->liid) < 0) {
+                NULL, 0, job->origreq->type, job->liid_key) < 0) {
             return -1;
         }
     }
@@ -1190,7 +1184,7 @@ static int encode_templated_ipcc(openli_encoder_t *enc,
         if (create_etsi_encoded_result(res, hdr_tplate,
                 ipcc_tplate->cc_content.cc_wrap,
                 ipcc_tplate->cc_content.cc_wrap_len,
-                NULL, 0, job->origreq->type, job->liid) < 0) {
+                NULL, 0, job->origreq->type, job->liid_key) < 0) {
             return -1;
         }
     }
@@ -1214,16 +1208,28 @@ static int encode_etsi(openli_encoder_t *enc, openli_encoding_job_t *job,
     openli_encoded_result_t *res = &(resarray[(*next)]);
 
     memset(res, 0, sizeof(openli_encoded_result_t));
-    snprintf(keystr, 1000, "%s-%s-%u", job->liid, job->cinstr,
-            job->timefmt);
-    JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
-    if ((*pval)) {
-        t_set = (saved_encoding_templates_t *)(*pval);
+
+    if (enc->last_tplate_set && enc->last_tplate_cin == job->cin &&
+            enc->last_tplate_timefmt == job->timefmt &&
+            enc->last_tplate_liid_key == known->liid_key) {
+        t_set = enc->last_tplate_set;
     } else {
-        t_set = calloc(1, sizeof(saved_encoding_templates_t));
-        t_set->key = strdup(keystr);
-        (*pval) = (Word_t)t_set;
+        snprintf(keystr, 1000, "%s-%ld-%u", job->liid_key, job->cin,
+                job->timefmt);
+        JSLI(pval, enc->saved_intercept_templates, (const uint8_t *)keystr);
+        if ((*pval)) {
+            t_set = (saved_encoding_templates_t *)(*pval);
+        } else {
+            t_set = calloc(1, sizeof(saved_encoding_templates_t));
+            t_set->key = strdup(keystr);
+            (*pval) = (Word_t)t_set;
+        }
+        enc->last_tplate_set = t_set;
+        enc->last_tplate_cin = job->cin;
+        enc->last_tplate_timefmt = job->timefmt;
+        enc->last_tplate_liid_key = known->liid_key;
     }
+
     if (job->origreq->type == OPENLI_EXPORT_FIRST_SEGMENT_FLAG ||
             job->origreq->type == OPENLI_EXPORT_LAST_SEGMENT_FLAG) {
         tsptr = NULL;
@@ -1382,11 +1388,18 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             break;
         }
 
-        if (job.liid == NULL) {
+        if (job.liid_key == NULL) {
             goto encodejoberror;
         }
 
-        HASH_FIND(hh, enc->known_liids, job.liid, strlen(job.liid), found);
+        if (enc->last_known &&
+                strcmp(job.liid_key, enc->last_known->liid_key) == 0) {
+            found = enc->last_known;
+        } else {
+            HASH_FIND(hh, enc->known_liids, job.liid_key, strlen(job.liid_key),
+                found);
+            enc->last_known = found;
+        }
 
         if (job.origreq == NULL) {
             /* This is a message to tell us that the intercept is no
@@ -1394,9 +1407,12 @@ static int process_job(openli_encoder_t *enc, void *socket) {
             if (found) {
                 integrity_check_state_t *ics, *tmp;
                 HASH_DELETE(hh, enc->known_liids, found);
-                // remove all integrity state chains for this LIID
+                if (enc->last_known == found) {
+                    enc->last_known = NULL;
+                }
+                // remove all integrity state chains for this intercept
                 HASH_ITER(hh, enc->integrity_state, ics, tmp) {
-                    if (strcmp(job.liid, ics->liid_key) != 0) {
+                    if (strcmp(job.liid_key, ics->liid_key) != 0) {
                         continue;
                     }
                     HASH_DELETE(hh, enc->integrity_state, ics);
@@ -1409,13 +1425,15 @@ static int process_job(openli_encoder_t *enc, void *socket) {
                         found->fwd_index);
                 destroy_known_liid(found);
             }
+            enc->last_tplate_set = NULL;
             destroy_encoding_job(&job, 0);
             continue;
         }
 
         if (!found) {
-            found = create_new_known_liid(enc, job.liid, job.authcc,
+            found = create_new_known_liid(enc, job.liid_key,
                     job.delivcc, job.operatorid);
+            enc->last_known = found;
         }
 
         check_agency_digest_config(enc, found);

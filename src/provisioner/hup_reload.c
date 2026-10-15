@@ -480,7 +480,7 @@ static int reload_coreservers(provision_state_t *state, coreserver_t *currserv,
 static void remove_withdrawn_intercept(provision_state_t *currstate,
         intercept_common_t *common, char *target_info, int droppedmeds) {
 
-    remove_liid_mapping(currstate, common->liid, common->liid_len, droppedmeds);
+    remove_liid_mapping(currstate, common, droppedmeds);
     if (!droppedmeds) {
         announce_hi1_notification_to_mediators(currstate,
                 common, target_info, HI1_LI_DEACTIVATED);
@@ -625,8 +625,8 @@ static int reload_emailintercepts(provision_state_t *currstate,
      * functions?
      */
     HASH_ITER(hh_liid, curremail, mailint, tmp) {
-        HASH_FIND(hh_liid, newemail, mailint->common.liid,
-                mailint->common.liid_len, newequiv);
+        HASH_FIND(hh_liid, newemail, mailint->common.liid_key,
+                mailint->common.liid_key_len, newequiv);
 
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */
@@ -765,8 +765,8 @@ static int reload_voipintercepts(provision_state_t *currstate,
      * functions?
      */
     HASH_ITER(hh_liid, currvoip, voipint, tmp) {
-        HASH_FIND(hh_liid, newvoip, voipint->common.liid,
-                voipint->common.liid_len, newequiv);
+        HASH_FIND(hh_liid, newvoip, voipint->common.liid_key,
+                voipint->common.liid_key_len, newequiv);
 
         if (newequiv && currstate->ignorertpcomfort) {
             newequiv->options |= (1 << OPENLI_VOIPINT_OPTION_IGNORE_COMFORT);
@@ -906,8 +906,8 @@ static int reload_ipintercepts(provision_state_t *currstate,
     prov_agency_t *lea;
 
     HASH_ITER(hh_liid, currints, ipint, tmp) {
-        HASH_FIND(hh_liid, newints, ipint->common.liid,
-                ipint->common.liid_len, newequiv);
+        HASH_FIND(hh_liid, newints, ipint->common.liid_key,
+                ipint->common.liid_key_len, newequiv);
 
         if (!newequiv) {
             /* Intercept has been withdrawn entirely */

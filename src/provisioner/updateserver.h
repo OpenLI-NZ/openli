@@ -49,6 +49,28 @@ typedef struct con_info {
 
 } update_con_info_t;
 
+#define FIND_INTERCEPT_BY_ID(cepttype, table, idstr, found, ambiguous) \
+    do { \
+        cepttype *cand_, *tmp_; \
+        int matches_ = 0; \
+        (found) = NULL; \
+        (ambiguous) = 0; \
+        HASH_FIND(hh_liid, (table), (idstr), strlen((idstr)), (found)); \
+        if ((found) == NULL) { \
+            HASH_ITER(hh_liid, (table), cand_, tmp_) { \
+                if (strcmp(cand_->common.liid, (idstr)) != 0) { \
+                    continue; \
+                } \
+                matches_ ++; \
+                (found) = cand_; \
+            } \
+            if (matches_ > 1) { \
+                (found) = NULL; \
+                (ambiguous) = matches_; \
+            } \
+        } \
+    } while (0)
+
 enum {
     TARGET_AGENCY,
     TARGET_SIPSERVER,

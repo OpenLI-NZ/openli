@@ -119,6 +119,7 @@ typedef enum {
     OPENLI_INTERCEPT_OUTPUTS_ALL = 0,
     OPENLI_INTERCEPT_OUTPUTS_IRIONLY = 1,
     OPENLI_INTERCEPT_OUTPUTS_CCONLY = 2,
+    OPENLI_INTERCEPT_OUTPUTS_UNSPECIFIED = 255,
 } intercept_outputs_t;
 
 enum {
@@ -143,6 +144,7 @@ typedef enum {
 typedef struct static_ipranges {
     char *rangestr;
     char *liid;
+    char *authcc;
     uint32_t cin;
     uint8_t awaitingconfirm;
     UT_hash_handle hh;
@@ -156,6 +158,8 @@ typedef struct intercept_common {
     int liid_len;
     int authcc_len;
     int delivcc_len;
+    char *liid_key;
+    int liid_key_len;
     uint32_t destid;
     char *targetagency;
     int seqtrackerid;
@@ -218,6 +222,7 @@ typedef struct intercept_udp_sink {
 
     char *key;
     char *liid;
+    char *authcc;
     UT_hash_handle hh;
 
 } intercept_udp_sink_t;
@@ -802,6 +807,8 @@ int openli_parse_encryption_key_string(char *enckeystr, uint8_t *keybuf,
         size_t *keylen, char *errorstring, size_t errorstringsize);
 int openli_parse_liid_string(char *liidstr, char **storage,
         openli_liid_format_t *fmt, char *errorstring, size_t errorstringsize);
+int set_intercept_liid_key(intercept_common_t *common, char *errorstring,
+        size_t errorstringsize);
 
 #endif
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

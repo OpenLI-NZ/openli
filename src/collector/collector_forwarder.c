@@ -49,10 +49,6 @@ void free_encoded_result(openli_encoded_result_t *res) {
         free(res->liid);
     }
 
-    if (res->cinstr) {
-        free(res->cinstr);
-    }
-
     if (res->msgbody) {
 
         if (res->msgbody->encoded) {
@@ -753,7 +749,7 @@ static int drain_incoming_etsi(forwarding_thread_data_t *fwd) {
 
         for (i = 0; i < msgcnt; i++) {
 
-            if (res[i].liid == NULL && res[i].destid == 0) {
+            if (res[i].destid == 0) {
                 fwd->encoders_over ++;
             }
 
@@ -790,7 +786,7 @@ static int receive_incoming_etsi(forwarding_thread_data_t *fwd) {
         msgcnt = x / sizeof(openli_encoded_result_t);
 
         for (i = 0; i < msgcnt; i++) {
-            if (res[i].liid == NULL || res[i].destid == 0) {
+            if (res[i].destid == 0) {
                 fwd->encoders_over ++;
                 free_encoded_result(&(res[i]));
                 break;
