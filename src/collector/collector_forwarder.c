@@ -38,11 +38,21 @@
 #include "logger.h"
 #include "collector_base.h"
 #include "collector_publish.h"
+#include "collector.h"
 
 #define BUF_BATCH_SIZE (100 * 1024 * 1024)
 #define MIN_SEND_AMOUNT (1 * 1024 * 1024)
 #define AMPQ_BYTES_FROM(x) (amqp_bytes_t){.len=sizeof(x),.bytes=&x}
 #define AMQP_FRAME_MAX 131072
+
+static inline void set_rmq_thread_state(forwarding_thread_data_t *fwd,
+        openli_rmq_conn_state_t newst) {
+
+    if (__atomic_load_n(&(fwd->rmq_state), __ATOMIC_RELAXED) != newst) {
+        __atomic_store_n(&(fwd->rmq_state), newst, __ATOMIC_RELEASE);
+        __atomic_store_n(&rmq_status_changed, 1, __ATOMIC_RELEASE);
+    }
+}
 
 void free_encoded_result(openli_encoded_result_t *res) {
     if (res->liid) {
@@ -986,6 +996,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                             "OpenLI: please check that RabbitMQ Server is running on your collector host and listening on TCP port 5672?");
                     fwd->logged_rmq_connect_failure = 1;
                 }
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_ERR_SOCKET);
                 amqp_destroy_connection(fwd->ampq_conn);
                 fwd->ampq_conn = NULL;
                 fwd->ampq_sock = NULL;
@@ -1017,6 +1028,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                     logger(LOG_ERR, "OpenLI: forwarding thread %d failed to login to the RabbitMQ message broker using PLAIN auth", fwd->forwardid);
                     fwd->logged_rmq_connect_failure = 2;
                 }
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_ERR_AUTH);
                 amqp_destroy_connection(fwd->ampq_conn);
                 fwd->ampq_conn = NULL;
                 fwd->ampq_sock = NULL;
@@ -1031,6 +1043,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                     logger(LOG_ERR, "OpenLI: forwarding thread %d failed to open RabbitMQ channel", fwd->forwardid);
                     fwd->logged_rmq_connect_failure = 3;
                 }
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_ERR_CHANNEL);
                 amqp_destroy_connection(fwd->ampq_conn);
                 fwd->ampq_conn = NULL;
                 fwd->ampq_sock = NULL;
@@ -1044,6 +1057,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                             "OpenLI: forwarding thread %d encountered an error while enabling confirms for the RabbitMQ instance", fwd->forwardid);
                     fwd->logged_rmq_connect_failure = 5;
                 }
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_ERR_CONFIRMS);
                 amqp_destroy_connection(fwd->ampq_conn);
                 fwd->ampq_conn = NULL;
                 fwd->ampq_sock = NULL;
@@ -1060,6 +1074,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                             "OpenLI: forwarding thread %d encountered an error while checking status of the RabbitMQ instance", fwd->forwardid);
                     fwd->logged_rmq_connect_failure = 4;
                 }
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_ERR_CONSUME);
                 amqp_destroy_connection(fwd->ampq_conn);
                 fwd->ampq_conn = NULL;
                 fwd->ampq_sock = NULL;
@@ -1067,14 +1082,20 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                 return poll_control_only(fwd);
             }
 
+            if (fwd->ampq_blocked) {
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_BLOCKED);
+            } else {
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_CONNECTED);
+            }
             fwd->logged_rmq_connect_failure = 0;
         } else {
-            if (fwd->forwardid == 0) {
-                logger(LOG_INFO, "OpenLI: Incomplete RabbitMQ login information supplied, when forwarding via RabbitMQ is required.");
-                logger(LOG_INFO,
-                        "OpenLI collector: exiting due to fatal error");
+            if (fwd->forwardid == 0 &&
+                    fwd->rmq_state != OPENLI_RMQ_STATE_NOCREDS) {
+                logger(LOG_INFO, "OpenLI: Incomplete RabbitMQ login information supplied, when forwarding via RabbitMQ is enabled.");
             }
-            exit(1);
+            set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_NOCREDS);
+            sleep(1);
+            return poll_control_only(fwd);
         }
     }
 
@@ -1153,6 +1174,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
          * write to their queue.
          */
         if (rmq_write_buffered(fwd) < 0) {
+            set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_ERR_PUBLISH);
             amqp_connection_close(fwd->ampq_conn, AMQP_REPLY_SUCCESS);
             amqp_destroy_connection(fwd->ampq_conn);
             fwd->ampq_conn = NULL;
@@ -1297,6 +1319,14 @@ static void forwarder_main(forwarding_thread_data_t *fwd) {
     fwd->awaitingconfirm = 0;
     fwd->flagtimerfd = -1;
     fwd->logged_rmq_connect_failure = 0;
+
+    if (!fwd->RMQ_conf.enabled) {
+        set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_DISABLED);
+    } else if (!fwd->RMQ_conf.name || !fwd->RMQ_conf.pass) {
+        set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_NOCREDS);
+    } else {
+        set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_DISCONNECTED);
+    }
 
     fwd->intreorderer_cc = NULL;
     fwd->intreorderer_iri = NULL;

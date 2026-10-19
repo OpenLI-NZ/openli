@@ -271,6 +271,23 @@ typedef enum {
  * a core server etc...
  */
 
+
+typedef enum {
+    OPENLI_RMQ_STATE_DISABLED = 0,
+    OPENLI_RMQ_STATE_NOCREDS,
+    OPENLI_RMQ_STATE_DISCONNECTED,
+    OPENLI_RMQ_STATE_CONNECTED,
+    OPENLI_RMQ_STATE_BLOCKED,
+    OPENLI_RMQ_STATE_ERR_SOCKET,
+    OPENLI_RMQ_STATE_ERR_AUTH,
+    OPENLI_RMQ_STATE_ERR_CHANNEL,
+    OPENLI_RMQ_STATE_ERR_CONFIRMS,
+    OPENLI_RMQ_STATE_ERR_PUBLISH,
+    OPENLI_RMQ_STATE_ERR_CONSUME,
+} openli_rmq_conn_state_t;
+
+const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state);
+
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
 int fd_set_nonblock(int fd);
 int fd_set_block(int fd);

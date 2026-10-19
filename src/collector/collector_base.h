@@ -338,6 +338,7 @@ typedef struct forwarding_thread_data {
     openli_RMQ_config_t RMQ_conf;
     halt_info_t *haltinfo;
 
+    openli_rmq_conn_state_t rmq_state;
     uint8_t logged_rmq_connect_failure;
 
 } forwarding_thread_data_t;

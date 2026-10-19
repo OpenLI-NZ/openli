@@ -3668,4 +3668,34 @@ void nb_log_receive_error(openli_proto_msgtype_t err) {
     }
 
 }
+
+const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state) {
+    switch(state) {
+        case OPENLI_RMQ_STATE_DISABLED:
+            return "disabled";
+        case OPENLI_RMQ_STATE_NOCREDS:
+            return "error: incomplete credentials";
+        case OPENLI_RMQ_STATE_DISCONNECTED:
+            return "disconnected";
+        case OPENLI_RMQ_STATE_CONNECTED:
+            return "connected";
+        case OPENLI_RMQ_STATE_BLOCKED:
+            return "error: connection buffer full";
+        case OPENLI_RMQ_STATE_ERR_SOCKET:
+            return "error: failed to open socket";
+        case OPENLI_RMQ_STATE_ERR_AUTH:
+            return "error: authentication failed";
+        case OPENLI_RMQ_STATE_ERR_CHANNEL:
+            return "error: failed to open channel";
+        case OPENLI_RMQ_STATE_ERR_CONFIRMS:
+            return "error: failed to enable publisher confirms";
+        case OPENLI_RMQ_STATE_ERR_PUBLISH:
+            return "error: publish failed";
+        case OPENLI_RMQ_STATE_ERR_CONSUME:
+            return "error: consume failed";
+    }
+    return "unknown";
+}
+
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -926,6 +926,67 @@ char *collector_config_to_json(collector_global_t *glob) {
 
     pthread_rwlock_unlock(&glob->sipconfig_mutex);
 
+    /* RabbitMQ configuration */
+    json_object_object_add(jobj, "RMQenabled",
+            json_object_new_boolean(glob->RMQ_conf.enabled));
+    if (glob->RMQ_conf.name) {
+        json_object_object_add(jobj, "RMQname",
+                json_object_new_string(glob->RMQ_conf.name));
+    }
+    json_object_object_add(jobj, "RMQpassset",
+            json_object_new_boolean(glob->RMQ_conf.pass != NULL &&
+                    glob->RMQ_conf.pass[0] != '\0'));
+
+    /* RabbitMQ connection state for each forwarder thread */
+    if (!glob->RMQ_conf.enabled) {
+        json_object_object_add(jobj, "RMQstatus",
+                json_object_new_string("disabled"));
+    } else if (glob->forwarders == NULL) {
+        json_object_object_add(jobj, "RMQstatus",
+                json_object_new_string("initializing"));
+    } else {
+        json_object *jthreads = json_object_new_array();
+        const char *first_err = NULL, *errstr;
+        int connected = 0, i;
+        openli_rmq_conn_state_t st;
+
+        for (i = 0; i < glob->forwarding_threads; i++) {
+            st = __atomic_load_n(&(glob->forwarders[i].rmq_state),
+                    __ATOMIC_ACQUIRE);
+            errstr = openli_rmq_state_to_string(st);
+            if (st == OPENLI_RMQ_STATE_CONNECTED) {
+                connected ++;
+            } else if (!first_err && st != OPENLI_RMQ_STATE_DISCONNECTED) {
+                first_err = errstr;
+            }
+            json_object *jth = json_object_new_object();
+            json_object_object_add(jth, "threadid", json_object_new_int(i));
+            json_object_object_add(jth, "status",
+                    json_object_new_string(errstr));
+            json_object_array_add(jthreads, jth);
+        }
+
+        json_object_object_add(jobj, "RMQforwarders", jthreads);
+        json_object_object_add(jobj, "RMQconnected_fwd",
+                json_object_new_int(connected));
+        json_object_object_add(jobj, "RMQtotal_fwd",
+                json_object_new_int(glob->forwarding_threads));
+
+        if (connected == glob->forwarding_threads) {
+            json_object_object_add(jobj, "RMQstatus",
+                    json_object_new_string("connected"));
+        } else if (connected > 0) {
+            json_object_object_add(jobj, "RMQstatus",
+                    json_object_new_string("degraded"));
+        } else if (first_err) {
+            json_object_object_add(jobj, "RMQstatus",
+                    json_object_new_string(first_err));
+        } else {
+            json_object_object_add(jobj, "RMQstatus",
+                    json_object_new_string("disconnected"));
+        }
+    }
+
     json_str = json_object_to_json_string(jobj);
     result = strdup(json_str);
 

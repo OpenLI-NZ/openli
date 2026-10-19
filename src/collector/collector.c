@@ -61,6 +61,7 @@ volatile int reload_config = 0;
 volatile int config_write_required = 0;
 volatile sig_atomic_t collector_halt = 0;
 volatile int purge_session_flag = 0;
+volatile int rmq_status_changed = 0;
 
 static void cleanup_signal(int signal UNUSED)
 {
@@ -3178,6 +3179,8 @@ static void *start_ip_sync_thread(void *params) {
     collector_sync_t *sync = init_sync_data(glob);
     sync_sendq_t *sq;
     x_input_t *xinp, *xtmp;
+    time_t last_rmq_status_update = 0;
+    char *jsonconfig;
 
     /* XXX For early development work, we will read intercept instructions
      * from a config file. Eventually this should be replaced with
@@ -3186,6 +3189,14 @@ static void *start_ip_sync_thread(void *params) {
     if (sync->zmq_colsock == NULL) {
         goto haltsyncthread;
     }
+
+    jsonconfig = collector_config_to_json(glob);
+    pthread_rwlock_wrlock(&glob->config_mutex);
+    if (glob->sharedinfo.jsonconfig) {
+        free(glob->sharedinfo.jsonconfig);
+    }
+    glob->sharedinfo.jsonconfig = jsonconfig;
+    pthread_rwlock_unlock(&glob->config_mutex);
 
     HASH_ITER(hh, glob->x_inputs, xinp, xtmp) {
         if (add_x2x3_to_sync(sync, xinp->identifier, xinp->listenaddr,
@@ -3203,7 +3214,6 @@ static void *start_ip_sync_thread(void *params) {
 
     while (collector_halt == 0) {
         if (__atomic_exchange_n(&config_write_required, 0, __ATOMIC_ACQUIRE)) {
-            char *jsonconfig;
             pthread_mutex_lock(&(glob->configupdate_mutex));
             if (apply_yaml_config_updates(glob->configfile,
                     &(glob->syncip.configupdates)) < 0) {
@@ -3226,7 +3236,26 @@ static void *start_ip_sync_thread(void *params) {
             pthread_rwlock_unlock(&glob->config_mutex);
 
             sync_thread_send_provisioner_auth(sync);
+            __atomic_store_n(&rmq_status_changed, 0, __ATOMIC_RELEASE);
+            last_rmq_status_update = time(NULL);
             reload_config = 0;
+        }
+
+        if (__atomic_load_n(&rmq_status_changed, __ATOMIC_ACQUIRE)) {
+            time_t now = time(NULL);
+            if (now - last_rmq_status_update >= 2) {
+                __atomic_store_n(&rmq_status_changed, 0, __ATOMIC_RELEASE);
+                last_rmq_status_update = now;
+
+                jsonconfig = collector_config_to_json(glob);
+                pthread_rwlock_wrlock(&glob->config_mutex);
+                if (glob->sharedinfo.jsonconfig) {
+                    free(glob->sharedinfo.jsonconfig);
+                }
+                glob->sharedinfo.jsonconfig = jsonconfig;
+                pthread_rwlock_unlock(&glob->config_mutex);
+                sync_thread_send_provisioner_auth(sync);
+            }
         }
 
         if (purge_session_flag) {
