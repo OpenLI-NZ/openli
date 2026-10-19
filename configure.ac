@@ -69,26 +69,41 @@ AC_CHECK_HEADER(rabbitmq-c/tcp_socket.h, [amqp_h_found=1; rabbitmq_include_subdi
 AC_CONFIG_FILES([Makefile src/Makefile extlib/Makefile
                 extlib/libpatricia/Makefile])
 
+AC_ARG_WITH([tcmalloc],
+    [AS_HELP_STRING([--without-tcmalloc], [Disable linking against libtcmalloc])],
+    [], [with_tcmalloc=check])
 
 
 AS_IF([test "x$uthash_avail" != "xyes"],
         [AC_MSG_ERROR([Required header uthash.h not found; install uthash and try again])])
 
 if test "x$enable_collector" != "xno"; then
-        AC_CHECK_LIB([tcmalloc], [tc_version],,libtcmalloc_found=0)
-        AC_CHECK_LIB([z], [inflateEnd],,libz_found=0)
-        if test "$libz_found" = 0; then
-                AC_MSG_ERROR(Required library libz not found; use LDFLAGS to specify library location)
-        fi
-        AC_CHECK_LIB([osipparser2], [osip_message_init],libosip2_found=1,libosip2_found=0)
-        if test "$libosip2_found" = 0; then
-                AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
-        fi
-        AC_CHECK_LIB([b64], [base64_decode_block],libb64_found=1,libb64_found=0)
-        if test "$libb64_found" = 0; then
-                AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
-        fi
-        COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64 -lz"
+    if test "x$with_tcmalloc" != "xno"; then
+            AC_CHECK_LIB([tcmalloc], [tc_version],
+                [AC_DEFINE([HAVE_LIBTCMALLOC], [1], [Define to 1 if libtcmalloc is available])
+                COLLECTOR_LIBS="$COLLECTOR_LIBS -Wl,--no-as-needed -ltcmalloc -Wl,--as-needed"
+                have_tcmalloc=yes],
+                [have_tcmalloc=no
+                if test "x$with_tcmalloc" = "xyes"; then
+                    AC_MSG_ERROR([libtcmalloc requested but not found])
+                fi]
+            )
+    else
+        have_tcmalloc=no
+    fi
+    AC_CHECK_LIB([z], [inflateEnd],,libz_found=0)
+    if test "$libz_found" = 0; then
+            AC_MSG_ERROR(Required library libz not found; use LDFLAGS to specify library location)
+    fi
+    AC_CHECK_LIB([osipparser2], [osip_message_init],libosip2_found=1,libosip2_found=0)
+    if test "$libosip2_found" = 0; then
+            AC_MSG_ERROR(Required library libosipparser2 not found; use LDFLAGS to specify library location)
+    fi
+    AC_CHECK_LIB([b64], [base64_decode_block],libb64_found=1,libb64_found=0)
+    if test "$libb64_found" = 0; then
+            AC_MSG_ERROR(Required library libb64 not found; use LDFLAGS to specify library location)
+    fi
+    COLLECTOR_LIBS="$COLLECTOR_LIBS -losipparser2 -lb64 -lz"
 fi
 
 if test "x$enable_provisioner" != "xno" -o "x$enable_collector" != "xno"; then
@@ -211,3 +226,4 @@ reportopt() {
         fi
 }
 
+reportopt "TCMalloc support" "$have_tcmalloc"
