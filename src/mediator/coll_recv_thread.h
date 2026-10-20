@@ -229,11 +229,6 @@ struct single_coll_receiver {
      */
     int rmq_hb_freq;
 
-    /** Flag indicating whether the mediator is configured to be
-     *  consuming from RMQ (as opposed to reading from a TCP socket)
-     */
-    int rmqenabled;
-
     /** Password to access the local RMQ instance where received records
      *  are published to so that LEA threads can read them when ready/
      */

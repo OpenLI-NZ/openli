@@ -678,14 +678,6 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 
     hellomsg = (struct fwd_hello_body *)msgbody;
     col->forwarder_id = ntohl(hellomsg->threadid);
-
-    if (hellomsg->using_rmq && !col->rmqenabled) {
-        if (!col->disabled_log) {
-            logger(LOG_INFO, "OpenLI mediator: collector %s wants to use RMQ for sending ETSI records, but RMQ is disabled in the mediator config!",
-                    col->ipaddr);
-        }
-        return -1;
-    }
     col->forwarder_using_rmq = hellomsg->using_rmq;
     return 1;
 }
@@ -1342,7 +1334,6 @@ static void *start_collector_thread(void *params) {
     lock_med_collector_config(col->parentconfig);
     if (col->parentconfig->rmqconf) {
         col->rmq_hb_freq = col->parentconfig->rmqconf->heartbeatFreq;
-        col->rmqenabled = col->parentconfig->rmqconf->enabled;
         col->internalpass = strdup(col->parentconfig->rmqconf->internalpass);
     }
     unlock_med_collector_config(col->parentconfig);
@@ -1385,17 +1376,6 @@ static void *start_collector_thread(void *params) {
                  */
                 lock_med_collector_config(col->parentconfig);
 
-                /* Stop using RMQ if it has been disabled */
-                if (col->parentconfig->rmqconf->enabled == 0 &&
-                        col->rmqenabled == 1) {
-                    if (col->forwarder_using_rmq && !col->disabled_log) {
-                        logger(LOG_INFO, "OpenLI mediator: RMQ consumption has been disabled but collector %s is still exporting records via RMQ",
-                                col->ipaddr);
-                        logger(LOG_INFO, "OpenLI mediator: no more records from this collector will be processed by the mediator!");
-                    }
-                    destroy_rmq_colev(col);
-                }
-
                 /* TODO handle change in mediator ID ? */
 
                 if (strcmp(col->internalpass,
@@ -1425,7 +1405,6 @@ static void *start_collector_thread(void *params) {
 
                 /* re-save rmqconf->heartbeat */
                 col->rmq_hb_freq = col->parentconfig->rmqconf->heartbeatFreq;
-                col->rmqenabled = col->parentconfig->rmqconf->enabled;
 
                 unlock_med_collector_config(col->parentconfig);
 
@@ -1503,8 +1482,7 @@ static void *start_collector_thread(void *params) {
         }
 
         if (col->colev && col->colev->fdtype == OPENLI_EPOLL_COLLECTOR &&
-                col->rmqenabled && col->forwarder_using_rmq &&
-                col->rmq_colev == NULL) {
+                col->forwarder_using_rmq && col->rmq_colev == NULL) {
             col->rmq_colev = prepare_collector_receive_rmq(col, epoll_fd);
         }
 

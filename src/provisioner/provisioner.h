@@ -340,6 +340,8 @@ typedef struct prov_intercept_conf {
      */
     uint8_t default_email_deliver_compress;
 
+    uint8_t rmq_enabled_collectors;
+
     int destroy_pending;
 
     uint8_t was_encrypted;
@@ -566,6 +568,7 @@ void clear_liid_announce_flags(prov_intercept_conf_t *conf);
 int announce_hi1_notification_to_mediators(provision_state_t *state,
         intercept_common_t *intcomm, char *target_id, hi1_notify_t not_type);
 int announce_latest_default_email_decompress(provision_state_t *state);
+int announce_latest_rmq_enabled(provision_state_t *state);
 int enable_epoll_write(provision_state_t *state, prov_epoll_ev_t *pev);
 void update_intercept_timeformats(provision_state_t *state,
         const char *agencyid, openli_timestamp_encoding_fmt_t newfmt,

@@ -66,6 +66,12 @@ typedef struct openli_RMQ_config {
     int SSLenabled;
 } openli_RMQ_config_t;
 
+void copy_openli_rmq_config(openli_RMQ_config_t *src,
+        openli_RMQ_config_t *dest);
+void free_openli_rmq_config(openli_RMQ_config_t *conf);
+int compare_openli_rmq_config(openli_RMQ_config_t *a,
+        openli_RMQ_config_t *b);
+
 int create_ssl_context(openli_ssl_config_t *sslconf);
 void free_ssl_config(openli_ssl_config_t *sslconf);
 int reload_ssl_config(openli_ssl_config_t *current,

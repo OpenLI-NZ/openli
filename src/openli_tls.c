@@ -421,4 +421,78 @@ int load_pem_into_memory(char *pemfile, char **memspace) {
     return result;
 }
 
+void copy_openli_rmq_config(openli_RMQ_config_t *src,
+        openli_RMQ_config_t *dest) {
+
+    if (!src || !dest) {
+        return;
+    }
+
+    memset(dest, 0, sizeof(openli_RMQ_config_t));
+    if (src->name) {
+        dest->name = strdup(src->name);
+    }
+    if (src->pass) {
+        dest->pass = strdup(src->pass);
+    }
+    if (src->internalpass) {
+        dest->internalpass = strdup(src->internalpass);
+    }
+    if (src->hostname) {
+        dest->hostname = strdup(src->hostname);
+    }
+    dest->port = src->port;
+    dest->heartbeatFreq = src->heartbeatFreq;
+    dest->enabled = src->enabled;
+    dest->SSLenabled = src->SSLenabled;
+}
+
+void free_openli_rmq_config(openli_RMQ_config_t *conf) {
+    if (!conf) return;
+
+    if (conf->name) free(conf->name);
+    if (conf->pass) free(conf->pass);
+    if (conf->internalpass) free(conf->internalpass);
+    if (conf->hostname) free(conf->hostname);
+
+    conf->name = conf->pass = conf->internalpass = conf->hostname = NULL;
+}
+
+static inline int nullable_strcmp(const char *a, const char *b) {
+    if (a == NULL && b == NULL) return 0;
+    if (a == NULL || b == NULL) return 1;
+    return strcmp(a,b);
+}
+
+int compare_openli_rmq_config(openli_RMQ_config_t *a,
+        openli_RMQ_config_t *b) {
+
+    if (a->enabled != b->enabled) {
+        return 1;
+    }
+    if (a->SSLenabled != b->SSLenabled) {
+        return 1;
+    }
+    if (a->port != b->port) {
+        return 1;
+    }
+    if (a->heartbeatFreq != b->heartbeatFreq) {
+        return 1;
+    }
+    if (nullable_strcmp(a->name, b->name) != 0) {
+        return 1;
+    }
+    if (nullable_strcmp(a->pass, b->pass) != 0) {
+        return 1;
+    }
+    if (nullable_strcmp(a->internalpass, b->internalpass) != 0) {
+        return 1;
+    }
+    if (nullable_strcmp(a->hostname, b->hostname) != 0) {
+        return 1;
+    }
+    return 0;
+}
+
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -2307,6 +2307,7 @@ static void destroy_collector_state(collector_global_t *glob) {
         for (i = 0; i < glob->forwarding_threads; i++) {
             zmq_close(glob->forwarders[i].zmq_pullressock);
             pthread_mutex_destroy(&(glob->forwarders[i].sslmutex));
+            free_openli_rmq_config(&(glob->forwarders[i].RMQ_conf));
         }
         free(glob->forwarders);
     }
@@ -2353,6 +2354,7 @@ static void destroy_collector_state(collector_global_t *glob) {
         }
         free(glob->gsm_identity_map.shards);
     }
+
 
     pthread_mutex_destroy(&(glob->stats_mutex));
     pthread_mutex_destroy(&(glob->configupdate_mutex));
@@ -2442,18 +2444,7 @@ static void clear_global_config(collector_global_t *glob) {
         free_coreserver_list(glob->ciscomirrors);
     }
 
-    if (glob->RMQ_conf.name) {
-        free(glob->RMQ_conf.name);
-    }
-    if (glob->RMQ_conf.pass) {
-        free(glob->RMQ_conf.pass);
-    }
-    if (glob->RMQ_conf.internalpass) {
-        free(glob->RMQ_conf.internalpass);
-    }
-    if (glob->RMQ_conf.hostname) {
-        free(glob->RMQ_conf.hostname);
-    }
+    free_openli_rmq_config(&(glob->RMQ_conf));
 
     free_ssl_config(&(glob->sslconf));
 
@@ -2928,7 +2919,7 @@ static int reload_collector_config(collector_global_t *glob,
         collector_sync_t *sync) {
 
     collector_global_t newstate;
-    int i, tlschanged, ret;
+    int i, tlschanged, ret, rmqchanged = 0;
     coreserver_t *tmp;
     x_input_t *xinp, *xtmp;
     char *newjson = NULL;
@@ -3063,7 +3054,18 @@ static int reload_collector_config(collector_global_t *glob,
     glob->sharedinfo.cinstatedb_key = newstate.sharedinfo.cinstatedb_key;
     newstate.sharedinfo.cinstatedb_key = NULL;
 
+    if (compare_openli_rmq_config(&(glob->RMQ_conf), &(newstate.RMQ_conf))) {
+        free_openli_rmq_config(&(glob->RMQ_conf));
+        glob->RMQ_conf = newstate.RMQ_conf;
+        memset(&(newstate.RMQ_conf), 0, sizeof(newstate.RMQ_conf));
+        rmqchanged = 1;
+    }
+
     pthread_rwlock_unlock(&(glob->config_mutex));
+
+    if (rmqchanged) {
+        sync_publish_rmq_config(sync);
+    }
 
     pthread_rwlock_wrlock(&(glob->sipconfig_mutex));
     glob->sipconfig.trust_sip_from = newstate.sipconfig.trust_sip_from;
@@ -3494,10 +3496,11 @@ int main(int argc, char *argv[]) {
         pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
-        //forwarder only needs CTX if ctx exists and is enabled 
-        glob->forwarders[i].RMQ_conf = glob->RMQ_conf;
+        //forwarder only needs CTX if ctx exists and is enabled
+        copy_openli_rmq_config(&(glob->RMQ_conf),
+                &(glob->forwarders[i].RMQ_conf));
         glob->forwarders[i].ampq_blocked = 0;
-	glob->forwarders[i].haltinfo = NULL;
+    	glob->forwarders[i].haltinfo = NULL;
 
         pthread_create(&(glob->forwarders[i].threadid), NULL,
                 start_forwarding_thread, (void *)&(glob->forwarders[i]));

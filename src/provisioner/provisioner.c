@@ -181,6 +181,7 @@ void init_intercept_config(prov_intercept_conf_t *state) {
     state->ipcc_filters = NULL;
     state->default_email_deliver_compress =
             OPENLI_EMAILINT_DELIVER_COMPRESSED_ASIS;
+    state->rmq_enabled_collectors = 255;        // unconfigured
     pthread_mutex_init(&(state->safelock), NULL);
 }
 
@@ -968,6 +969,25 @@ static int push_default_email_compression(uint8_t defaultcompress,
     return 0;
 }
 
+static int push_rmq_enabled(uint8_t rmqflag, net_buffer_t *nb) {
+    const char *confstr;
+
+    if (rmqflag == 255) {
+        return 0;
+    }
+
+    if (rmqflag) {
+        confstr = "{\"RMQenabled\": true}";
+    } else {
+        confstr = "{\"RMQenabled\": false}";
+    }
+
+    if (push_updated_component_configuration(nb, confstr) < 0) {
+        return -1;
+    }
+    return 0;
+}
+
 static int push_all_default_radius(default_radius_user_t *users,
         net_buffer_t *nb) {
     default_radius_user_t *defuser, *tmp;
@@ -1233,6 +1253,14 @@ static int respond_collector_auth(provision_state_t *state,
             outgoing) == -1) {
         logger(LOG_INFO,
                 "OpenLI: unable to queue default email compression handling to be sent to new collector on fd %d", pev->fd);
+        pthread_mutex_unlock(&(state->interceptconf.safelock));
+        return -1;
+    }
+
+    if (push_rmq_enabled(state->interceptconf.rmq_enabled_collectors,
+            outgoing) == -1) {
+        logger(LOG_INFO,
+                "OpenLI: unable to queue RMQ flag for new collector on fd %d", pev->fd);
         pthread_mutex_unlock(&(state->interceptconf.safelock));
         return -1;
     }

@@ -31,6 +31,7 @@
 #include <libtrace.h>
 #include <zmq.h>
 
+#include "openli_tls.h"
 #include "agency.h"
 #include "netcomms.h"
 #include "etsili_core.h"
@@ -94,6 +95,7 @@ enum {
     OPENLI_EXPORT_CIN_CLOSE = 31,
     OPENLI_EXPORT_CIN_RESET = 32,
     OPENLI_EXPORT_GSM_SMS_IRI = 33,
+    OPENLI_EXPORT_RMQ_CONFIG = 34,
 };
 
 typedef struct openli_ipcc_job {
@@ -332,6 +334,7 @@ struct openli_export_recv {
         liagency_digest_config_t digest;
     	halt_info_t *haltinfo;
         openli_cin_info_job_t cininfo;
+        openli_RMQ_config_t rmqconf;
     } data;
 };
 

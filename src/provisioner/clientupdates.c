@@ -921,6 +921,29 @@ int announce_latest_default_email_decompress(provision_state_t *state) {
     return 0;
 }
 
+int announce_latest_rmq_enabled(provision_state_t *state) {
+    const char *confstr;
+
+    if (state->interceptconf.rmq_enabled_collectors == 255) {
+        return 0;
+    }
+    if (state->interceptconf.rmq_enabled_collectors) {
+        confstr = "{\"RMQenabled\": true}";
+    } else {
+        confstr = "{\"RMQenabled\": false}";
+    }
+    SEND_ALL_COLLECTORS_BEGIN
+        if (push_updated_component_configuration(sock->outgoing,
+                    confstr) < 0) {
+            logger(LOG_INFO, "OpenLI provisioner: unable to send new RMQ configuration to collector '%s'", col->identifier);
+            disconnect_provisioner_client(state->epoll_fd, col->client,
+                    col->identifier);
+            continue;
+        }
+    SEND_ALL_COLLECTORS_END
+    return 0;
+}
+
 liid_hash_t *add_liid_mapping(prov_intercept_conf_t *conf,
         intercept_common_t *common) {
 

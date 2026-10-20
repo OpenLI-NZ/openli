@@ -606,6 +606,12 @@ json_object *get_provisioner_options(update_con_info_t *cinfo UNUSED,
         json_object_object_add(jobj, "email-defaultdelivercompressed",
                 defaultemaildecompressed);
     }
+
+    if (state->interceptconf.rmq_enabled_collectors != 255) {
+        json_object_object_add(jobj, "RMQenabled",
+                json_object_new_boolean(
+                        state->interceptconf.rmq_enabled_collectors));
+    }
     return jobj;
 }
 

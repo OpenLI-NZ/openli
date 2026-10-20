@@ -292,6 +292,8 @@ void free_published_message(openli_export_recv_t *msg) {
         if (msg->data.gsmsms.tpdu) {
             free(msg->data.gsmsms.tpdu);
         }
+    } else if (msg->type == OPENLI_EXPORT_RMQ_CONFIG) {
+        free_openli_rmq_config(&(msg->data.rmqconf));
     }
 
     free(msg);

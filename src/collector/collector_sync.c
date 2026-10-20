@@ -78,6 +78,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
     sync->info_mutex = &(glob->config_mutex);
     sync->sipconfig = &(glob->sipconfig);
     sync->sipconfig_mutex = &(glob->sipconfig_mutex);
+    sync->rmqconfig = &(glob->RMQ_conf);
     sync->glob_xinputs = &(glob->x_inputs);
     sync->xinput_mutex = &(glob->x_input_mutex);
     sync->sip_call_state = &(glob->sip_call_state);
@@ -621,7 +622,7 @@ static int update_collector_global_config(collector_sync_t *sync,
         uint8_t *provmsg, uint16_t msglen) {
 
     char *newconfig = NULL;
-    (void)sync;
+    int rmqchanged = 0;
 
     if (decode_updated_component_configuration(provmsg, msglen,
             &newconfig) < 0) {
@@ -648,11 +649,17 @@ static int update_collector_global_config(collector_sync_t *sync,
     pthread_rwlock_wrlock(sync->info_mutex);
     handle_identity_config_changes(sync->info, &(sync->glob->configupdates),
             newconfig);
+
+    handle_rmq_config_changes(sync->rmqconfig, &(sync->glob->configupdates),
+            newconfig, &rmqchanged);
     pthread_rwlock_unlock(sync->info_mutex);
 
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
 
     pthread_mutex_unlock(sync->glob->configupdate_mutex);
+    if (rmqchanged) {
+        sync_publish_rmq_config(sync);
+    }
 
     free(newconfig);
     return 0;
@@ -4121,6 +4128,22 @@ int sync_thread_main(collector_sync_t *sync) {
     }
 
     return 0;
+}
+
+void sync_publish_rmq_config(collector_sync_t *sync) {
+    openli_export_recv_t *expmsg;
+    size_t i;
+
+    pthread_rwlock_rdlock(sync->info_mutex);
+
+    for (i = 0; i < sync->forwardcount; i++) {
+        expmsg = calloc(1, sizeof(openli_export_recv_t));
+        expmsg->type = OPENLI_EXPORT_RMQ_CONFIG;
+        copy_openli_rmq_config(sync->rmqconfig, &(expmsg->data.rmqconf));
+        publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
+    }
+
+    pthread_rwlock_unlock(sync->info_mutex);
 }
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

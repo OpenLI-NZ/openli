@@ -1245,6 +1245,28 @@ static int emit_basic_options(prov_intercept_conf_t *conf,
                 strlen("decompressed"), 1, 0, YAML_PLAIN_SCALAR_STYLE);
     }
     if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+    if (conf->rmq_enabled_collectors != 255) {
+        yaml_scalar_event_initialize(&event, NULL,
+                (yaml_char_t *)YAML_STR_TAG,
+                (yaml_char_t *)"RMQenabled", strlen("RMQenabled"),
+                1, 0, YAML_PLAIN_SCALAR_STYLE);
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+
+        if (conf->rmq_enabled_collectors) {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"yes", strlen("yes"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+        } else {
+            yaml_scalar_event_initialize(&event, NULL,
+                    (yaml_char_t *)YAML_STR_TAG,
+                    (yaml_char_t *)"no", strlen("no"), 1, 0,
+                    YAML_PLAIN_SCALAR_STYLE);
+        }
+        if (!yaml_emitter_emit(emitter, &event)) return -1;
+    }
+
     return 0;
 }
 

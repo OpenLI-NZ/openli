@@ -29,6 +29,45 @@
 #include "logger.h"
 #include "collector.h"
 
+int handle_rmq_config_changes(openli_RMQ_config_t *rmqconf,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *changed) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_object *enabled_json = NULL;
+    int ret = -1;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, json, strlen(json));
+    if (parsed == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse JSON configuration received from provisioner: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        goto rmqfail;
+    }
+
+    if (json_object_object_get_ex(parsed, "RMQenabled",
+                &enabled_json) &&
+            json_object_is_type(enabled_json, json_type_boolean)) {
+        bool newval = json_object_get_boolean(enabled_json);
+        if (newval != rmqconf->enabled) {
+            rmqconf->enabled = newval;
+            UPDATE_SCALAR_CONFIG(pending, "RMQenabled",
+                    GENERATE_CONFIG_BOOLEAN(rmqconf->enabled),
+                    false, true);
+            *changed = 1;
+        }
+    }
+    ret = 0;
+rmqfail:
+
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
+}
+
 int handle_identity_config_changes(collector_identity_t *ident,
         openli_yaml_config_pending_updates_t *pending, char *json) {
 

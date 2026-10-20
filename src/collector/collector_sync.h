@@ -55,6 +55,7 @@ typedef struct colsync_data {
     pthread_rwlock_t *info_mutex;
     collector_sip_config_t *sipconfig;
     pthread_rwlock_t *sipconfig_mutex;
+    openli_RMQ_config_t *rmqconfig;
     shared_agency_digest_config_t *digest_config;
     pthread_rwlock_t *digest_config_mutex;
 
@@ -130,6 +131,7 @@ void sync_thread_publish_reload(collector_sync_t *sync);
 int sync_thread_main(collector_sync_t *sync);
 void sync_reconnect_all_mediators(collector_sync_t *sync);
 void sync_drop_all_mediators(collector_sync_t *sync);
+void sync_publish_rmq_config(collector_sync_t *sync);
 int add_x2x3_to_sync(collector_sync_t *sync, char *identifier, char *addr,
         char *port);
 void remove_x2x3_from_sync(collector_sync_t *sync, char *identifier,
@@ -141,6 +143,9 @@ int handle_sip_config_changes(collector_sip_config_t *sipconfig,
         openli_yaml_config_pending_updates_t *pending, char *json);
 int handle_identity_config_changes(collector_identity_t *ident,
         openli_yaml_config_pending_updates_t *pending, char *json);
+int handle_rmq_config_changes(openli_RMQ_config_t *rmqconf,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *changed);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

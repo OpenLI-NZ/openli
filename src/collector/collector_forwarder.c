@@ -101,13 +101,11 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         newdest->waitingforhandshake = 0;
         newdest->rmq_declared = 0;
 
-        if (fwd->ampq_conn) {
-            snprintf(stringspace, 32, "ID%d-%d", newdest->mediatorid,
-                    fwd->forwardid);
+        snprintf(stringspace, 32, "ID%d-%d", newdest->mediatorid,
+                fwd->forwardid);
 
-            newdest->rmq_queueid.len = strlen(stringspace);
-            newdest->rmq_queueid.bytes = (void *)(strdup(stringspace));
-        }
+        newdest->rmq_queueid.len = strlen(stringspace);
+        newdest->rmq_queueid.bytes = (void *)(strdup(stringspace));
 
         init_export_buffer(&(newdest->buffer));
 
@@ -400,6 +398,21 @@ static void flag_all_destinations(forwarding_thread_data_t *fwd) {
     }
 }
 
+static void reset_rmq_declared_destinations(forwarding_thread_data_t *fwd) {
+
+    export_dest_t *med;
+    PWord_t *jval;
+    Word_t index;
+
+    index = 0;
+    JLF(jval, fwd->destinations_by_id, index);
+    while (jval != NULL) {
+        med = (export_dest_t *)(*jval);
+        med->rmq_declared = 0;
+        JLN(jval, fwd->destinations_by_id, index);
+    }
+}
+
 static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
     struct timeval tv;
@@ -417,9 +430,6 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         flag_reorderers(msg->data.cept.liid, &(fwd->intreorderer_iri),
                 tv.tv_sec);
 
-        free(msg->data.cept.liid);
-        free(msg->data.cept.authcc);
-        free(msg->data.cept.delivcc);
     } else if (msg->type == OPENLI_EXPORT_MEDIATOR) {
         return add_new_destination(fwd, msg);
     } else if (msg->type == OPENLI_EXPORT_DROP_SINGLE_MEDIATOR) {
@@ -445,8 +455,34 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         flag_all_destinations(fwd);
     } else if (msg->type == OPENLI_EXPORT_RECONNECT_ALL_MEDIATORS) {
         disconnect_all_destinations(fwd);
+    } else if (msg->type == OPENLI_EXPORT_RMQ_CONFIG) {
+        free_openli_rmq_config(&(fwd->RMQ_conf));
+        fwd->RMQ_conf = msg->data.rmqconf;
+        memset(&(msg->data.rmqconf), 0, sizeof(openli_RMQ_config_t));
+
+        if (fwd->ampq_conn) {
+            amqp_connection_close(fwd->ampq_conn, AMQP_REPLY_SUCCESS);
+            amqp_destroy_connection(fwd->ampq_conn);
+            fwd->ampq_conn = NULL;
+            fwd->ampq_sock = NULL;
+        }
+        fwd->ampq_blocked = 0;
+        fwd->logged_rmq_connect_failure = 0;
+        reset_rmq_declared_destinations(fwd);
+
+        if (fwd->RMQ_conf.enabled == 0) {
+            set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_DISABLED);
+        } else {
+            if (fwd->RMQ_conf.name == NULL || fwd->RMQ_conf.pass == NULL) {
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_NOCREDS);
+            } else {
+                set_rmq_thread_state(fwd, OPENLI_RMQ_STATE_DISCONNECTED);
+            }
+        }
+        disconnect_all_destinations(fwd);
     }
-    free(msg);
+
+    free_published_message(msg);
     return 1;
 }
 
@@ -546,13 +582,11 @@ static int handle_encoded_result(forwarding_thread_data_t *fwd,
         med->mediatorid = res->destid;
         init_export_buffer(&(med->buffer));
 
-        if (fwd->ampq_conn) {
-            snprintf(stringspace, 32, "ID%d-%d", med->mediatorid,
-                    fwd->forwardid);
+        snprintf(stringspace, 32, "ID%d-%d", med->mediatorid,
+                fwd->forwardid);
 
-            med->rmq_queueid.len = strlen(stringspace);
-            med->rmq_queueid.bytes = (void *)(strdup(stringspace));
-        }
+        med->rmq_queueid.len = strlen(stringspace);
+        med->rmq_queueid.bytes = (void *)(strdup(stringspace));
         *jval = (Word_t) med;
     } else {
         med = (export_dest_t *)(*jval);

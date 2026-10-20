@@ -1626,6 +1626,13 @@ static int intercept_parser(void *arg, yaml_document_t *doc,
 
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
+            strcasecmp((char *)key->data.scalar.value, "RMQenabled") == 0) {
+        state->rmq_enabled_collectors = config_check_onoff(
+                (char *)(value->data.scalar.value));
+    }
+
+    if (key->type == YAML_SCALAR_NODE &&
+            value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value,
                     "email-defaultdelivercompressed") == 0) {
         if (strcasecmp((char *)value->data.scalar.value, "as-is") == 0) {

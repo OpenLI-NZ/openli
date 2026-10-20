@@ -84,6 +84,7 @@ struct json_intercept {
 
 struct json_prov_options {
     struct json_object *defaultemailcompress;
+    struct json_object *rmqenabled;
 };
 
 struct json_component_options {
@@ -235,6 +236,7 @@ static inline void extract_provisioner_options_json_objects(
 
     json_object_object_get_ex(parsed, "email-defaultdelivercompressed",
             &(opts->defaultemailcompress));
+    json_object_object_get_ex(parsed, "RMQenabled", &(opts->rmqenabled));
 }
 
 static inline void extract_intercept_json_objects(
@@ -2978,6 +2980,19 @@ int modify_provisioner_options(update_con_info_t *cinfo,
             }
             free(delivcompressstring);
         }
+
+        if (optsjson.rmqenabled) {
+            uint8_t newrmq;
+            newrmq = json_object_get_boolean(optsjson.rmqenabled) ? 1 : 0;
+            if (newrmq !=  state->interceptconf.rmq_enabled_collectors) {
+                state->interceptconf.rmq_enabled_collectors = newrmq;
+                if (announce_latest_rmq_enabled(state) < 0) {
+                    logger(LOG_INFO,
+                            "OpenLI provisioner: unable to announce RMQ enabled update to collectors after REST API update");
+                }
+            }
+        }
+
     }
 
     if (parsed) {
