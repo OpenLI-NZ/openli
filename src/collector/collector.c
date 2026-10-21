@@ -35,6 +35,7 @@
 #include <unistd.h>
 #include <arpa/inet.h>
 #include <errno.h>
+#include <time.h>
 #include <openssl/evp.h>
 
 #include <libtrace_parallel.h>
@@ -553,6 +554,9 @@ static void process_tick(libtrace_t *trace, libtrace_thread_t *t,
     flush_local_stats(loc, glob);
 
     if (trace_get_perpkt_thread_id(t) == 0) {
+        struct timespec now;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+            cisco_reassembly_expire(inp->cisco_reassembly, now.tv_sec);
 
         gettimeofday(&tv, NULL);
         stats = trace_create_statistics();
@@ -1466,6 +1470,107 @@ static int apply_vxlan_stripping(libtrace_packet_t *pkt, colinput_t *inp) {
 }
 
 static libtrace_packet_t *process_packet(libtrace_t *trace,
+        libtrace_thread_t *t, void *global, void *tls, libtrace_packet_t *pkt);
+
+/* Destination-only gate: later fragments cannot supply a UDP port. Called
+ * under config_mutex; mirror addrinfo is prepared by the startup fast filter. */
+static int cisco_fragment_destination(collector_global_t *glob,
+        const uint8_t *ip) {
+    coreserver_t *cs, *tmp;
+    HASH_ITER(hh, glob->ciscomirrors, cs, tmp) {
+        if (cs->info && cs->info->ai_family == AF_INET &&
+                memcmp(&CS_TO_V4(cs)->sin_addr.s_addr, ip + 16, 4) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+/* Preserve VLAN identity without relying on an RX queue or a worker hash.
+ * Unsupported link encapsulations are fail closed for Cisco fragments. */
+static int cisco_fragment_context(libtrace_packet_t *pkt, const void *l3,
+        uint8_t context[CISCO_REASS_CONTEXT]) {
+    libtrace_linktype_t linktype;
+    uint32_t remaining;
+    const uint8_t *l2 = trace_get_layer2(pkt, &linktype, &remaining);
+    size_t prefix;
+    memset(context, 0, CISCO_REASS_CONTEXT);
+    if (linktype == TRACE_TYPE_NONE) return 1;
+    if (!l2 || linktype != TRACE_TYPE_ETH || remaining < 14) return 0;
+    if ((const uint8_t *)l3 < l2 + 14) return 0;
+    prefix = (const uint8_t *)l3 - l2;
+    if (prefix > remaining || prefix - 12 > CISCO_REASS_CONTEXT - 1)
+        return 0;
+    context[0] = prefix - 12;
+    memcpy(context + 1, l2 + 12, prefix - 12);
+    return 1;
+}
+
+/* Only called for fragmented outer IPv4 UDP. Does not retain pkt. */
+static int process_cisco_fragment(libtrace_t *trace, libtrace_thread_t *t,
+        colinput_t *inp, colthread_local_t *loc, libtrace_packet_t *pkt,
+        const uint8_t *l3, uint32_t rem, packet_info_t *pinfo,
+        int *forwarded) {
+    collector_global_t *glob = inp->global;
+    int ret;
+    packet_info_t assembled = *pinfo;
+    uint8_t context[CISCO_REASS_CONTEXT], *udp = NULL;
+    size_t udplen = 0;
+    struct timeval first;
+    struct timespec now;
+    int complete = 0;
+
+    pinfo = &assembled;
+    pthread_rwlock_rdlock(&glob->config_mutex);
+    if (cisco_fragment_destination(glob, l3) &&
+            cisco_fragment_context(pkt, l3, context) &&
+            clock_gettime(CLOCK_MONOTONIC, &now) == 0) {
+        complete = cisco_reassembly_feed(inp->cisco_reassembly, l3,
+                rem, context, now.tv_sec, pinfo->tv, &udp, &udplen,
+                &first);
+    }
+    if (complete) {
+        pinfo->family = AF_INET;
+        pinfo->trans_proto = TRACE_IPPROTO_UDP;
+        pinfo->srcport = ((uint16_t)udp[0] << 8) | udp[1];
+        pinfo->destport = ((uint16_t)udp[2] << 8) | udp[3];
+        pinfo->tv = first;
+        if (match_packet_to_coreserver(glob->ciscomirrors,
+                    pinfo, 1, NULL)) {
+            if (glob->sharedinfo.cisco_noradius) {
+                ret = generate_cc_from_cisco_payload(loc, udp + 8,
+                        udplen - 8, pinfo, loc->activemirrorintercepts);
+                if (ret > 0) {
+                    *forwarded = 1;
+                    loc->local_stats.ipcc_created++;
+                }
+            } else {
+                uint32_t id, bodylen;
+                uint8_t *inner = decode_cisco_from_udp_payload(udp + 8,
+                        udplen - 8, &id, &bodylen);
+                if (inner) {
+                    libtrace_packet_t *stripped = trace_create_packet();
+                    trace_construct_packet(stripped, TRACE_TYPE_NONE,
+                            inner, bodylen);
+                    /* As in the existing RADIUS-based stripping path,
+                     * this packet is synchronously owned here. */
+                    pthread_rwlock_unlock(&glob->config_mutex);
+                    if (process_packet(trace, t, inp, loc, stripped))
+                        trace_destroy_packet(stripped);
+                    free(udp);
+                    return 1;
+                }
+            }
+            free(udp);
+            pthread_rwlock_unlock(&glob->config_mutex);
+            return 1;
+        }
+        free(udp);
+    }
+    pthread_rwlock_unlock(&glob->config_mutex);
+    return 0;
+}
+
+static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_thread_t *t, void *global, void *tls,
         libtrace_packet_t *pkt) {
 
@@ -1478,7 +1583,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
     uint8_t proto;
     int forwarded = 0, ret;
     int ipsynced = 0, voipsynced = 0, emailsynced = 0;
-    uint16_t offset;
+    uint16_t offset = 0;
     uint32_t servhash = 0;
 
     packet_info_t pinfo;
@@ -1515,7 +1620,8 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         libtrace_ip_t *ipheader = (libtrace_ip_t *)l3;
         struct sockaddr_in *in4;
 
-        if (rem < ipheader->ip_hl * 4) {
+        if (rem < 20 || ipheader->ip_v != 4 || ipheader->ip_hl < 5 ||
+                rem < ipheader->ip_hl * 4) {
             return pkt;
         }
 
@@ -1525,6 +1631,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         in4->sin_addr = ipheader->ip_dst;
 
         offset = ntohs(ipheader->ip_off);
+        /* This must precede worker-local fragment port recovery. */
+        if (glob->ciscomirrors && (offset & 0x3fff) &&
+                ipheader->ip_p == TRACE_IPPROTO_UDP &&
+                process_cisco_fragment(trace, t, inp, loc, pkt, l3, rem,
+                    &pinfo, &forwarded)) goto processdone;
         /* fast check for IP fragmentation */
         if ((offset & 0x2000) || (offset & 0x1FFF)) {
             pinfo.fragoff = trace_get_fragment_offset(pkt, &(pinfo.moreflag));
@@ -1561,8 +1672,11 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
         } else {
             uint8_t *postip = ((uint8_t *)l3) + ipheader->ip_hl * 4;
 
-            pinfo.srcport = ntohs(*((uint16_t *)postip));
-            pinfo.destport = ntohs(*((uint16_t *)(postip + 2)));
+            if (rem >= ipheader->ip_hl * 4U + 4 &&
+                    ntohs(ipheader->ip_len) >= ipheader->ip_hl * 4U + 4) {
+                pinfo.srcport = ((uint16_t)postip[0] << 8) | postip[1];
+                pinfo.destport = ((uint16_t)postip[2] << 8) | postip[3];
+            }
             proto = ipheader->ip_p;
             pinfo.trans_proto = proto;
         }
@@ -1635,7 +1749,7 @@ static libtrace_packet_t *process_packet(libtrace_t *trace,
             }
         }
 
-        if (glob->ciscomirrors) {
+        if (glob->ciscomirrors && !(offset & 0x3fff)) {
             coreserver_t *cs;
             if ((cs = match_packet_to_coreserver(glob->ciscomirrors,
                     &pinfo, 1, NULL)) != NULL) {
@@ -1966,6 +2080,15 @@ static int start_input(collector_global_t *glob, colinput_t *inp,
 
     }
 
+    /* No callbacks are running here, including after a trace restart. */
+    cisco_reassembly_destroy(inp->cisco_reassembly);
+    inp->cisco_reassembly = cisco_reassembly_create();
+    if (!inp->cisco_reassembly) {
+        logger(LOG_INFO, "OpenLI: cannot allocate Cisco fragment cache");
+        trace_destroy(inp->trace);
+        inp->trace = NULL;
+        return 0;
+    }
     trace_set_tick_interval(inp->trace, 10);
 
     if (trace_pstart(inp->trace, inp, inp->pktcbs, NULL) == -1) {
@@ -2187,6 +2310,8 @@ static void clear_input(colinput_t *input) {
     if (input->trace) {
         trace_destroy(input->trace);
     }
+    cisco_reassembly_destroy(input->cisco_reassembly);
+    input->cisco_reassembly = NULL;
     if (input->pktcbs) {
         trace_destroy_callback_set(input->pktcbs);
     }
