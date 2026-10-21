@@ -1108,6 +1108,7 @@ static int reload_intercept_config(provision_state_t *currstate,
     clear_intercept_state(&(currstate->interceptconf));
     currstate->interceptconf = newconf;
     announce_latest_default_email_decompress(currstate);
+    announce_latest_rmq_enabled(currstate);
     announce_all_updated_liidmappings_to_mediators(currstate);
     return 0;
 }

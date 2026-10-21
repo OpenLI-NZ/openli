@@ -2982,9 +2982,16 @@ int modify_provisioner_options(update_con_info_t *cinfo,
         }
 
         if (optsjson.rmqenabled) {
-            uint8_t newrmq;
-            newrmq = json_object_get_boolean(optsjson.rmqenabled) ? 1 : 0;
-            if (newrmq !=  state->interceptconf.rmq_enabled_collectors) {
+            uint8_t newrmq = 255;
+
+            if (json_object_is_type(optsjson.rmqenabled, json_type_null)) {
+                newrmq = 255;
+            } else if (json_object_is_type(optsjson.rmqenabled,
+                    json_type_boolean)) {
+                newrmq = json_object_get_boolean(optsjson.rmqenabled) ? 1 : 0;
+            }
+
+            if (newrmq != state->interceptconf.rmq_enabled_collectors) {
                 state->interceptconf.rmq_enabled_collectors = newrmq;
                 if (announce_latest_rmq_enabled(state) < 0) {
                     logger(LOG_INFO,

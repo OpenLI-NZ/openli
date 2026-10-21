@@ -658,6 +658,9 @@ static int update_collector_global_config(collector_sync_t *sync,
 
     pthread_mutex_unlock(sync->glob->configupdate_mutex);
     if (rmqchanged) {
+        logger(LOG_INFO,
+                "OpenLI: RMQ buffering on collectors %s by provisioner config update",
+                sync->rmqconfig->enabled ? "enabled": "disabled");
         sync_publish_rmq_config(sync);
     }
 

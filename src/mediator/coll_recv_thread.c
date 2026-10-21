@@ -678,6 +678,11 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 
     hellomsg = (struct fwd_hello_body *)msgbody;
     col->forwarder_id = ntohl(hellomsg->threadid);
+    if (col->forwarder_id == 0) {
+        logger(LOG_INFO, "OpenLI mediator: collector %s transport changed: now using %s",
+                col->ipaddr,
+                hellomsg->using_rmq ? "RabbitMQ" : "TCP");
+    }
     col->forwarder_using_rmq = hellomsg->using_rmq;
     return 1;
 }

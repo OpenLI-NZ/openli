@@ -461,6 +461,15 @@ static int handle_ctrl_message(forwarding_thread_data_t *fwd,
         memset(&(msg->data.rmqconf), 0, sizeof(openli_RMQ_config_t));
 
         if (fwd->ampq_conn) {
+            if (fwd->RMQ_conf.enabled == 0) {
+                logger(LOG_INFO,
+                        "OpenLI collector: forwarding thread %d is disconnecting from RMQ: RMQ output has been disabled via config change",
+                        fwd->forwardid);
+            } else {
+                logger(LOG_INFO,
+                        "OpenLI collector: forwarding thread %d is reconnecting to RMQ to apply updated configuration",
+                        fwd->forwardid);
+            }
             amqp_connection_close(fwd->ampq_conn, AMQP_REPLY_SUCCESS);
             amqp_destroy_connection(fwd->ampq_conn);
             fwd->ampq_conn = NULL;

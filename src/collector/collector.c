@@ -2180,6 +2180,51 @@ static void reload_inputs(collector_global_t *glob,
 
 }
 
+static int reload_cinstatedb_config(collector_global_t *glob) {
+    char *keyfile = NULL;
+    char keybuf[1024];
+    char *kp = NULL;
+
+    if (glob->sharedinfo.cinstatedb_file == NULL) {
+        glob->sharedinfo.cinstatedb_file = strdup("/var/lib/openli/cinstate.db");
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        keyfile = "/etc/openli/cinstatedb.key";
+    } else if (glob->sharedinfo.cinstatedb_key[0] == '/') {
+        keyfile = glob->sharedinfo.cinstatedb_key;
+    }
+
+    if (keyfile) {
+        FILE *f = fopen(keyfile, "r");
+        if (!f) {
+            logger(LOG_INFO, "OpenLI: unable to read CIN state database key from %s: %s", keyfile, strerror(errno));
+            return -1;
+        }
+
+        if (fgets(keybuf, 1024, f) != NULL) {
+            kp = rtrim(keybuf);
+            if (glob->sharedinfo.cinstatedb_key) {
+                free(glob->sharedinfo.cinstatedb_key);
+            }
+            if (kp) {
+                glob->sharedinfo.cinstatedb_key = strdup(kp);
+            } else {
+                glob->sharedinfo.cinstatedb_key = NULL;
+            }
+        }
+        fclose(f);
+    }
+
+    if (glob->sharedinfo.cinstatedb_key == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: no key is configured for the CIN state database");
+        return -1;
+    }
+    return 0;
+}
+
+
 static void clear_input(colinput_t *input) {
 
     if (!input) {
@@ -2931,6 +2976,11 @@ static int reload_collector_config(collector_global_t *glob,
         goto endreload;
     }
 
+    if (reload_cinstatedb_config(&newstate) < 0) {
+        ret = -1;
+        goto endreload;
+    }
+
     if (create_ssl_context(&(newstate.sslconf)) < 0) {
         ret = -1;
         goto endreload;
@@ -3064,6 +3114,10 @@ static int reload_collector_config(collector_global_t *glob,
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     if (rmqchanged) {
+        logger(LOG_INFO,
+                "OpenLI: RMQ buffering on collectors %s by local config reload",
+                glob->RMQ_conf.enabled ? "enabled": "disabled");
+
         sync_publish_rmq_config(sync);
     }
 
