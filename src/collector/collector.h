@@ -47,6 +47,7 @@
 #include "intercept.h"
 #include "etsili_core.h"
 #include "reassembler.h"
+#include "cisco_reassembly.h"
 #include "collector_publish.h"
 #include "collector_base.h"
 #include "cc_prefix_filter.h"
@@ -169,6 +170,7 @@ typedef struct colinput {
     libtrace_t *trace;
     libtrace_filter_t *filter;
     libtrace_callback_set_t *pktcbs;
+    cisco_reassembly_t *cisco_reassembly;
 
     uint8_t vxlan_strip;
     uint16_t vxlan_port;

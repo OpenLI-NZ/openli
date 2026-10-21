@@ -65,6 +65,7 @@ openlicollector_SOURCES=collector/collector.c \
                 collector/collector_push_messaging.h \
 		collector/alushim_parser.c collector/alushim_parser.h \
 		collector/cisco_parser.c collector/cisco_parser.h \
+                collector/cisco_reassembly.c collector/cisco_reassembly.h \
                 collector/ipiri.c collector/ipiri.h \
 				collector/export_shared.h \
                 collector/reassembler.h collector/reassembler.c \
@@ -171,7 +172,7 @@ openlimediator_LDFLAGS=-lpthread -lpatricia @MEDIATOR_LIBS@
 openlimediator_CFLAGS=-I$(abs_top_srcdir)/extlib/libpatricia/ -Icollector/etsiencoding -I$(builddir) -Werror -Wall -Wextra
 endif
 
-check_PROGRAMS = test_intercept_liid_key
+check_PROGRAMS = test_intercept_liid_key test_cisco_reassembly
 TESTS = $(check_PROGRAMS)
 
 test_intercept_liid_key_SOURCES = tests/test_intercept_liid_key.c \
@@ -185,3 +186,11 @@ test_intercept_liid_key_LDFLAGS = -lpthread -lpatricia @PROVISIONER_LIBS@
 test_intercept_liid_key_CFLAGS = -Werror -Wall -Wextra -I$(abs_top_srcdir)/extlib/libpatricia/ -I$(builddir)
 
 install-exec-hook: $(INSTALL_EXEC_HOOKS)
+
+test_cisco_reassembly_SOURCES = tests/test_cisco_reassembly.c \
+                collector/cisco_reassembly.c collector/cisco_reassembly.h
+test_cisco_reassembly_CFLAGS = -std=c11 -Werror -Wall -Wextra -pthread
+test_cisco_reassembly_LDADD =
+test_cisco_reassembly_LDFLAGS = -pthread
+
+EXTRA_DIST = tests/pcli/run.py tests/pcli/harness.c.in tests/pcli/README.md

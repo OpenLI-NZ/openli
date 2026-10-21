@@ -211,6 +211,7 @@ static int parse_input_config(collector_global_t *glob, yaml_document_t *doc,
         inp->threadcount = 1;
         inp->trace = NULL;
         inp->pktcbs = NULL;
+        inp->cisco_reassembly = NULL;
         inp->running = 0;
         inp->report_drops = 1;
         inp->hasher_apply = OPENLI_HASHER_BIDIR;

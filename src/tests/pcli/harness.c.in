@@ -1,0 +1,170 @@
+/* Source-extraction harness; stubs replace libtrace, hash tables and export.
+ * GPL-3.0-or-later. This is NOT an integrated OpenLI/libtrace test. */
+#define _GNU_SOURCE
+#undef NDEBUG
+#include <assert.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <pthread.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include "cisco_reassembly.h"
+#define PACKED __attribute__((packed))
+#define TRACE_TYPE_NONE 0
+#define TRACE_TYPE_ETH 1
+#define TRACE_IPPROTO_UDP 17
+#define ETSI_DIR_INDETERMINATE 0
+#define HASH_ITER(hh,head,el,tmp) for ((el)=(head); (el) && (((tmp)=(el)->next),1); (el)=(tmp))
+#define HASH_FIND(hh,head,key,len,out) do {(out)=(head);while((out) && (out)->id!=*(const uint32_t *)(key)) (out)=(out)->next;} while(0)
+#define HASH_DELETE(hh,head,el) ((head)=NULL)
+typedef int libtrace_t;
+typedef int libtrace_thread_t;
+typedef int libtrace_linktype_t;
+typedef struct { uint8_t *data; size_t len; int link; struct timeval stamp; } libtrace_packet_t;
+typedef struct { struct sockaddr_storage srcip,destip; int family,trans_proto; uint16_t srcport,destport; struct timeval tv; } packet_info_t;
+typedef struct core { struct addrinfo *info; uint16_t lower_portnumeric,upper_portnumeric; struct core *next; } coreserver_t;
+#define CS_TO_V4(cs) ((struct sockaddr_in *)(cs)->info->ai_addr)
+#define CS_TO_V6(cs) ((struct sockaddr_in6 *)(cs)->info->ai_addr)
+#define CORESERVER_MATCH_V4(cs,sa,port) ((sa)->sin_addr.s_addr == CS_TO_V4(cs)->sin_addr.s_addr && (port)>=(cs)->lower_portnumeric && (port)<=(cs)->upper_portnumeric)
+#define CORESERVER_MATCH_V6(cs,sa,port) (memcmp(&(sa)->sin6_addr, &CS_TO_V6(cs)->sin6_addr,16)==0 && (port)>=(cs)->lower_portnumeric && (port)<=(cs)->upper_portnumeric)
+static int prepare_coreserver(coreserver_t *s) { return -1; }
+typedef struct { time_t tostart_time,toend_time; char *liid; int seqtrackerid; } common_t;
+typedef struct intercept { common_t common; struct intercept *next; } vendmirror_intercept_t;
+typedef struct mirrorlist { uint32_t id; vendmirror_intercept_t *intercepts; struct mirrorlist *next; } vendmirror_intercept_list_t;
+typedef int openli_cc_prefix_filter_t;
+typedef struct { vendmirror_intercept_list_t *activemirrorintercepts; void *zmq_pubsocks[1]; struct { unsigned ipcc_created; } local_stats; } colthread_local_t;
+typedef struct { pthread_rwlock_t config_mutex; coreserver_t *ciscomirrors; struct { int cisco_noradius; } sharedinfo; } collector_global_t;
+typedef struct { collector_global_t *global; cisco_reassembly_t *cisco_reassembly; } colinput_t;
+static unsigned jobs, stripped_calls;
+static uint8_t exported[65536];
+static size_t exported_len;
+static struct timeval exported_stamp;
+static uint32_t exported_id;
+static openli_cc_prefix_filter_t *lookup_cc_prefix_filter(colthread_local_t *l, char *id) { return NULL; }
+static int openli_cc_prefix_filter_match_l3(openli_cc_prefix_filter_t *f, uint8_t *p, uint32_t n) { return 0; }
+static int push_vendor_mirrored_ipcc_job(void *sock, common_t *c, struct timeval ts, uint32_t id, int dir, uint8_t *p, uint32_t n) {
+    jobs++; assert(n<=sizeof(exported)); memcpy(exported,p,n); exported_len=n;exported_id=id;exported_stamp=ts;return 1;
+}
+static void *trace_get_layer2(libtrace_packet_t *p, int *link, uint32_t *rem) { *link=p->link;*rem=p->len;return p->data; }
+static void *get_udp_payload(libtrace_packet_t *p, uint32_t *rem, void *sp, void *dp) {
+    unsigned h=(p->data[0]&15)*4; *rem=0;
+    if ((p->data[6]&31)||p->data[7]||p->len<h+8) return NULL;
+    *rem=p->len-h-8;return p->data+h+8;
+}
+static struct timeval trace_get_timeval(libtrace_packet_t *p) { return p->stamp; }
+static libtrace_packet_t *trace_create_packet(void) { return calloc(1,sizeof(libtrace_packet_t)); }
+static void trace_construct_packet(libtrace_packet_t *p,int link,void *bytes,size_t n) { p->data=malloc(n);memcpy(p->data,bytes,n);p->len=n;p->link=link; }
+static void trace_destroy_packet(libtrace_packet_t *p) {free(p->data);free(p);}
+static libtrace_packet_t *process_packet(libtrace_t *a,libtrace_thread_t *b,void *g,void *l,libtrace_packet_t *p) {stripped_calls++;assert(p->len==1500);assert(p->data[0]==0x45);return p;}
+@SOURCE@
+static void put16(uint8_t *p,unsigned n) { p[0]=n>>8;p[1]=n; }
+static uint8_t udp[1512], inner[1500];
+static collector_global_t global;
+static colinput_t input;
+static colthread_local_t worker[2];
+static struct sockaddr_in target;
+static struct addrinfo addr;
+static coreserver_t server;
+static vendmirror_intercept_t intercept;
+static vendmirror_intercept_list_t mappings;
+static void init(void) {
+    memset(inner,0,sizeof(inner));inner[0]=0x45;put16(inner+2,sizeof(inner));inner[9]=253;
+    for(unsigned i=20;i<sizeof(inner);i++)inner[i]=i%251;
+    put16(udp,23456);put16(udp+2,12345);put16(udp+4,sizeof(udp));
+    uint32_t id=htonl(123456);memcpy(udp+8,&id,4);memcpy(udp+12,inner,sizeof(inner));
+    target.sin_family=AF_INET;target.sin_addr.s_addr=htonl(0xc0000202);
+    addr.ai_family=AF_INET;addr.ai_addr=(void *)&target;
+    server.info=&addr;server.lower_portnumeric=server.upper_portnumeric=12345;
+    global.ciscomirrors=&server;global.sharedinfo.cisco_noradius=1;
+    assert(!pthread_rwlock_init(&global.config_mutex,NULL));
+    input.global=&global;input.cisco_reassembly=cisco_reassembly_create();assert(input.cisco_reassembly);
+    mappings.id=123456;mappings.intercepts=&intercept;intercept.common.liid="synthetic";
+    worker[0].activemirrorintercepts=worker[1].activemirrorintercepts=&mappings;
+}
+static size_t fragment(uint8_t *ip,unsigned id,unsigned off,unsigned n,int more) {
+    memset(ip,0,20);ip[0]=0x45;put16(ip+2,20+n);put16(ip+4,id);put16(ip+6,(off/8)|(more?8192:0));ip[9]=17;
+    ip[12]=192;ip[14]=2;ip[15]=1;memcpy(ip+16,&target.sin_addr,4);
+    memcpy(ip+20,udp+off,n);return n+20;
+}
+static int deliver(uint8_t *ip,size_t n,unsigned w) {
+    libtrace_packet_t p={ip,n,TRACE_TYPE_NONE,{100,7}};
+    packet_info_t info={0};info.tv=p.stamp;
+    ((struct sockaddr_in *)&info.destip)->sin_addr=target.sin_addr;
+    int forwarded=0;
+#ifdef BASELINE
+    info.family=AF_INET;info.destport=12345;
+    return generate_cc_from_cisco(&worker[w],&p,&info,&mappings);
+#else
+    return process_cisco_fragment(NULL,NULL,&input,&worker[w],&p,ip,n,&info,&forwarded);
+#endif
+}
+static void check_payload(void) {assert(exported_len==1500);assert(exported_id==123456);assert(!memcmp(exported,inner,1500));assert(exported_stamp.tv_sec==100);}
+static void *thread_fragment(void *arg) {uint8_t p[1600];unsigned off=(uintptr_t)arg?1112:0;size_t n=fragment(p,900,off,off?400:1112,!off);deliver(p,n,!!off);return NULL;}
+int synthetic_main(void) {
+    uint8_t a[1600],b[1600];size_t n,m;
+    init();
+    /* Actual unfragmented wrapper and CC mapping/export, with export stub. */
+    n=fragment(a,1,0,1512,0);libtrace_packet_t p={a,n,0,{100,7}};packet_info_t pi={0};pi.tv=p.stamp;
+    assert(generate_cc_from_cisco(&worker[0],&p,&pi,&mappings)==1);assert(jobs==1);check_payload();
+    n=fragment(a,2,0,1112,1);m=fragment(b,2,1112,400,0);
+    deliver(a,n,0);deliver(b,m,1);
+    if(jobs!=2||exported_len!=1500) {fprintf(stderr,"RED: fragmented PCLI did not export one intact 1500-byte inner packet (jobs=%u length=%zu)\n",jobs,exported_len);return 1;}
+    check_payload();
+#ifndef BASELINE
+    assert(!deliver(a,n,0));assert(!deliver(b,m,1));assert(jobs==2);
+    /* Noninitial first, duplicate before completion, different workers. */
+    n=fragment(a,3,0,816,1);m=fragment(b,3,816,696,0);deliver(b,m,1);deliver(b,m,0);assert(jobs==2);deliver(a,n,0);assert(jobs==3);check_payload();
+    /* Three pieces, missing middle; complete only after it arrives. */
+    n=fragment(a,4,0,512,1);deliver(a,n,0);n=fragment(a,4,1024,488,0);deliver(a,n,0);assert(jobs==3);n=fragment(a,4,512,512,1);deliver(a,n,1);assert(jobs==4);check_payload();
+    /* Conflicting and partial overlaps quarantine the key. */
+    n=fragment(a,5,0,1112,1);deliver(a,n,0);a[100]^=1;deliver(a,n,1);m=fragment(b,5,1112,400,0);deliver(b,m,0);assert(jobs==4);
+    n=fragment(a,6,0,1112,1);deliver(a,n,0);m=fragment(b,6,1104,408,0);deliver(b,m,1);assert(jobs==4);
+    /* Truncation, invalid alignment/offset, malformed UDP, shim/inner. */
+    n=fragment(a,7,0,1112,1);deliver(a,n-1,0);m=fragment(b,7,1112,400,0);deliver(b,m,1);assert(jobs==4);
+    n=fragment(a,8,0,1111,1);deliver(a,n,0);m=fragment(b,8,1112,400,0);deliver(b,m,1);assert(jobs==4);
+    n=fragment(a,9,0,1112,1);put16(a+6,0x3fff);deliver(a,n,0);assert(jobs==4);
+    n=fragment(a,10,0,1112,1);a[24]^=1;deliver(a,n,0);m=fragment(b,10,1112,400,0);deliver(b,m,1);assert(jobs==4);
+    n=fragment(a,11,0,1112,1);a[32]=0;deliver(a,n,0);m=fragment(b,11,1112,400,0);deliver(b,m,1);assert(jobs==4);
+    /* Wrong port, address and unknown vendmirrorid do not export. */
+    n=fragment(a,12,0,1112,1);put16(a+22,12346);deliver(a,n,0);m=fragment(b,12,1112,400,0);deliver(b,m,1);assert(jobs==4);
+    n=fragment(a,13,0,1112,1);a[19]^=1;deliver(a,n,0);m=fragment(b,13,1112,400,0);b[19]^=1;deliver(b,m,1);assert(jobs==4);
+    n=fragment(a,14,0,1112,1);a[31]^=1;deliver(a,n,0);m=fragment(b,14,1112,400,0);deliver(b,m,1);assert(jobs==4);
+    /* Concurrent real pthread callers share the same input cache. */
+    pthread_t t1,t2;assert(!pthread_create(&t1,NULL,thread_fragment,(void *)0));assert(!pthread_create(&t2,NULL,thread_fragment,(void *)1));pthread_join(t1,NULL);pthread_join(t2,NULL);assert(jobs==5);check_payload();
+    /* VLAN isolation through the actual context helper. */
+    uint8_t eth[1700]={0};libtrace_packet_t vlan={eth,0,TRACE_TYPE_ETH,{100,7}};packet_info_t vi={0};vi.tv=vlan.stamp;((struct sockaddr_in *)&vi.destip)->sin_addr=target.sin_addr;int fw=0;
+    put16(eth+12,0x8100);put16(eth+14,1);put16(eth+16,0x0800);
+    n=fragment(eth+18,40,0,1112,1);vlan.len=n+18;
+    assert(!process_cisco_fragment(NULL,NULL,&input,&worker[0],&vlan,eth+18,n,&vi,&fw));
+    m=fragment(eth+18,40,1112,400,0);vlan.len=m+18;put16(eth+14,2);
+    assert(!process_cisco_fragment(NULL,NULL,&input,&worker[1],&vlan,eth+18,m,&vi,&fw));assert(jobs==5);
+    put16(eth+14,1);assert(process_cisco_fragment(NULL,NULL,&input,&worker[1],&vlan,eth+18,m,&vi,&fw));assert(jobs==6);check_payload();
+    /* QinQ: outer 802.1ad + inner 802.1Q; both TCIs isolate state. */
+    put16(eth+12,0x88a8);put16(eth+14,100);put16(eth+16,0x8100);put16(eth+18,200);put16(eth+20,0x0800);
+    n=fragment(eth+22,44,0,1112,1);vlan.len=n+22;
+    assert(!process_cisco_fragment(NULL,NULL,&input,&worker[0],&vlan,eth+22,n,&vi,&fw));
+    m=fragment(eth+22,44,1112,400,0);vlan.len=m+22;put16(eth+14,101);
+    assert(!process_cisco_fragment(NULL,NULL,&input,&worker[1],&vlan,eth+22,m,&vi,&fw));assert(jobs==6);
+    put16(eth+14,100);put16(eth+18,201);
+    assert(!process_cisco_fragment(NULL,NULL,&input,&worker[1],&vlan,eth+22,m,&vi,&fw));assert(jobs==6);
+    put16(eth+18,200);assert(process_cisco_fragment(NULL,NULL,&input,&worker[1],&vlan,eth+22,m,&vi,&fw));assert(jobs==7);check_payload();
+    /* Concurrent IDs sharing a tuple, and a separate vendor mapping. */
+    vendmirror_intercept_list_t other={654321,&intercept,NULL};mappings.next=&other;
+    n=fragment(a,41,0,1112,1);deliver(a,n,0);
+    uint32_t otherid=htonl(other.id);memcpy(udp+8,&otherid,4);m=fragment(b,42,0,1112,1);deliver(b,m,1);
+    m=fragment(b,41,1112,400,0);deliver(b,m,0);assert(jobs==8);check_payload();
+    m=fragment(b,42,1112,400,0);deliver(b,m,1);assert(jobs==9);assert(exported_id==654321);assert(exported_len==1500);assert(!memcmp(exported,inner,1500));
+    uint32_t origid=htonl(123456);memcpy(udp+8,&origid,4);mappings.next=NULL;
+    /* RADIUS stripping branch receives the complete inner packet. */
+    global.sharedinfo.cisco_noradius=0;n=fragment(a,43,0,1112,1);m=fragment(b,43,1112,400,0);deliver(a,n,0);deliver(b,m,1);assert(stripped_calls==1);assert(jobs==9);global.sharedinfo.cisco_noradius=1;
+    uint32_t did,blen;uint8_t pad[50]={0};memcpy(pad,udp+8,4);pad[4]=0x45;put16(pad+6,21);assert(decode_cisco_from_udp_payload(pad,50,&did,&blen)&&blen==46);
+    assert(!decode_cisco_from_udp_payload(pad,3,&did,&blen));pad[4]=0x44;assert(!decode_cisco_from_udp_payload(pad,50,&did,&blen));
+    puts("PASS: Cisco classifier/decoder/CC path, cross-worker fragments, VLAN and QinQ");
+#endif
+    cisco_reassembly_destroy(input.cisco_reassembly);pthread_rwlock_destroy(&global.config_mutex);return 0;
+}
+
+int main(void) { return synthetic_main(); }

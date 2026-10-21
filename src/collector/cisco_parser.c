@@ -25,6 +25,7 @@
  */
 
 #include <assert.h>
+#include <string.h>
 #include <libtrace.h>
 #include <libtrace_parallel.h>
 
@@ -40,7 +41,9 @@ typedef struct ciscomirror_hdr {
 
 static inline uint32_t ciscomirror_get_intercept_id(ciscomirror_hdr_t *hdr) {
 
-    return ntohl(hdr->interceptid);
+    uint32_t id;
+    memcpy(&id, &hdr->interceptid, sizeof(id));
+    return ntohl(id);
 }
 
 uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
@@ -60,9 +63,19 @@ uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
     rem -= sizeof(ciscomirror_hdr_t);
     l3 = ((uint8_t *)header) + sizeof(ciscomirror_hdr_t);
 
-    if (rem == 0) {
-        return 0;
-    }
+    /* PCLI carries a complete inner IP packet. Never export a truncated
+     * first outer fragment or a malformed inner header as CC. Trailing mirror
+     * padding is retained for compatibility with the unfragmented path. */
+    if (rem < 1) return NULL;
+    if ((l3[0] >> 4) == 4) {
+        uint32_t h = (l3[0] & 15) * 4;
+        if (rem < 20 || h < 20 || h > rem ||
+                (((uint32_t)l3[2] << 8) | l3[3]) < h ||
+                (((uint32_t)l3[2] << 8) | l3[3]) > rem) return NULL;
+    } else if ((l3[0] >> 4) == 6) {
+        if (rem < 40 || 40U + (((uint32_t)l3[4] << 8) | l3[5]) > rem)
+            return NULL;
+    } else return NULL;
     *bodylen = rem;
     return l3;
 }
@@ -89,17 +102,24 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         vendmirror_intercept_list_t *ciscomirrors) {
 
     void *payload;
+    uint32_t rem = 0;
+
+    payload = get_udp_payload(packet, &rem, NULL, NULL);
+    return generate_cc_from_cisco_payload(loc, payload, rem, pinfo,
+            ciscomirrors);
+}
+
+int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
+        uint32_t length, packet_info_t *pinfo,
+        vendmirror_intercept_list_t *ciscomirrors) {
+    uint32_t cept_id, bodylen;
     uint8_t *l3;
-    uint32_t rem, cept_id, bodylen;
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
     openli_cc_prefix_filter_t *cc_exclude;
 
-    payload = get_udp_payload(packet, &rem, NULL, NULL);
-    l3 = decode_cisco_from_udp_payload(payload, rem, &cept_id, &bodylen);
-    if (l3 == NULL) {
-        return 0;
-    }
+    l3 = decode_cisco_from_udp_payload(payload, length, &cept_id, &bodylen);
+    if (!l3) return 0;
 
     HASH_FIND(hh, ciscomirrors, &cept_id, sizeof(cept_id), vmilist);
     if (vmilist == NULL) {
@@ -125,7 +145,7 @@ int generate_cc_from_cisco(colthread_local_t *loc,
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
-                trace_get_timeval(packet), cept_id, ETSI_DIR_INDETERMINATE,
+                pinfo->tv, cept_id, ETSI_DIR_INDETERMINATE,
                 l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */

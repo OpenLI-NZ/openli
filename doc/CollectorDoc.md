@@ -105,6 +105,36 @@ packets for the same user session are received by the same processing thread.
 Valid values for the `hasher` option are `bidirectional` (default), `radius`
 and `balanced`.
 
+### Passive Cisco/PCLI mirrors
+
+The legacy top-level `ciscomirrors` list matches mirrored UDP destination
+addresses and ports received through `inputs`; it does not create UDP sockets.
+For vendor-ID based interception, set `cisconoradius: yes` and provision each
+IP intercept's `vendmirrorid` to match the four-byte Cisco/PCLI shim ID.
+This is separate from `udpsinks`.
+
+Fragmented outer IPv4/UDP mirror datagrams are assembled before Cisco decoding.
+Inner IP fragments remain unchanged. All fragments must reach the collector:
+input filters that match only UDP ports can discard noninitial fragments.
+The reassembly state is shared by workers of one input, independently of the
+capture backend or worker hash, and is isolated between different inputs.
+Ethernet VLAN/QinQ tags are included in the fragment identity when present in
+captured bytes; tags stripped by the NIC/backend cannot provide isolation.
+Raw IP and Ethernet with up to four VLAN tags are supported by this path.
+
+The cache is bounded to 64 active datagrams, 128 unique fragments per datagram,
+65515 transport bytes per datagram, and 4096 live identities per input.
+Incomplete, completed and rejected identities expire 30 seconds after their
+first arrival. Identical fragment duplicates are accepted; other overlaps and
+invalid lengths reject the entire identity. Completed/rejected identities are
+retained until expiry to suppress duplicates and ambiguous IPv4 ID reuse.
+New identities are dropped when capacity is exhausted. These limits are
+compile-time constants in `collector/cisco_reassembly.h`; they must be considered
+when sizing a collector. No new runtime configuration is required.
+Vendor CC uses the timestamp of the first fragment received. Unfragmented
+traffic bypasses the reassembly cache. Focused regression tests and commands
+are documented in `src/tests/pcli/README.md`.
+
 ### X2/X3 Support
 OpenLI collectors now support being able to receive intercepted traffic using
 the X2/X3 standards (i.e. ETSI TS 103 221-2).

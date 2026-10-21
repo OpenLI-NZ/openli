@@ -47,6 +47,11 @@
 uint8_t *decode_cisco_from_udp_payload(uint8_t *payload, uint32_t plen,
         uint32_t *shimintid, uint32_t *bodylen);
 
+/* Same CC path for a fully reassembled UDP payload (without UDP header). */
+int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
+        uint32_t length, packet_info_t *pinfo,
+        vendmirror_intercept_list_t *ciscomirrors);
+
 /** Converts a Cisco LI-mirrored packet directly into a CC encoding job for
  *  any intercepts that have requested its vendor mirror ID.
  *
