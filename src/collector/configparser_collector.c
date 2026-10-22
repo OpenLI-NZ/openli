@@ -888,9 +888,12 @@ int parse_collector_config(char *configfile, collector_global_t *glob) {
 char *collector_config_to_json(collector_global_t *glob) {
 
     json_object *jobj = json_object_new_object();
+    json_object *jthreads, *medtgts;
     const char *json_str;
     char *result;
     char buffer[1024];
+    col_known_mediator_t *kmed, *ktmp;
+    int connected = 0, total = 0;
 
     pthread_rwlock_rdlock(&(glob->config_mutex));
     uuid_unparse(glob->sharedinfo.uuid, buffer);
@@ -904,6 +907,42 @@ char *collector_config_to_json(collector_global_t *glob) {
         json_object_object_add(jobj, "interceptpointid",
                 json_object_new_string(glob->sharedinfo.intpointid));
     }
+
+    medtgts = json_object_new_array();
+
+    HASH_ITER(hh, glob->sharedinfo.known_mediators, kmed, ktmp) {
+        json_object *jmed = json_object_new_object();
+        const char *statusstr = NULL;
+
+        if (kmed->status == OPENLI_DEST_STATE_CONNECTED) {
+            connected ++;
+        }
+        total ++;
+
+        statusstr = openli_dest_state_to_string(kmed->status);
+        json_object_object_add(jmed, "mediatorid",
+                json_object_new_int(kmed->mediatorid));
+        json_object_object_add(jmed, "status",
+                json_object_new_string(statusstr));
+        json_object_object_add(jmed, "ip",
+                json_object_new_string(kmed->ipstr));
+        json_object_object_add(jmed, "port",
+                json_object_new_string(kmed->portstr));
+        json_object_array_add(medtgts, jmed);
+    }
+    json_object_object_add(jobj, "mediators_connected",
+            json_object_new_int(connected));
+    json_object_object_add(jobj, "mediators_total",
+            json_object_new_int(total));
+
+    json_object_object_add(jobj, "mediator_dests", medtgts);
+
+    if (glob->etsitls) {
+        json_object_object_add(jobj, "etsitls", json_object_new_boolean(true));
+    } else {
+        json_object_object_add(jobj, "etsitls", json_object_new_boolean(false));
+    }
+
     pthread_rwlock_unlock(&(glob->config_mutex));
 
     pthread_rwlock_rdlock(&glob->sipconfig_mutex);
@@ -945,11 +984,12 @@ char *collector_config_to_json(collector_global_t *glob) {
         json_object_object_add(jobj, "RMQstatus",
                 json_object_new_string("initializing"));
     } else {
-        json_object *jthreads = json_object_new_array();
         const char *first_err = NULL, *errstr;
-        int connected = 0, i;
+        int i;
         openli_rmq_conn_state_t st;
 
+        connected = 0;
+        jthreads = json_object_new_array();
         for (i = 0; i < glob->forwarding_threads; i++) {
             st = __atomic_load_n(&(glob->forwarders[i].rmq_state),
                     __ATOMIC_ACQUIRE);

@@ -2417,6 +2417,7 @@ static void destroy_collector_state(collector_global_t *glob) {
 static void clear_global_config(collector_global_t *glob) {
     colinput_t *inp, *tmp;
     x_input_t *xinp, *xtmp;
+    col_known_mediator_t *kmed, *ktmp;
     colsync_udp_sink_t *sink, *sinktmp;
 
     HASH_ITER(hh, glob->inputs, inp, tmp) {
@@ -2477,6 +2478,13 @@ static void clear_global_config(collector_global_t *glob) {
     }
     if (glob->sharedinfo.cinstatedb_key) {
         free(glob->sharedinfo.cinstatedb_key);
+    }
+
+    HASH_ITER(hh, glob->sharedinfo.known_mediators, kmed, ktmp) {
+        HASH_DELETE(hh, glob->sharedinfo.known_mediators, kmed);
+        free(kmed->ipstr);
+        free(kmed->portstr);
+        free(kmed);
     }
 
     if (glob->alumirrors) {
@@ -3026,6 +3034,7 @@ static int reload_collector_config(collector_global_t *glob,
 
         for (i = 0; i < glob->forwarding_threads; i++) {
             pthread_mutex_lock(&(glob->forwarders[i].sslmutex));
+            glob->forwarders[i].tlsrequired = glob->etsitls;
             glob->forwarders[i].ctx = (glob->sslconf.ctx && glob->etsitls)
                     ? glob->sslconf.ctx : NULL;
             pthread_mutex_unlock(&(glob->forwarders[i].sslmutex));
@@ -3548,6 +3557,7 @@ int main(int argc, char *argv[]) {
         glob->forwarders[i].shared = &(glob->sharedinfo);
         glob->forwarders[i].shared_mutex = &(glob->config_mutex);
         pthread_mutex_init(&(glob->forwarders[i].sslmutex), NULL);
+        glob->forwarders[i].tlsrequired = glob->etsitls;
         glob->forwarders[i].ctx =
                 (glob->sslconf.ctx && glob->etsitls) ? glob->sslconf.ctx : NULL;
         //forwarder only needs CTX if ctx exists and is enabled

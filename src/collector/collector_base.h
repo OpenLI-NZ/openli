@@ -209,6 +209,14 @@ typedef struct upcoming_intercept_time {
     struct upcoming_intercept_event *events;
 } upcoming_intercept_time_t;
 
+typedef struct col_known_mediator {
+    uint32_t mediatorid;
+    char *ipstr;
+    char *portstr;
+    openli_dest_conn_state_t status;
+    UT_hash_handle hh;
+} col_known_mediator_t;
+
 typedef struct collector_identity {
     uuid_t uuid;
 
@@ -228,6 +236,8 @@ typedef struct collector_identity {
 
     char *cinstatedb_file;
     char *cinstatedb_key;
+
+    col_known_mediator_t *known_mediators;
 
     EVP_PKEY *digestsigningkey;
 } collector_identity_t;
@@ -326,6 +336,7 @@ typedef struct forwarding_thread_data {
     Pvoid_t intreorderer_cc;
     Pvoid_t intreorderer_iri;
 
+    uint8_t tlsrequired;
     SSL_CTX *ctx;
     pthread_mutex_t sslmutex;
 

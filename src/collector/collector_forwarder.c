@@ -180,6 +180,8 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         export_dest_t *med) {
 
     int err;
+    col_known_mediator_t *found = NULL;
+
     if (med->fd != -1) {
         JLD(err, fwd->destinations_by_fd, med->fd);
         close(med->fd);
@@ -200,6 +202,18 @@ static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
         SSL_free(med->ssl);
         med->ssl = NULL;
     }
+
+    if (fwd->forwardid == 0) {
+        pthread_rwlock_wrlock(fwd->shared_mutex);
+        HASH_FIND(hh, fwd->shared->known_mediators, &(med->mediatorid),
+                sizeof(med->mediatorid), found);
+        if (found) {
+            found->status = OPENLI_DEST_STATE_DISCONNECTED;
+            __atomic_store_n(&rmq_status_changed, 1, __ATOMIC_RELEASE);
+        }
+        pthread_rwlock_unlock(fwd->shared_mutex);
+    }
+
 }
 
 static void remove_destination(forwarding_thread_data_t *fwd,
@@ -632,26 +646,33 @@ static void purge_unconfirmed_mediators(forwarding_thread_data_t *fwd) {
 static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
         forwarding_thread_data_t *fwd) {
 
-    int sockfd, r;
+    int sockfd, r, funcret = -1;
+    uint8_t status;
+    col_known_mediator_t *kmed = NULL;
 
     if (dest->ipstr == NULL) {
         /* This is an unannounced mediator */
         return -1;
     }
 
-    sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 1);
-    fd_set_nonblock(sockfd);
+    if (fwd->tlsrequired && fwd->ctx == NULL) {
+        status = OPENLI_DEST_STATE_ERR_NOCERTS;
+        goto setstatus;
+    }
 
+    sockfd = connect_socket(dest->ipstr, dest->portstr, dest->failmsg, 1);
     if (sockfd == -1) {
-        /* TODO should probably bail completely on this dest if this
-         * happens. */
-        return -1;
+        status = OPENLI_DEST_STATE_ERR_CONNECT;
+        goto setstatus;
     }
 
     if (sockfd == 0) {
         dest->failmsg = 1;
-        return -1;
+        status = OPENLI_DEST_STATE_ERR_CONNECT;
+        goto setstatus;
     }
+
+    fd_set_nonblock(sockfd);
 
     if (ctx != NULL){
         int errr;
@@ -668,7 +689,10 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
                 SSL_free(dest->ssl);
                 dest->ssl = NULL;
                 logger(LOG_INFO, "OpenLI: SSL Handshake with mediator failed in forwarding thread %d", fwd->forwardid);
-                return -1;
+                status = OPENLI_DEST_STATE_ERR_TLS;
+                goto setstatus;
+            } else {
+                status = OPENLI_DEST_STATE_CONNECTING;
             }
         }
         if (dest->ssllasterror == 0) {
@@ -688,17 +712,35 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
                     fwd->forwardid, dest->ipstr, dest->portstr,
                     strerror(errno));
             close(sockfd);
-            return -1;
+            status = OPENLI_DEST_STATE_ERR_HELLO;
+            goto setstatus;
+        } else {
+            status = OPENLI_DEST_STATE_CONNECTED;
         }
     }
 
+    funcret = sockfd;
     dest->failmsg = 0;
     /* If we disconnected after a partial send, make sure we re-send the
      * whole record and trust that downstream will figure out how to deal
      * with any duplication.
      */
     rewind_export_buffer(&(dest->buffer));
-    return sockfd;
+
+setstatus:
+    if (fwd->forwardid != 0) {
+        return funcret;
+    }
+
+    pthread_rwlock_wrlock(fwd->shared_mutex);
+    HASH_FIND(hh, fwd->shared->known_mediators, &(dest->mediatorid),
+            sizeof(dest->mediatorid), kmed);
+    if (kmed) {
+        kmed->status = status;
+        __atomic_store_n(&rmq_status_changed, 1, __ATOMIC_RELEASE);
+    }
+    pthread_rwlock_unlock(fwd->shared_mutex);
+    return funcret;
 }
 
 
@@ -972,6 +1014,17 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
             disconnect_mediator(fwd, dest);
         } else {
             dest->waitingforhandshake = 0;
+            if (fwd->forwardid == 0) {
+                col_known_mediator_t *kmed = NULL;
+                pthread_rwlock_wrlock(fwd->shared_mutex);
+                HASH_FIND(hh, fwd->shared->known_mediators, &(dest->mediatorid),
+                        sizeof(dest->mediatorid), kmed);
+                if (kmed) {
+                    kmed->status = OPENLI_DEST_STATE_CONNECTED;
+                    __atomic_store_n(&(rmq_status_changed), 1, __ATOMIC_RELEASE);
+                }
+                pthread_rwlock_unlock(fwd->shared_mutex);
+            }
         }
     }
 }

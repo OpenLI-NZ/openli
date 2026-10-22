@@ -286,7 +286,18 @@ typedef enum {
     OPENLI_RMQ_STATE_ERR_CONSUME,
 } openli_rmq_conn_state_t;
 
+typedef enum {
+    OPENLI_DEST_STATE_DISCONNECTED = 0,
+    OPENLI_DEST_STATE_CONNECTING,
+    OPENLI_DEST_STATE_CONNECTED,
+    OPENLI_DEST_STATE_ERR_NOCERTS,
+    OPENLI_DEST_STATE_ERR_CONNECT,
+    OPENLI_DEST_STATE_ERR_TLS,
+    OPENLI_DEST_STATE_ERR_HELLO,
+} openli_dest_conn_state_t;
+
 const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state);
+const char *openli_dest_state_to_string(openli_dest_conn_state_t state);
 
 net_buffer_t *create_net_buffer(net_buffer_type_t buftype, int fd, SSL *ssl);
 int fd_set_nonblock(int fd);

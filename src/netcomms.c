@@ -3669,6 +3669,27 @@ void nb_log_receive_error(openli_proto_msgtype_t err) {
 
 }
 
+const char *openli_dest_state_to_string(openli_dest_conn_state_t state) {
+    switch(state) {
+        case OPENLI_DEST_STATE_DISCONNECTED:
+            return "disconnected";
+        case OPENLI_DEST_STATE_CONNECTING:
+            return "connecting";
+        case OPENLI_DEST_STATE_CONNECTED:
+            return "connected";
+        case OPENLI_DEST_STATE_ERR_NOCERTS:
+            return "error: missing TLS certs";
+        case OPENLI_DEST_STATE_ERR_CONNECT:
+            return "error: TCP connect failed or refused";
+        case OPENLI_DEST_STATE_ERR_TLS:
+            return "error: TLS handshake failed";
+        case OPENLI_DEST_STATE_ERR_HELLO:
+            return "error: mediator handshake failed";
+    }
+    return "unknown";
+
+}
+
 const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state) {
     switch(state) {
         case OPENLI_RMQ_STATE_DISABLED:

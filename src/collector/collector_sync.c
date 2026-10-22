@@ -1716,10 +1716,18 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
     size_t i;
     openli_mediator_t med;
     openli_export_recv_t *expmsg;
+    col_known_mediator_t *found = NULL;
 
     if (decode_mediator_announcement(provmsg, msglen, &med) == -1) {
         if (sync->instruct_log) {
             logger(LOG_INFO, "OpenLI: received invalid mediator announcement from provisioner.");
+        }
+        return -1;
+    }
+
+    if (med.ipstr == NULL || med.portstr == NULL) {
+        if (sync->instruct_log) {
+            logger(LOG_INFO, "OpenLI: received mediator announcement from provisioner without IP or port.");
         }
         return -1;
     }
@@ -1736,6 +1744,33 @@ static int new_mediator(collector_sync_t *sync, uint8_t *provmsg,
 
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
+
+    pthread_rwlock_wrlock(sync->info_mutex);
+    HASH_FIND(hh, sync->info->known_mediators, &med.mediatorid,
+            sizeof(med.mediatorid), found);
+    if (!found) {
+        found = calloc(1, sizeof(col_known_mediator_t));
+        found->mediatorid = med.mediatorid;
+        found->ipstr = strdup(med.ipstr);
+        found->portstr = strdup(med.portstr);
+        found->status = OPENLI_DEST_STATE_DISCONNECTED;
+
+        HASH_ADD_KEYPTR(hh, sync->info->known_mediators, &(found->mediatorid),
+                sizeof(found->mediatorid), found);
+    } else {
+        if (strcmp(found->ipstr, med.ipstr) != 0 ||
+                strcmp(found->portstr, med.portstr) != 0) {
+
+            free(found->ipstr);
+            free(found->portstr);
+            found->ipstr = strdup(med.ipstr);
+            found->portstr = strdup(med.portstr);
+            found->status = OPENLI_DEST_STATE_DISCONNECTED;
+        }
+    }
+
+    pthread_rwlock_unlock(sync->info_mutex);
+
     free(med.ipstr);
     free(med.portstr);
 
@@ -1748,6 +1783,7 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
     size_t i;
     openli_mediator_t med;
     openli_export_recv_t *expmsg;
+    col_known_mediator_t *found = NULL;
 
     if (decode_mediator_withdraw(provmsg, msglen, &med) == -1) {
         if (sync->instruct_log) {
@@ -1767,6 +1803,17 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
         publish_openli_msg(sync->zmq_fwdctrlsocks[i], expmsg);
     }
 
+    pthread_rwlock_wrlock(sync->info_mutex);
+    HASH_FIND(hh, sync->info->known_mediators, &med.mediatorid,
+            sizeof(med.mediatorid), found);
+    if (found) {
+        HASH_DELETE(hh, sync->info->known_mediators, found);
+        free(found->ipstr);
+        free(found->portstr);
+        free(found);
+    }
+
+    pthread_rwlock_unlock(sync->info_mutex);
     free(med.ipstr);
     free(med.portstr);
     return 1;
