@@ -867,7 +867,7 @@ static int publish_pending_raw_batches(coll_recv_t *col) {
         uint32_t checked = 0;
         uint32_t idx = 0, tag_idx;
 
-        if (q->count == 0 || !known->declared_int_rmq) {
+        if (q->count == 0 || !known->declared_raw_rmq) {
             continue;
         }
         idx = q->head;
