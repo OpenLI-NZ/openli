@@ -76,6 +76,7 @@ typedef struct ii_header {
 struct fwd_hello_body {
     int threadid;
     uint8_t using_rmq;
+    uuid_t uuid;
 } PACKED;
 
 typedef struct openli_forwarder_hello {
@@ -281,6 +282,7 @@ typedef enum {
     OPENLI_RMQ_STATE_ERR_SOCKET,
     OPENLI_RMQ_STATE_ERR_AUTH,
     OPENLI_RMQ_STATE_ERR_CHANNEL,
+    OPENLI_RMQ_STATE_ERR_QUEUEDECLARE,
     OPENLI_RMQ_STATE_ERR_CONFIRMS,
     OPENLI_RMQ_STATE_ERR_PUBLISH,
     OPENLI_RMQ_STATE_ERR_CONSUME,
@@ -294,6 +296,7 @@ typedef enum {
     OPENLI_DEST_STATE_ERR_CONNECT,
     OPENLI_DEST_STATE_ERR_TLS,
     OPENLI_DEST_STATE_ERR_HELLO,
+    OPENLI_DEST_STATE_ERR_KEEPALIVE,
 } openli_dest_conn_state_t;
 
 const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state);
@@ -334,7 +337,7 @@ int push_lea_withdrawal_onto_net_buffer(net_buffer_t *nb, liagency_t *lea);
 int push_intercept_dest_onto_net_buffer(net_buffer_t *nb, char *liid,
         char *agencyid);
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t
-        authtype, char *jsonconfig, char *uuidstr);
+        authtype, const char *jsonconfig, const char *uuidstr);
 int push_udp_sink_onto_net_buffer(net_buffer_t *nb, const char *addr,
         const char *port, const char *identifier, uint64_t ts,
         openli_proto_msgtype_t msgtype);
@@ -381,7 +384,7 @@ int push_x2x3_listener_removal_onto_net_buffer(net_buffer_t *nb,
         const char *ipaddr, const char *port);
 
 int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
-        uint8_t using_rmq);
+        uint8_t using_rmq, uuid_t uuid);
 
 openli_proto_msgtype_t receive_RMQ_buffer(net_buffer_t *nb,
         amqp_connection_state_t amqp_state, uint8_t **msgbody,

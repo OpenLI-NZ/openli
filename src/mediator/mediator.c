@@ -70,6 +70,11 @@ volatile int mediator_halt = 0;
  */
 volatile int reload_config = 0;
 
+/** Flag used to indicate if we need to send a status update back to the
+ *  provisioner.
+ */
+static volatile uint8_t mediator_status_changed = 0;
+
 /** Signal handler for SIGINT / SIGTERM */
 static void halt_signal(int signal) {
     (void)signal;
@@ -91,6 +96,10 @@ static void reload_signal(int signal) {
 static void usage(char *prog) {
         fprintf(stderr, "Usage: %s [ -d ] -c configfile\n", prog);
         fprintf(stderr, "\nSet the -d flag to run as a daemon.\n");
+}
+
+void mediator_flag_status_change(void) {
+    __atomic_store_n(&(mediator_status_changed), 1, __ATOMIC_RELEASE);
 }
 
 /** Tidy up the global configuration for this mediator instance.
@@ -548,6 +557,7 @@ static int receive_lea_withdrawal(mediator_state_t *state, uint8_t *msgbody,
 
     mediator_halt_agency_thread(&(state->agency_threads), lea->agencyid);
     free_liagency(lea);
+    mediator_status_changed = 1;
     return 0;
 }
 
@@ -594,6 +604,7 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
         ret = mediator_update_agency_thread(existing, lea);
         /* Don't free lea -- it will get sent to the LEA thread */
     }
+    mediator_status_changed = 1;
 
     return ret;
 }
@@ -958,6 +969,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             halt_openli_timer(mev);
             mediator_clean_collectors(&(state->collector_threads));
             ret = start_openli_timer(state->col_clean_timerev, 30);
+            mediator_status_changed = 1;
             break;
         case OPENLI_EPOLL_SIGNAL:
             /* we got a signal that needs to be handled */
@@ -968,6 +980,7 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
             ret = mediator_accept_collector_connection(
                     &(state->collector_threads), state->listenerev->fd,
                     colname, INET6_ADDRSTRLEN);
+            mediator_status_changed = 1;
             break;
         case OPENLI_EPOLL_CEASE_LIID_TIMER:
             /* an LIID->agency mapping can now be safely removed */
@@ -1223,6 +1236,8 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     int rmqchanged = 0;
     int medidchanged = 0;
     int opidchanged = 0;
+    char medid_str[32];
+    char *jsonconfig;
 
     /* TODO the logic in here is horrible to try and follow! */
 
@@ -1385,6 +1400,14 @@ static int reload_mediator_config(mediator_state_t *currstate) {
 
     }
 
+    if (currstate->provisioner.provev != NULL) {
+        snprintf(medid_str, sizeof(medid_str), "%u", currstate->mediatorid);
+        jsonconfig = mediator_config_to_json(currstate);
+        send_mediator_status_to_provisioner(&(currstate->provisioner),
+                jsonconfig, medid_str);
+        free(jsonconfig);
+    }
+
     /* newstate was just temporary and should only contain config,
      * so we can tidy it up now using clear_med_config() */
     clear_med_config(&newstate);
@@ -1410,6 +1433,9 @@ static void run(mediator_state_t *state) {
 	struct epoll_event evs[64];
     int provfail = 0;
     openli_epoll_ev_t *signalev;
+    time_t last_status_update = time(NULL);
+    char medid_str[32];
+    char *jsonconfig;
 
     /* Register the epoll event for received signals */
     signalev = create_openli_fdevent(state->epoll_fd, NULL,
@@ -1455,8 +1481,13 @@ static void run(mediator_state_t *state) {
          * a connection active */
         if (state->provisioner.provev == NULL &&
                 state->provisioner.tryconnect != 0) {
+            snprintf(medid_str, sizeof(medid_str), "%u", state->mediatorid);
+            jsonconfig = mediator_config_to_json(state);
             provfail = attempt_provisioner_connect(&(state->provisioner),
-                    provfail);
+                    provfail, jsonconfig, medid_str);
+            free(jsonconfig);
+            last_status_update = time(NULL);
+            mediator_status_changed = 0;
 
             if (provfail < 0) {
                 break;
@@ -1480,6 +1511,22 @@ static void run(mediator_state_t *state) {
                 }
             }
         }
+
+        if (mediator_status_changed && state->provisioner.provev) {
+            time_t now = time(NULL);
+            if (now - last_status_update >= 2) {
+                snprintf(medid_str, sizeof(medid_str), "%u", state->mediatorid);
+                jsonconfig = mediator_config_to_json(state);
+
+                send_mediator_status_to_provisioner(&(state->provisioner),
+                        jsonconfig, medid_str);
+
+                last_status_update = now;
+                mediator_status_changed = 0;
+                free(jsonconfig);
+            }
+        }
+
 
         /* This timer will force us to stop checking epoll and go back
          * to the start of this loop (i.e. checking if we should halt the

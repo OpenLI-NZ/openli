@@ -39,6 +39,7 @@
 #include <amqp.h>
 #endif
 
+#include "netcomms.h"
 #include "export_buffer.h"
 #include "openli_epoll.h"
 #include "liidmapping.h"
@@ -93,6 +94,8 @@ typedef struct handover {
     uint8_t disconnect_msg;
     int epoll_fd;
     time_t last_connect_attempt;
+    openli_dest_conn_state_t status;
+    char lasterror[64];
 } handover_t;
 
 typedef struct mediator_agency {

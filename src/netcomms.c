@@ -215,7 +215,7 @@ static inline int push_tlv(net_buffer_t *nb, openli_proto_fieldtype_t type,
 }
 
 int push_auth_onto_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t msgtype,
-        char *jsonconfig, char *uuidstr) {
+        const char *jsonconfig, const char *uuidstr) {
 
     ii_header_t hdr;
     uint16_t len = 0;
@@ -1964,7 +1964,7 @@ int push_ssl_required(net_buffer_t *nb) {
 }
 
 int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
-        uint8_t using_rmq) {
+        uint8_t using_rmq, uuid_t uuid) {
 
     openli_forwarder_hello_t hellomsg;
     int r;
@@ -1976,6 +1976,7 @@ int transmit_forwarder_hello(int sockfd, SSL *ssl, int threadid,
             sizeof(hellomsg.fwd_hello_body), 0);
     hellomsg.fwd_hello_body.using_rmq = using_rmq;
     hellomsg.fwd_hello_body.threadid = htonl(threadid);
+    uuid_copy(hellomsg.fwd_hello_body.uuid, uuid);
 
     if (ssl) {
         do {
@@ -2462,8 +2463,8 @@ int decode_component_name(uint8_t *msgbody, uint16_t len, char **jsonconfig,
 
     uint8_t *msgend = msgbody + len;
 
-    *jsonconfig = NULL;
-    *uuidstr = NULL;
+    if (jsonconfig) *jsonconfig = NULL;
+    if (uuidstr) *uuidstr = NULL;
     while (msgbody < msgend) {
         openli_proto_fieldtype_t f;
         uint8_t *valptr;
@@ -2473,9 +2474,13 @@ int decode_component_name(uint8_t *msgbody, uint16_t len, char **jsonconfig,
             return -1;
         }
         if (f == OPENLI_PROTO_FIELD_JSON_CONFIGURATION) {
-            DECODE_STRING_FIELD(*jsonconfig, valptr, vallen);
+            if (jsonconfig) {
+                DECODE_STRING_FIELD(*jsonconfig, valptr, vallen);
+            }
         } else if (f == OPENLI_PROTO_FIELD_UUID) {
-            DECODE_STRING_FIELD(*uuidstr, valptr, vallen);
+            if (uuidstr) {
+                DECODE_STRING_FIELD(*uuidstr, valptr, vallen);
+            }
         } else {
             dump_buffer_contents(msgbody, len);
             logger(LOG_INFO,
@@ -3685,6 +3690,8 @@ const char *openli_dest_state_to_string(openli_dest_conn_state_t state) {
             return "error: TLS handshake failed";
         case OPENLI_DEST_STATE_ERR_HELLO:
             return "error: mediator handshake failed";
+        case OPENLI_DEST_STATE_ERR_KEEPALIVE:
+            return "error: keepalive timed out";
     }
     return "unknown";
 

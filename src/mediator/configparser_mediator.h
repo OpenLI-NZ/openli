@@ -31,4 +31,5 @@
 #include "mediator/mediator.h"
 
 int parse_mediator_config(char *configfile, mediator_state_t *state);
+char *mediator_config_to_json(mediator_state_t *state);
 #endif

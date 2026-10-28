@@ -121,12 +121,15 @@ int transmit_provisioner(mediator_prov_t *prov);
  *  @param prov             The provisioner to connect to
  *  @param provfail         Set to 1 if the most recent connection attempt
  *                          failed, 0 otherwise.
+ *  @param jsonconfig       The current mediator configuration, in JSON format
+ *  @param medid_str        The identifier for this mediator
  *
  *  @return 1 if the connection attempt fails for non-fatal reason, 0 if
  *            the attempt succeeded (or we were already connected), -1
  *            if the connection attempt failed for an unresolvable reason.
  */
-int attempt_provisioner_connect(mediator_prov_t *prov, int provfail);
+int attempt_provisioner_connect(mediator_prov_t *prov, int provfail,
+        const char *jsonconfig, const char *medid_str);
 
 /** Sends the mediator details message to a connected provisioner.
  *  Mediator details include the port and IP that it is listening on for
@@ -152,6 +155,19 @@ int send_mediator_details_to_provisioner(mediator_prov_t *prov,
  */
 int reload_provisioner_socket_config(mediator_prov_t *currstate,
         mediator_prov_t *newstate);
+
+/* Constructs a OPENLI_PROTO_MEDIATOR_AUTH message that includes the current
+ * mediator configuration and sends it to the provisioner.
+ *
+ * @param prov          The reference to the provisioner
+ * @param jsonconfig    The current mediator configuration, in JSON format
+ * @param medid_str     The identifier for this mediator
+ *
+ * @return  -1 if an error occurs, 0 if the provisioner is not connected,
+ *           1 on success
+ */
+int send_mediator_status_to_provisioner(mediator_prov_t *prov,
+        const char *jsonconfig, const char *medid_str);
 
 #endif
 

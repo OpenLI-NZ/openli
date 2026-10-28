@@ -705,7 +705,7 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
 
         /* Send the HELLO message right away */
         r = transmit_forwarder_hello(sockfd, NULL, fwd->forwardid,
-                fwd->RMQ_conf.enabled);
+                fwd->RMQ_conf.enabled, fwd->shared->uuid);
 
         if (r < 0) {
             logger(LOG_INFO, "OpenLI: collector forwarding thread %d was unable to send hello to mediator %s:%s -- %s",
@@ -1004,7 +1004,7 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
         logger(LOG_DEBUG, "OpenLI: SSL Handshake from mediator accepted by forwarding thread %d", fwd->forwardid);
         dest->ssllasterror = 0;
         ret = transmit_forwarder_hello(dest->fd, dest->ssl, fwd->forwardid,
-                fwd->RMQ_conf.enabled);
+                fwd->RMQ_conf.enabled, fwd->shared->uuid);
 
         if (ret < 0) {
             logger(LOG_INFO, "OpenLI: forwarding thread %d was unable to send hello to mediator %s:%s -- %s",

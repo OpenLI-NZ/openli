@@ -61,6 +61,10 @@ static void destroy_client_state(prov_sock_state_t *cs) {
 		free(cs->ipaddr);
 		cs->ipaddr = NULL;
 	}
+    if (cs->pending_jsonconfig) {
+        free(cs->pending_jsonconfig);
+        cs->pending_jsonconfig = NULL;
+    }
 	free(cs);
 
 }

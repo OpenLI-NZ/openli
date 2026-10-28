@@ -118,6 +118,8 @@ typedef struct med_state {
 
 } mediator_state_t;
 
+void mediator_flag_status_change(void);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

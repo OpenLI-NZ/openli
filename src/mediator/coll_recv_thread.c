@@ -481,6 +481,9 @@ static int start_collector_ssl(coll_recv_t *col) {
     unlock_med_collector_config(col->parentconfig);
 
     if (r == OPENLI_SSL_CONNECT_FAILED) {
+        unsigned long e;
+        const char *reason = NULL;
+
         close(col->col_fd);
         col->col_fd = -1;
         SSL_free(col->ssl);
@@ -491,7 +494,11 @@ static int start_collector_ssl(coll_recv_t *col) {
                     "OpenLI Mediator: SSL handshake failed for collector %s",
                     col->ipaddr);
         }
-
+        col->tcp_status = OPENLI_DEST_STATE_ERR_TLS;
+        e = ERR_get_error();
+        reason = ERR_reason_error_string(e);
+        snprintf(col->tcp_lasterror, sizeof(col->tcp_lasterror),
+                "%s", reason ? reason : "unknown SSL error");
         col->lastsslerror = r;
         return -1;
     }
@@ -564,8 +571,8 @@ static openli_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
     }
     col->disabled_log = 0;
     logger(LOG_INFO,
-            "OpenLI Mediator: joined RMQ on collector %s successfully",
-            col->ipaddr);
+            "OpenLI Mediator: %d joined RMQ on collector %s successfully",
+            col->col_fd, col->ipaddr);
     return rmqev;
 }
 
@@ -593,6 +600,10 @@ static openli_epoll_ev_t *prepare_collector_receive_fd(coll_recv_t *col,
         /* Otherwise, we can use the existing socket as is */
         fdtype = OPENLI_EPOLL_COLLECTOR;
         col->using_tls = 0;
+    }
+
+    if (fdtype < 0) {
+        return NULL;
     }
 
     /* Create an epoll event and add it to our epoll FD set */
@@ -668,7 +679,8 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 
     struct fwd_hello_body *hellomsg;
 
-    if (msglen != sizeof(struct fwd_hello_body)) {
+    if (msglen < sizeof(int) + sizeof(uint8_t) ||
+            msglen > sizeof(struct fwd_hello_body)) {
         if (!col->disabled_log) {
             logger(LOG_INFO, "OpenLI mediator: unexpected size for forwarder hello message from collector %s: %u",
                     col->ipaddr, msglen);
@@ -678,12 +690,23 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 
     hellomsg = (struct fwd_hello_body *)msgbody;
     col->forwarder_id = ntohl(hellomsg->threadid);
+
+    if (msglen == sizeof(struct fwd_hello_body)) {
+        uuid_copy(col->uuid, hellomsg->uuid);
+        uuid_unparse(col->uuid, col->uuidstr);
+    } else {
+        uuid_clear(col->uuid);
+        col->uuidstr[0] = '\0';
+    }
     if (col->forwarder_id == 0) {
         logger(LOG_INFO, "OpenLI mediator: collector %s transport changed: now using %s",
                 col->ipaddr,
                 hellomsg->using_rmq ? "RabbitMQ" : "TCP");
     }
     col->forwarder_using_rmq = hellomsg->using_rmq;
+
+    col->tcp_status = OPENLI_DEST_STATE_CONNECTED;
+    col->tcp_lasterror[0] = '\0';
     return 1;
 }
 
@@ -1309,6 +1332,8 @@ static inline void move_thread_into_error_state(coll_recv_t *col, uint8_t log) {
     }
     col->was_dropped = 1;
     col->disabled_log = 1;
+    col->tcp_status = OPENLI_DEST_STATE_DISCONNECTED;
+    mediator_flag_status_change();
 
 }
 
@@ -1348,7 +1373,7 @@ static void *start_collector_thread(void *params) {
     timerev = col->colev = col->rmq_colev = NULL;
     col->incoming = NULL;
 
-    logger(LOG_INFO, "OpenLI Mediator: starting collector thread for %s",
+    logger(LOG_INFO, "OpenLI Mediator: starting new collector thread for %s",
             col->ipaddr);
 
     /* timerev is used to regularly break from epoll_wait() so we can check
@@ -1484,6 +1509,9 @@ static void *start_collector_thread(void *params) {
          */
         if (col->colev == NULL && col->col_fd != -1) {
             col->colev = prepare_collector_receive_fd(col, epoll_fd);
+            if (col->colev == NULL) {
+                move_thread_into_error_state(col, 1);
+            }
         }
 
         if (col->colev && col->colev->fdtype == OPENLI_EPOLL_COLLECTOR &&
@@ -1572,6 +1600,14 @@ static void init_new_colrecv_thread(mediator_collector_t *medcol,
     newcol->iris_published = 0;
     newcol->ccs_published = 0;
     newcol->raw_published = 0;
+
+    uuid_clear(newcol->uuid);
+    newcol->uuidstr[0] = '\0';
+
+    newcol->tcp_status = OPENLI_DEST_STATE_DISCONNECTED;
+    newcol->tcp_lasterror[0] = '\0';
+    newcol->rmq_status = OPENLI_RMQ_STATE_DISABLED;
+    newcol->rmq_lasterror[0] = '\0';
 
     if (head) {
         newcol->head = head;
@@ -1711,30 +1747,32 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
         iter = col;
 
         while (iter) {
-            if (iter->forwarder_id < 0) {
-                iter = iter->next;
-                continue;
-            }
-
             tofree = NULL;
 
-            HASH_FIND(hh_ssf, seensofar, &(iter->forwarder_id),
-                    sizeof(iter->forwarder_id), found);
-            if (found) {
-                /* already have an entry for this forwarding thread ID, so
-                 * let's mark the oldest thread for removal -- it should
-                 * be the one in 'found', but let's compare the creation
-                 * times just to be sure.
-                 */
-                if (found->creation < iter->creation) {
-                    HASH_REPLACE(hh_ssf, seensofar, forwarder_id,
-                            sizeof(iter->forwarder_id), iter, tofree);
+            if (iter->forwarder_id >= 0) {
+
+                HASH_FIND(hh_ssf, seensofar, &(iter->forwarder_id),
+                        sizeof(iter->forwarder_id), found);
+                if (found) {
+                    /* already have an entry for this forwarding thread ID, so
+                     * let's mark the oldest thread for removal -- it should
+                     * be the one in 'found', but let's compare the creation
+                     * times just to be sure.
+                     */
+                    if (found->creation < iter->creation) {
+                        HASH_REPLACE(hh_ssf, seensofar, forwarder_id,
+                                sizeof(iter->forwarder_id), iter, tofree);
+                    } else {
+                        tofree = iter;
+                    }
                 } else {
-                    tofree = iter;
+                    HASH_ADD(hh_ssf, seensofar, forwarder_id,
+                            sizeof(iter->forwarder_id), iter);
                 }
             } else {
-                HASH_ADD(hh_ssf, seensofar, forwarder_id,
-                        sizeof(iter->forwarder_id), iter);
+                if (iter->was_dropped) {
+                    tofree = iter;
+                }
             }
 
             iter = iter->next;

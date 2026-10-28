@@ -723,7 +723,7 @@ json_object *get_known_mediators(update_con_info_t *cinfo UNUSED,
     for (i = 0; i < medcount; i++) {
         jobj = convert_client_to_json(&(meds[i]));
         json_object_array_add(jarray, jobj);
-        free((void *)(meds[i].ipaddress));
+        free_known_client(&(meds[i]), 0);
     }
     free(meds);
 

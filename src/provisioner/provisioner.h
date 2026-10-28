@@ -285,6 +285,10 @@ typedef struct prov_mediator {
      *  connections from collectors */
     openli_mediator_t *details;
 
+    char *jsonconfig;
+    time_t firstseen;
+    time_t lastseen;
+
     UT_hash_handle hh;
 } prov_mediator_t;
 
@@ -468,6 +472,8 @@ struct prov_sock_state {
 
     void *parent;
 
+    char *pending_jsonconfig;
+
     /** Set to 1 if the client has authenticated, 0 otherwise */
     uint8_t trusted;
 
@@ -610,6 +616,8 @@ int update_x2x3_listener_row(provision_state_t *state, prov_collector_t *col,
 void update_all_client_rows(provision_state_t *state);
 known_client_t *fetch_single_collector_client(provision_state_t *state,
         const char *collectorid);
+known_client_t *fetch_single_mediator_client(provision_state_t *state,
+        uint32_t mediatorid);
 known_client_t *fetch_all_collector_clients(provision_state_t *state,
         size_t *clientcount);
 known_client_t *fetch_all_mediator_clients(provision_state_t *state,

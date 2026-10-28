@@ -694,10 +694,20 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         free(tmp->portstr);
         free(tmp);
     } else {
+        known_client_t *kc = fetch_single_mediator_client(state,
+                med->mediatorid);
 
         provmed = calloc(1, sizeof(prov_mediator_t));
         provmed->mediatorid = med->mediatorid;
         provmed->details = med;
+
+        if (kc) {
+            provmed->firstseen = kc->firstseen;
+            provmed->lastseen = kc->lastseen;
+            free_known_client(kc, 1);
+        } else {
+            provmed->firstseen = provmed->lastseen = time(NULL);
+        }
 
         HASH_ADD_KEYPTR(hh, state->mediators, &(provmed->mediatorid),
                 sizeof(provmed->mediatorid), provmed);
@@ -708,9 +718,18 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
                 provmed->client->identifier);
     }
 
+    if (cs->pending_jsonconfig) {
+        if (provmed->jsonconfig) {
+            free(provmed->jsonconfig);
+        }
+        provmed->jsonconfig = cs->pending_jsonconfig;
+        cs->pending_jsonconfig = NULL;
+    }
+
     provmed->client = pending;
     HASH_DELETE(hh, state->pendingclients, pending);
     cs->parent = (void *)provmed;
+    update_mediator_client_row(state, provmed);
 
     if (skipannounce) {
         return ret;
@@ -742,6 +761,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         if (prevmed) {
             announce_mediator_withdraw(state, prevmed);
             HASH_DELETE(hh, state->mediators, prevmed);
+            if (prevmed->jsonconfig) free(prevmed->jsonconfig);
             free_openli_mediator(prevmed->details);
             destroy_provisioner_client(state->epoll_fd, prevmed->client,
                     identifier);
@@ -775,6 +795,7 @@ void free_all_mediators(int epollfd, prov_mediator_t **mediators,
     HASH_ITER(hh, *mediators, med, medtmp) {
         HASH_DELETE(hh, *mediators, med);
         destroy_provisioner_client(epollfd, med->client, med->details->ipstr);
+        if (med->jsonconfig) free(med->jsonconfig);
         free_openli_mediator(med->details);
         free(med);
     }
@@ -1567,6 +1588,7 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
     uint64_t internalid;
     openli_proto_msgtype_t msgtype;
     uint8_t justauthed = 0;
+    char *jsonconfig = NULL;
 
     if (pev->client->lastsslerror == 1) {
         return 0;
@@ -1596,15 +1618,28 @@ static int receive_mediator(provision_state_t *state, prov_epoll_ev_t *pev) {
                     }
                     return -1;
                 }
-                if (cs->trusted == 1) {
+                if (decode_component_name(msgbody, msglen, &jsonconfig,
+                        NULL) < 0) {
                     if (cs->log_allowed) {
                         logger(LOG_INFO,
-                                "OpenLI: warning -- double auth from mediator.");
+                                "OpenLI: invalid formatting of mediator authentication received from %s.", cs->ipaddr);
                     }
                     return -1;
                 }
+                if (cs->trusted == 1) {
+                    if (cs->parent != NULL) {
+                        prov_mediator_t *med = (prov_mediator_t *)cs->parent;
+                        if (med->jsonconfig) free(med->jsonconfig);
+                        med->jsonconfig = jsonconfig;
+                        update_mediator_client_row(state, med);
+                    } else if (jsonconfig) {
+                        free(jsonconfig);
+                    }
+                    break;
+                }
                 cs->trusted = 1;
                 justauthed = 1;
+                cs->pending_jsonconfig = jsonconfig;
                 break;
             case OPENLI_PROTO_ANNOUNCE_MEDIATOR:
                 if (cs->trusted == 0) {
@@ -1976,6 +2011,7 @@ static void remove_idle_client(provision_state_t *state, prov_epoll_ev_t *pev) {
             logger(LOG_DEBUG, "OpenLI: removed mediator %u from internal list",
                     med->mediatorid);
             HASH_DELETE(hh, state->mediators, med);
+            if (med->jsonconfig) free(med->jsonconfig);
             free_openli_mediator(med->details);
             free(med);
         }

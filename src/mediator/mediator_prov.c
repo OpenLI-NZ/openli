@@ -202,10 +202,13 @@ int send_mediator_details_to_provisioner(mediator_prov_t *prov,
  *
  *  @param prov             The provisioner that is to be initialised
  *  @param sock             The file descriptor of the provisioner connection
+ *  @param jsonconfig       The current mediator configuration, as a JSON string
+ *  @param medid_str        The mediator identifier, as a string
  *
  *  @return -1 if an error occurs, 0 otherwise.
  */
-static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
+static int init_provisioner_connection(mediator_prov_t *prov, int sock,
+        const char *jsonconfig, const char *medid_str) {
 
     if (sock == 0) {
         return 0;
@@ -252,7 +255,7 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
      * mediator and they can safely start sending us intercept information.
      */
     if (push_auth_onto_net_buffer(prov->outgoing,
-                OPENLI_PROTO_MEDIATOR_AUTH, NULL, NULL) == -1) {
+                OPENLI_PROTO_MEDIATOR_AUTH, jsonconfig, medid_str) == -1) {
         if (prov->disable_log == 0) {
             logger(LOG_INFO, "OpenLI Mediator: unable to push auth message for provisioner.");
         }
@@ -284,12 +287,15 @@ static int init_provisioner_connection(mediator_prov_t *prov, int sock) {
  *  @param prov             The provisioner to connect to
  *  @param provfail         Set to 1 if the most recent connection attempt
  *                          failed, 0 otherwise.
+ *  @param jsonconfig       The current mediator config, as a JSON string
+ *  @param medid_str        The mediator identifier, as a string
  *
  *  @return 1 if the connection attempt fails for non-fatal reason, 0 if
  *            the attempt succeeded (or we were already connected), -1
  *            if the connection attempt failed for an unresolvable reason.
  */
-int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
+int attempt_provisioner_connect(mediator_prov_t *prov, int provfail,
+        const char *jsonconfig, const char *medid_str) {
 
     /* If provfail is 1, this function won't log any failures to connect.
      * This prevents log spam in cases where we repeatedly fail to connect,
@@ -319,7 +325,7 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
     }
 
     if (!provfail) {
-        int ret = init_provisioner_connection(prov, s);
+        int ret = init_provisioner_connection(prov, s, jsonconfig, medid_str);
 
         if (ret != 0) {
             /* Something went wrong (probably an SSL error), so clear any
@@ -338,7 +344,6 @@ int attempt_provisioner_connect(mediator_prov_t *prov, int provfail) {
     }
     return provfail;
 }
-
 
 
 /** Sends any pending messages to the provisioner.
@@ -418,5 +423,38 @@ int reload_provisioner_socket_config(mediator_prov_t *currstate,
 	return changed;
 }
 
+/* Constructs a OPENLI_PROTO_MEDIATOR_AUTH message that includes the current
+ * mediator configuration and sends it to the provisioner.
+ *
+ * @param prov          The reference to the provisioner
+ * @param jsonconfig    The current mediator configuration, in JSON format
+ * @param medid_str     The identifier for this mediator
+ *
+ * @return  -1 if an error occurs, 0 if the provisioner is not connected,
+ *           1 on success
+ */
+int send_mediator_status_to_provisioner(mediator_prov_t *prov,
+        const char *jsonconfig, const char *medid_str) {
 
+    if (prov->outgoing == NULL || prov->provev == NULL) {
+        return 0;
+    }
+
+    if (push_auth_onto_net_buffer(prov->outgoing, OPENLI_PROTO_MEDIATOR_AUTH,
+            jsonconfig, medid_str) == -1) {
+        if (prov->disable_log == 0) {
+            logger(LOG_INFO, "OpenLI mediator: unable to push status update to provisioner.");
+        }
+        return -1;
+    }
+
+    if (modify_openli_fdevent(prov->provev, EPOLLIN | EPOLLOUT | EPOLLRDHUP)
+            < 0) {
+        logger(LOG_INFO,
+                "OpenLI mediator: failed to re-enable retransmit on provisioner socket: %s",
+                strerror(errno));
+        return -1;
+    }
+    return 1;
+}
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

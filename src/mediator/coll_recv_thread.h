@@ -196,6 +196,12 @@ struct single_coll_receiver {
     /** Timestamp of when the connection attempt was made */
     time_t creation;
 
+    /** The UUID of the collector */
+    uuid_t uuid;
+
+    /** The UUID of the collector as a string */
+    char uuidstr[64];
+
     /** The particular forwarding thread on the collector that is
      *  connected via this receiver thread.
      */
@@ -329,6 +335,11 @@ struct single_coll_receiver {
     col_known_liid_t *cached_known;
     uint16_t cached_liidlen;
     unsigned char cached_liid[256];
+
+    openli_dest_conn_state_t tcp_status;
+    char tcp_lasterror[128];
+    openli_rmq_conn_state_t rmq_status;
+    char rmq_lasterror[128];
 
     UT_hash_handle hh;
     UT_hash_handle hh_ssf;

@@ -73,6 +73,10 @@ const char *select_single_col_sql =
         "SELECT * FROM observed_clients WHERE type = 'collector' AND "
         "identifier = ?;";
 
+const char *select_single_med_sql =
+        "SELECT * FROM observed_clients WHERE type = 'mediator' AND "
+        "identifier = ?;";
+
 const char *remove_client_sql =
         "DELETE FROM observed_clients WHERE type = ? AND identifier = ?;";
 
@@ -463,15 +467,18 @@ int update_collector_client_row(provision_state_t *state,
 }
 
 int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
-    prov_sock_state_t *cs = med->client->state;
+
+    prov_sock_state_t *cs;
 
     if (state->clientdb == NULL) {
         return 0;
     }
-    if (med == NULL || med->details == NULL || med->details->ipstr == NULL) {
+    if (med == NULL || med->client == NULL || med->details == NULL ||
+            med->details->ipstr == NULL) {
         return 0;
     }
-    if (cs->halted || !cs->trusted) {
+    cs = med->client->state;
+    if (!cs || cs->halted || !cs->trusted) {
         return 0;
     }
 #if HAVE_SQLCIPHER
@@ -496,12 +503,12 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
     sqlite3_bind_text(ins_stmt, 1, medid_str, -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 2, "mediator", -1, SQLITE_STATIC);
     sqlite3_bind_text(ins_stmt, 3, med->details->ipstr, -1, SQLITE_STATIC);
-    sqlite3_bind_text(ins_stmt, 4, NULL, -1, SQLITE_STATIC);
+    sqlite3_bind_text(ins_stmt, 4, med->jsonconfig, -1, SQLITE_STATIC);
 
     if ((rc = sqlite3_step(ins_stmt)) == SQLITE_CONSTRAINT) {
         sqlite3_reset(upd_stmt);
         sqlite3_bind_text(upd_stmt, 1, med->details->ipstr, -1, SQLITE_STATIC);
-        sqlite3_bind_text(ins_stmt, 2, NULL, -1, SQLITE_STATIC);
+        sqlite3_bind_text(upd_stmt, 2, med->jsonconfig, -1, SQLITE_STATIC);
         sqlite3_bind_text(upd_stmt, 3, medid_str, -1, SQLITE_STATIC);
         sqlite3_bind_text(upd_stmt, 4, "mediator", -1, SQLITE_STATIC);
 
@@ -514,6 +521,7 @@ int update_mediator_client_row(provision_state_t *state, prov_mediator_t *med) {
         sqlite3_finalize(upd_stmt);
         return -1;
     }
+    med->lastseen = time(NULL);
 
     sqlite3_finalize(ins_stmt);
     sqlite3_finalize(upd_stmt);
@@ -687,6 +695,66 @@ int remove_collector_from_clientdb(provision_state_t *state, const char *idstr)
 #endif
 
     return 1;
+}
+
+known_client_t *fetch_single_mediator_client(provision_state_t *state,
+        uint32_t mediatorid) {
+
+    known_client_t *kc = NULL;
+    char medid_str[128];
+
+#ifdef HAVE_SQLCIPHER
+    int rc;
+    sqlite3_stmt *sel_stmt;
+    const char *dt_text;
+    struct tm tm;
+
+    if (state->clientdb == NULL) {
+        return NULL;
+    }
+
+    rc = sqlite3_prepare_v2(state->clientdb, select_single_med_sql, -1,
+            &sel_stmt, NULL);
+    if (rc != SQLITE_OK) {
+        return NULL;
+    }
+
+    snprintf(medid_str, sizeof(medid_str), "%u", mediatorid);
+    sqlite3_bind_text(sel_stmt, 1, medid_str, -1, SQLITE_STATIC);
+    if (sqlite3_step(sel_stmt) != SQLITE_ROW) {
+        sqlite3_finalize(sel_stmt);
+        return NULL;
+    }
+
+    kc = calloc(1, sizeof(known_client_t));
+
+    kc->medid = mediatorid;
+    kc->type = TARGET_MEDIATOR;
+    kc->ipaddress =
+        strdup((const char *)sqlite3_column_text(sel_stmt, 2));
+
+    dt_text = (const char *)sqlite3_column_text(sel_stmt, 3);
+    memset(&tm, 0, sizeof(struct tm));
+    if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+        kc->firstseen = timegm(&tm);
+    }
+
+    dt_text = (const char *)sqlite3_column_text(sel_stmt, 4);
+    memset(&tm, 0, sizeof(struct tm));
+    if (dt_text && strptime(dt_text, "%Y-%m-%d %H:%M:%S", &tm)) {
+        kc->lastseen = timegm(&tm);
+    }
+
+    if (sqlite3_column_text(sel_stmt, 5) != NULL) {
+        kc->jsonconfig =
+            strdup((const char *)sqlite3_column_text(sel_stmt, 5));
+    } else {
+        kc->jsonconfig = NULL;
+    }
+    sqlite3_finalize(sel_stmt);
+#endif
+    return kc;
+
 }
 
 known_client_t *fetch_single_collector_client(provision_state_t *state,

@@ -28,6 +28,7 @@
 #include <unistd.h>
 
 #include "logger.h"
+#include "mediator.h"
 #include "util.h"
 #include "netcomms.h"
 #include "etsiencoding.h"
@@ -204,6 +205,10 @@ void trigger_handover_ka_failure(handover_t *ho) {
     }
 
     halt_openli_timer(ho->aliverespev);
+    __atomic_store_n(&(ho->status), OPENLI_DEST_STATE_ERR_KEEPALIVE,
+            __ATOMIC_RELEASE);
+    snprintf(ho->lasterror, sizeof(ho->lasterror), "keepalive timed out");
+    mediator_flag_status_change();
     disconnect_handover(ho);
 }
 
@@ -383,6 +388,13 @@ void disconnect_handover(handover_t *ho) {
 
     /* Drop the RMQ connection */
     reset_handover_rmq(ho);
+
+    if (__atomic_load_n(&(ho->status), __ATOMIC_ACQUIRE) ==
+            OPENLI_DEST_STATE_CONNECTED) {
+        __atomic_store_n(&(ho->status), OPENLI_DEST_STATE_DISCONNECTED,
+                __ATOMIC_RELEASE);
+    }
+    mediator_flag_status_change();
 
     /* This handover is officially disconnected, so no more logging for it
      * until / unless it reconnects.
@@ -597,12 +609,22 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
     /* Connect the handover socket */
     outsock = connect_socket(ho->ipstr, ho->portstr, ho->disconnect_msg, 1);
     if (outsock == -1) {
+        __atomic_store_n(&(ho->status), OPENLI_DEST_STATE_ERR_CONNECT,
+                __ATOMIC_RELEASE);
+        snprintf(ho->lasterror, sizeof(ho->lasterror), "%s",
+                errno != 0 ? strerror(errno) : "connection failed");
+        mediator_flag_status_change();
         return -1;
     }
 
     /* If fd is 0, we can try again another time instead */
     if (outsock == 0) {
         ho->disconnect_msg = 1;
+        __atomic_store_n(&(ho->status), OPENLI_DEST_STATE_ERR_CONNECT,
+                __ATOMIC_RELEASE);
+        snprintf(ho->lasterror, sizeof(ho->lasterror), "%s",
+                errno != 0 ? strerror(errno) : "connection refused");
+        mediator_flag_status_change();
         return 0;
     }
 
@@ -634,6 +656,11 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
 				"OpenLI Mediator: unable to add agency handover for %s:%s HI%d to epoll.",
 				ho->ipstr, ho->portstr, ho->handover_type, strerror(errno));
         }
+        __atomic_store_n(&(ho->status), OPENLI_DEST_STATE_ERR_CONNECT,
+                __ATOMIC_RELEASE);
+        snprintf(ho->lasterror, sizeof(ho->lasterror), "%s",
+                errno != 0 ? strerror(errno) : "create fdevent failed");
+        mediator_flag_status_change();
 		ho->disconnect_msg = 1;
 		close(outsock);
 		return 0;
@@ -652,6 +679,11 @@ int connect_mediator_handover(handover_t *ho, int epoll_fd, uint32_t ho_id,
                 ho->handover_type, strerror(errno));
         }
     }
+
+    ho->lasterror[0] = '\0';
+    __atomic_store_n(&(ho->status), OPENLI_DEST_STATE_CONNECTED,
+            __ATOMIC_RELEASE);
+    mediator_flag_status_change();
 
     /* Don't reset disconnect_msg until we've sent a record successfully */
     return 1;
@@ -709,6 +741,8 @@ handover_t *create_new_handover(int epoll_fd, char *ipstr, char *portstr,
     ho->amqp_log_failure = 1;
     ho->last_connect_attempt = 0;
     ho->epoll_fd = epoll_fd;
+    ho->status = OPENLI_DEST_STATE_DISCONNECTED;
+    ho->lasterror[0] = '\0';
 
 	pthread_mutex_init(&(ho->ho_state->ho_mutex), NULL);
 

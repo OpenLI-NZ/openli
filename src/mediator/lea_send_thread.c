@@ -643,6 +643,8 @@ static int agency_thread_epoll_event(lea_thread_state_t *state,
             if (ev->events & EPOLLRDHUP) {
                 /* actually, the socket connection has failed -- bail */
                 ret = -1;
+                snprintf(ho->lasterror, sizeof(ho->lasterror),
+                        "connection closed by remote peer");
             } else if (ev->events & EPOLLIN) {
                 /* message from LEA -- hopefully a keep-alive response */
                 ret = receive_handover(ho);

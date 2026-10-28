@@ -386,6 +386,7 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     }
 
     if (!success) {
+        errno = so_error;
         if (!isretry) {
             logger(LOG_INFO,
                     "OpenLI: Failed to connect to %s:%s -- %s.",

@@ -736,7 +736,7 @@ amqp_connection_state_t join_mediator_RMQ_as_producer(coll_recv_t *col) {
         goto prodfailed;
     }
 
-    logger(LOG_INFO, "OpenLI Mediator: collector thread for %s has connected to local RMQ instance", col->ipaddr);
+    logger(LOG_INFO, "OpenLI Mediator: collector thread %d for %s has connected to local RMQ instance", col->col_fd, col->ipaddr);
 
     return col->amqp_producer_state;
 
@@ -799,6 +799,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
             if (!col->disabled_log) {
                 logger(LOG_INFO, "OpenLI Mediator: RMQ failed to create new SSL socket");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_ssl_socket_new() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -812,6 +815,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
             if (!col->disabled_log) {
                 logger(LOG_INFO, "OpenLI Mediator: RMQ failed to load cacert");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_NOCREDS;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_ssl_socket_set_cacert() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -823,6 +829,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to load SSL cert/key");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_NOCREDS;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_ssl_socket_set_key() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -830,8 +839,8 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
 
         if (!col->disabled_log) {
             logger(LOG_INFO,
-                    "OpenLI Mediator: attempting to connect to RMQ using SSL on %s:%u",
-                    col->ipaddr, useport);
+                    "OpenLI Mediator: thread %d attempting to connect to RMQ using SSL on %s:%u",
+                    col->col_fd, col->ipaddr, useport);
         }
 
         if ((status = amqp_socket_open_noblock(amqp_sock,
@@ -842,6 +851,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                         "OpenLI Mediator: RMQ failed to open AMQP socket: %d",
                         status);
             }
+            col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_socket_open_noblock() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -854,6 +866,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to login using EXTERNAL auth");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_ERR_AUTH;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_login() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -867,13 +882,16 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ error opening new TCP socket");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_tcp_socket_new() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
         }
 
         if (!col->disabled_log) {
-            logger(LOG_INFO, "OpenLI Mediator: attempting to connect to RMQ using PLAIN auth at %s:%u", col->ipaddr, useport);
+            logger(LOG_INFO, "OpenLI Mediator: thread %d attempting to connect to RMQ using PLAIN auth at %s:%u", col->col_fd, col->ipaddr, useport);
         }
 
         if (amqp_socket_open_noblock(amqp_sock, (const char *)col->ipaddr,
@@ -882,6 +900,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to open AMQP socket");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_socket_open_noblock() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -895,6 +916,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to login using PLAIN auth");
             }
+            col->rmq_status = OPENLI_RMQ_STATE_ERR_AUTH;
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                    "amqp_login() failed");
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -904,6 +928,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
             logger(LOG_INFO,
                     "OpenLI Mediator: no valid RMQ login was provided");
         }
+        col->rmq_status = OPENLI_RMQ_STATE_NOCREDS;
+        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                "missing credentials");
         amqp_destroy_connection(amqp_state);
         unlock_med_collector_config(conf);
         return NULL;
@@ -918,6 +945,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
         if (!col->disabled_log) {
             logger(LOG_ERR, "OpenLI Mediator: RMQ failed to open channel");
         }
+        col->rmq_status = OPENLI_RMQ_STATE_ERR_CHANNEL;
+        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
+                "failed to open RMQ channel");
         amqp_destroy_connection(amqp_state);
         return NULL;
     }
@@ -929,6 +959,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
         if (!col->disabled_log) {
             logger(LOG_INFO, "OpenLI Mediator: RMQ failed to declare queue %s on collector %s", stringspace, col->ipaddr);
         }
+        col->rmq_status = OPENLI_RMQ_STATE_ERR_QUEUEDECLARE;
+        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
+                "failed to declare queue %s", stringspace);
         amqp_destroy_connection(amqp_state);
         return NULL;
     }
@@ -940,12 +973,17 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
             logger(LOG_INFO,
                     "OpenLI Mediator: RMQ failed to register consumer");
         }
+        col->rmq_status = OPENLI_RMQ_STATE_ERR_CONSUME;
+        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
+                "failed to register as consumer for queue %s", stringspace);
         amqp_destroy_connection(amqp_state);
         return NULL;
     } else if (!col->disabled_log) {
         logger(LOG_INFO, "OpenLI Mediator: RMQ Registered consumer %s",
             stringspace);
     }
+    col->rmq_status = OPENLI_RMQ_STATE_CONNECTED;
+    col->rmq_lasterror[0] = '\0';
 
     return amqp_state;
 }
