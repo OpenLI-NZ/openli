@@ -35,6 +35,7 @@
 #include "mediator_rmq.h"
 #include "openli_epoll.h"
 #include "etsili_core.h"
+#include "mediator.h"
 
 /** This file implements a "collector receive" thread for the OpenLI mediator.
  *  Each OpenLI collector that reports to a mediator will be handled using
