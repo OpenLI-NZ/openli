@@ -3721,6 +3721,8 @@ const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state) {
             return "error: publish failed";
         case OPENLI_RMQ_STATE_ERR_CONSUME:
             return "error: consume failed";
+        case OPENLI_RMQ_STATE_ERR_QUEUEDECLARE:
+            return "error: failed to declare queue";
     }
     return "unknown";
 }
