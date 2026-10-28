@@ -50,6 +50,41 @@ void compact_saved_messages(saved_received_data_t *msgs, size_t *msgcnt) {
     *msgcnt = write_idx;
 }
 
+static void format_amqp_rpc_reply(amqp_rpc_reply_t reply,
+        const char *fallback, char *buf, size_t buflen) {
+    if (reply.reply_type == AMQP_RESPONSE_SERVER_EXCEPTION) {
+        if (reply.reply.id == AMQP_CONNECTION_CLOSE_METHOD) {
+            amqp_connection_close_t *m =
+                    (amqp_connection_close_t *)reply.reply.decoded;
+            snprintf(buf, buflen, "%s: %.*s", fallback,
+                    (int)m->reply_text.len, (char *)m->reply_text.bytes);
+        } else if (reply.reply.id == AMQP_CHANNEL_CLOSE_METHOD) {
+            amqp_channel_close_t *m =
+                    (amqp_channel_close_t *)reply.reply.decoded;
+            snprintf(buf, buflen, "%s: %.*s", fallback,
+                    (int)m->reply_text.len, (char *)m->reply_text.bytes);
+        } else {
+            snprintf(buf, buflen, "%s: server exception 0x%08X",
+                    fallback, reply.reply.id);
+        }
+    } else if (reply.reply_type == AMQP_RESPONSE_LIBRARY_EXCEPTION) {
+        snprintf(buf, buflen, "%s: %s", fallback,
+                amqp_error_string2(reply.library_error));
+    } else {
+        snprintf(buf, buflen, "%s failed", fallback);
+    }
+}
+
+static void format_amqp_socket_err(int status, char *buf, size_t buflen) {
+    if ((status == AMQP_STATUS_SOCKET_ERROR ||
+            status == AMQP_STATUS_TCP_ERROR) && errno != 0) {
+        snprintf(buf, buflen, "%s: %s", amqp_error_string2(status),
+                strerror(errno));
+    } else {
+        snprintf(buf, buflen, "%s", amqp_error_string2(status));
+    }
+}
+
 /** Declares a RabbitMQ queue on a specified channel
  *
  *  @param state        The RMQ connection to use to declare the queue
@@ -767,6 +802,7 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
     mediator_collector_config_t *conf = col->parentconfig;
     uint16_t useport;
     uint32_t medid;
+    amqp_rpc_reply_t reply;
 
     /* Try to connect to RMQ service at col->ipaddr and join the appropiate
      * queue (which should be named after our mediator ID)
@@ -810,28 +846,32 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
         amqp_ssl_socket_set_verify_peer(amqp_sock, 0);
         amqp_ssl_socket_set_verify_hostname(amqp_sock, 0);
 
-        if (amqp_ssl_socket_set_cacert(amqp_sock, conf->sslconf->cacertfile)
-                != AMQP_STATUS_OK) {
+        status = amqp_ssl_socket_set_cacert(amqp_sock,
+                conf->sslconf->cacertfile);
+        if (status != AMQP_STATUS_OK) {
             if (!col->disabled_log) {
                 logger(LOG_INFO, "OpenLI Mediator: RMQ failed to load cacert");
             }
             col->rmq_status = OPENLI_RMQ_STATE_NOCREDS;
-            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                    "amqp_ssl_socket_set_cacert() failed");
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
+                    "amqp_ssl_socket_set_cacert() failed: %s",
+                    amqp_error_string2(status));
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
         }
 
-        if (amqp_ssl_socket_set_key(amqp_sock, conf->sslconf->certfile,
-                conf->sslconf->keyfile) != AMQP_STATUS_OK ) {
+        status = amqp_ssl_socket_set_key(amqp_sock, conf->sslconf->certfile,
+                conf->sslconf->keyfile);
+        if (status != AMQP_STATUS_OK) {
             if (!col->disabled_log) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to load SSL cert/key");
             }
             col->rmq_status = OPENLI_RMQ_STATE_NOCREDS;
-            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                    "amqp_ssl_socket_set_key() failed");
+            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
+                    "amqp_ssl_socket_set_key() failed: %s",
+                    amqp_error_string2(status));
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -852,23 +892,25 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                         status);
             }
             col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
-            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                    "amqp_socket_open_noblock() failed");
+            format_amqp_socket_err(status, col->rmq_lasterror,
+                    sizeof(col->rmq_lasterror));
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
         }
-        if ( (amqp_login(amqp_state, "OpenLI", 0, 131072,
+
+        reply = amqp_login(amqp_state, "OpenLI", 0, 131072,
                 conf->rmqconf->heartbeatFreq,
-                AMQP_SASL_METHOD_EXTERNAL, "EXTERNAL")
-                ).reply_type != AMQP_RESPONSE_NORMAL ) {
+                AMQP_SASL_METHOD_EXTERNAL, "EXTERNAL");
+
+        if (reply.reply_type != AMQP_RESPONSE_NORMAL ) {
             if (!col->disabled_log) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to login using EXTERNAL auth");
             }
             col->rmq_status = OPENLI_RMQ_STATE_ERR_AUTH;
-            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                    "amqp_login() failed");
+            format_amqp_rpc_reply(reply, "amqp_login() failed",
+                    col->rmq_lasterror, sizeof(col->rmq_lasterror));
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -894,31 +936,33 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
             logger(LOG_INFO, "OpenLI Mediator: thread %d attempting to connect to RMQ using PLAIN auth at %s:%u", col->col_fd, col->ipaddr, useport);
         }
 
-        if (amqp_socket_open_noblock(amqp_sock, (const char *)col->ipaddr,
-                useport, &tv)){
+        status = amqp_socket_open_noblock(amqp_sock, (const char *)col->ipaddr,
+                useport, &tv);
+        if (status != AMQP_STATUS_OK) {
             if (!col->disabled_log) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to open AMQP socket");
             }
             col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
-            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                    "amqp_socket_open_noblock() failed");
+            format_amqp_socket_err(status, col->rmq_lasterror,
+                    sizeof(col->rmq_lasterror));
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
         }
 
-        if (amqp_login(amqp_state, "OpenLI", 0, 131072,
+        reply = amqp_login(amqp_state, "OpenLI", 0, 131072,
                 conf->rmqconf->heartbeatFreq, AMQP_SASL_METHOD_PLAIN,
                 conf->rmqconf->name,
-                conf->rmqconf->pass).reply_type != AMQP_RESPONSE_NORMAL) {
+                conf->rmqconf->pass);
+        if (reply.reply_type != AMQP_RESPONSE_NORMAL) {
             if (!col->disabled_log) {
                 logger(LOG_INFO,
                         "OpenLI Mediator: RMQ failed to login using PLAIN auth");
             }
             col->rmq_status = OPENLI_RMQ_STATE_ERR_AUTH;
-            snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                    "amqp_login() failed");
+            format_amqp_rpc_reply(reply, "amqp_login() failed",
+                    col->rmq_lasterror, sizeof(col->rmq_lasterror));
             amqp_destroy_connection(amqp_state);
             unlock_med_collector_config(conf);
             return NULL;
@@ -941,13 +985,14 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
     /* Use channel 1 for exchanging intercept records */
     amqp_channel_open(amqp_state, 1);
 
-    if ( (amqp_get_rpc_reply(amqp_state).reply_type) != AMQP_RESPONSE_NORMAL ) {
+    reply = amqp_get_rpc_reply(amqp_state);
+    if (reply.reply_type != AMQP_RESPONSE_NORMAL ) {
         if (!col->disabled_log) {
             logger(LOG_ERR, "OpenLI Mediator: RMQ failed to open channel");
         }
         col->rmq_status = OPENLI_RMQ_STATE_ERR_CHANNEL;
-        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror), "%s",
-                "failed to open RMQ channel");
+        format_amqp_rpc_reply(reply, "failed to open RMQ channel",
+                col->rmq_lasterror, sizeof(col->rmq_lasterror)); 
         amqp_destroy_connection(amqp_state);
         return NULL;
     }
@@ -960,8 +1005,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
             logger(LOG_INFO, "OpenLI Mediator: RMQ failed to declare queue %s on collector %s", stringspace, col->ipaddr);
         }
         col->rmq_status = OPENLI_RMQ_STATE_ERR_QUEUEDECLARE;
-        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
-                "failed to declare queue %s", stringspace);
+        format_amqp_rpc_reply(amqp_get_rpc_reply(amqp_state),
+                "failed to declare queue", col->rmq_lasterror,
+                sizeof(col->rmq_lasterror));
         amqp_destroy_connection(amqp_state);
         return NULL;
     }
@@ -974,8 +1020,9 @@ amqp_connection_state_t join_collector_RMQ(coll_recv_t *col) {
                     "OpenLI Mediator: RMQ failed to register consumer");
         }
         col->rmq_status = OPENLI_RMQ_STATE_ERR_CONSUME;
-        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
-                "failed to register as consumer for queue %s", stringspace);
+        format_amqp_rpc_reply(amqp_get_rpc_reply(amqp_state),
+                "failed to register RMQ consumer", col->rmq_lasterror,
+                sizeof(col->rmq_lasterror));
         amqp_destroy_connection(amqp_state);
         return NULL;
     } else if (!col->disabled_log) {

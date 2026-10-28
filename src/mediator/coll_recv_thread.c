@@ -532,6 +532,7 @@ static openli_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
 
     /* method defined in mediator_rmq.c -- establishes the RMQ connection */
     amqp_connection_state_t amqp_state = join_collector_RMQ(col);
+    mediator_flag_status_change();
 
     if (!amqp_state) {
         if (!col->disabled_log) {
@@ -550,6 +551,9 @@ static openli_epoll_ev_t *prepare_collector_receive_rmq(coll_recv_t *col,
             logger(LOG_INFO, "OpenLI Mediator: bad socket returned by RMQ for collector %s", col->ipaddr);
         }
         col->disabled_log = 1;
+        col->rmq_status = OPENLI_RMQ_STATE_ERR_SOCKET;
+        snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
+                "amqp_get_sockfd() failed");
         return NULL;
     }
 
@@ -708,6 +712,7 @@ static int process_fwd_hello(coll_recv_t *col, uint8_t *msgbody,
 
     col->tcp_status = OPENLI_DEST_STATE_CONNECTED;
     col->tcp_lasterror[0] = '\0';
+    mediator_flag_status_change();
     return 1;
 }
 
@@ -1239,6 +1244,10 @@ static int collector_thread_epoll_event(coll_recv_t *col,
             if (ev->events & EPOLLRDHUP) {
                 if (mev->fdtype == OPENLI_EPOLL_COL_RMQ) {
                     /* RMQ failed, but no need to trash the whole thread */
+                    col->rmq_status = OPENLI_RMQ_STATE_DISCONNECTED;
+                    snprintf(col->rmq_lasterror, sizeof(col->rmq_lasterror),
+                            "connection closed by remote peer");
+                    mediator_flag_status_change();
                     destroy_rmq_colev(col);
                     ret = 0;
                 } else {
