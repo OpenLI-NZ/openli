@@ -297,6 +297,7 @@ typedef enum {
     OPENLI_DEST_STATE_ERR_TLS,
     OPENLI_DEST_STATE_ERR_HELLO,
     OPENLI_DEST_STATE_ERR_KEEPALIVE,
+    OPENLI_DEST_STATE_ERR_DECODE,
 } openli_dest_conn_state_t;
 
 const char *openli_rmq_state_to_string(openli_rmq_conn_state_t state);

@@ -3692,6 +3692,8 @@ const char *openli_dest_state_to_string(openli_dest_conn_state_t state) {
             return "error: mediator handshake failed";
         case OPENLI_DEST_STATE_ERR_KEEPALIVE:
             return "error: keepalive timed out";
+        case OPENLI_DEST_STATE_ERR_DECODE:
+            return "error: message decoding failed";
     }
     return "unknown";
 

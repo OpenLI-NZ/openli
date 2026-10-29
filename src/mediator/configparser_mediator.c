@@ -43,10 +43,14 @@ char *mediator_config_to_json(mediator_state_t *state) {
 
     json_object *jobj = json_object_new_object();
     json_object *jags = json_object_new_object();
+    json_object *jcols = json_object_new_object();
+
     const char *json_str;
     char *result;
     lea_thread_state_t *lea, *ltmp;
-    int agency_total = 0;
+    coll_recv_t *col, *ctmp;
+
+    int agency_total = 0, col_total = 0;
 
     json_object_object_add(jobj, "mediatorid",
             json_object_new_int(state->mediatorid));
@@ -104,6 +108,92 @@ char *mediator_config_to_json(mediator_state_t *state) {
     json_object_object_add(jobj, "RMQheartbeatfreq",
             json_object_new_int(state->RMQ_conf.heartbeatFreq));
 
+    HASH_ITER(hh, state->collector_threads.threads, col, ctmp) {
+        json_object *jcol = NULL;
+        json_object *jfwd_array = NULL;
+        json_object *jfwd = NULL;
+        coll_recv_t *iter;
+        const char *colkey;
+        openli_dest_conn_state_t tcp_st;
+        const char *tcp_status_str;
+        openli_rmq_conn_state_t rmq_st;
+        const char *rmq_status_str;
+
+        for (iter = col; iter != NULL; iter = iter->next) {
+            tcp_st = __atomic_load_n(&(iter->tcp_status), __ATOMIC_ACQUIRE);
+            if (iter->was_dropped && tcp_st == OPENLI_DEST_STATE_DISCONNECTED) {
+                continue;
+            }
+            jcol = jfwd_array = jfwd = NULL;
+            if (iter->uuidstr[0] != '\0') {
+                colkey = iter->uuidstr;
+            } else {
+                colkey = iter->ipaddr;
+            }
+
+            if (!json_object_object_get_ex(jcols, colkey, &jcol)) {
+                jcol = json_object_new_object();
+                json_object_object_add(jcol, "ip",
+                        json_object_new_string(iter->ipaddr));
+                jfwd_array = json_object_new_array();
+                json_object_object_add(jcol, "forwarders", jfwd_array);
+                json_object_object_add(jcols, colkey, jcol);
+                col_total ++;
+            } else {
+                json_object_object_get_ex(jcol, "forwarders", &jfwd_array);
+            }
+
+            jfwd = json_object_new_object();
+            json_object_object_add(jfwd, "forwarder_id",
+                    json_object_new_int(iter->forwarder_id));
+            json_object_object_add(jfwd, "transport",
+                    json_object_new_string(iter->forwarder_using_rmq ? "rmq"
+                            : "tcp"));
+            json_object_object_add(jfwd, "using_tls_tcp",
+                    json_object_new_boolean(iter->using_tls != 0));
+
+            if (tcp_st == OPENLI_DEST_STATE_CONNECTED) {
+                tcp_status_str = "connected";
+            } else if (tcp_st == OPENLI_DEST_STATE_DISCONNECTED) {
+                tcp_status_str = "disconnected";
+            } else {
+                tcp_status_str = "failed";
+            }
+
+            json_object_object_add(jfwd, "tcp_status",
+                    json_object_new_string(tcp_status_str));
+            if (tcp_st != OPENLI_DEST_STATE_CONNECTED &&
+                    iter->tcp_lasterror[0] != '\0') {
+                json_object_object_add(jfwd, "tcp_error",
+                        json_object_new_string(iter->tcp_lasterror));
+            }
+
+            if (iter->forwarder_using_rmq) {
+                rmq_st = __atomic_load_n(&(iter->rmq_status), __ATOMIC_ACQUIRE);
+                if (rmq_st == OPENLI_RMQ_STATE_CONNECTED) {
+                    rmq_status_str = "connected";
+                } else if (rmq_st == OPENLI_RMQ_STATE_DISCONNECTED) {
+                    rmq_status_str = "disconnected";
+                } else if (rmq_st == OPENLI_RMQ_STATE_DISABLED) {
+                    rmq_status_str = "disabled";
+                } else if (rmq_st == OPENLI_RMQ_STATE_BLOCKED) {
+                    rmq_status_str = "blocked";
+                } else {
+                    rmq_status_str = "failed";
+                }
+                json_object_object_add(jfwd, "rmq_status",
+                        json_object_new_string(rmq_status_str));
+                if (rmq_st != OPENLI_RMQ_STATE_CONNECTED &&
+                        iter->rmq_lasterror[0] != '\0') {
+                    json_object_object_add(jfwd, "rmq_error",
+                            json_object_new_string(iter->rmq_lasterror));
+                }
+            }
+
+            json_object_array_add(jfwd_array, jfwd);
+        }
+    }
+
     HASH_ITER(hh, state->agency_threads.threads, lea, ltmp) {
         json_object *jagency;
         openli_dest_conn_state_t st;
@@ -153,6 +243,9 @@ char *mediator_config_to_json(mediator_state_t *state) {
 
         json_object_object_add(jags, lea->agencyid, jagency);
     }
+    json_object_object_add(jobj, "collector_status", jcols);
+    json_object_object_add(jobj, "total_collectors",
+            json_object_new_int(col_total));
     json_object_object_add(jobj, "handover_status", jags);
     json_object_object_add(jobj, "total_leas",
             json_object_new_int(agency_total));

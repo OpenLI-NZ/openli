@@ -78,8 +78,13 @@ static void format_amqp_rpc_reply(amqp_rpc_reply_t reply,
 static void format_amqp_socket_err(int status, char *buf, size_t buflen) {
     if ((status == AMQP_STATUS_SOCKET_ERROR ||
             status == AMQP_STATUS_TCP_ERROR) && errno != 0) {
-        snprintf(buf, buflen, "%s: %s", amqp_error_string2(status),
-                strerror(errno));
+        if (errno == EINPROGRESS) {
+            snprintf(buf, buflen, "%s: connection refused or timed out",
+                    amqp_error_string2(status));
+        } else {
+            snprintf(buf, buflen, "%s: %s", amqp_error_string2(status),
+                    strerror(errno));
+        }
     } else {
         snprintf(buf, buflen, "%s", amqp_error_string2(status));
     }

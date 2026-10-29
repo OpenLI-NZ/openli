@@ -1105,6 +1105,20 @@ static int receive_collector(coll_recv_t *col, openli_epoll_ev_t *mev) {
         }
 
         if (msgtype < 0) {
+            /* check for TLS setting mismatch */
+            if (!col->using_tls &&
+                    col->incoming->appendptr >= col->incoming->buf + 3 &&
+                    col->incoming->buf[0] == 0x16 &&
+                    col->incoming->buf[1] == 0x03) {
+                col->tcp_status = OPENLI_DEST_STATE_ERR_TLS;
+                snprintf(col->tcp_lasterror, sizeof(col->tcp_lasterror),
+                        "etsitls setting mismatch between mediator and collector");
+            } else if (col->tcp_status == OPENLI_DEST_STATE_CONNECTED) {
+                col->tcp_status = OPENLI_DEST_STATE_ERR_DECODE;
+                snprintf(col->tcp_lasterror, sizeof(col->tcp_lasterror),
+                        "protocol error when decoding message");
+            }
+
             if (col->disabled_log == 0) {
                 nb_log_receive_error(msgtype);
                 logger(LOG_INFO, "OpenLI Mediator: error receiving message from collector %s.", col->ipaddr);
@@ -1342,7 +1356,9 @@ static inline void move_thread_into_error_state(coll_recv_t *col, uint8_t log) {
     }
     col->was_dropped = 1;
     col->disabled_log = 1;
-    col->tcp_status = OPENLI_DEST_STATE_DISCONNECTED;
+    if (col->tcp_status == OPENLI_DEST_STATE_CONNECTED) {
+        col->tcp_status = OPENLI_DEST_STATE_DISCONNECTED;
+    }
     mediator_flag_status_change();
 
 }
@@ -1490,6 +1506,18 @@ static void *start_collector_thread(void *params) {
             continue;
         }
 
+        /* If we don't have epoll events for this collector AND the
+         * collector is actually connected to us, then make some
+         * epoll events for both the plain socket and RMQ (if enabled).
+         */
+        if (col->colev == NULL && col->col_fd != -1) {
+            col->colev = prepare_collector_receive_fd(col, epoll_fd);
+            if (col->colev == NULL) {
+                move_thread_into_error_state(col, 1);
+                continue;
+            }
+        }
+
         /* Prepare our local RMQ state for emitting records for the LEA
          * threads to consume.
          */
@@ -1510,17 +1538,6 @@ static void *start_collector_thread(void *params) {
             } else if (r == 0) {
                 // RMQ failed while sending the saved messages, retry
                 continue;
-            }
-        }
-
-        /* If we don't have epoll events for this collector AND the
-         * collector is actually connected to us, then make some
-         * epoll events for both the plain socket and RMQ (if enabled).
-         */
-        if (col->colev == NULL && col->col_fd != -1) {
-            col->colev = prepare_collector_receive_fd(col, epoll_fd);
-            if (col->colev == NULL) {
-                move_thread_into_error_state(col, 1);
             }
         }
 
@@ -1656,7 +1673,7 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
     int newfd = -1;
     struct sockaddr_storage saddr;
     socklen_t socklen = sizeof(saddr);
-    coll_recv_t *found = NULL;
+    coll_recv_t *found = NULL, *cur, *idle = NULL;
 
     /* Standard socket connection accept code... */
     newfd = accept(listenfd, (struct sockaddr *)&saddr, &socklen);
@@ -1683,9 +1700,25 @@ int mediator_accept_collector_connection(mediator_collector_t *medcol,
         /* We've already got a thread for this collector, so this is
          * probably another forwarding thread. If this is a reconnection
          * instead, we should be able to deal with that once the forwarder
-         * identifies itself.
+         * identifies itself but try to reuse an existing idle thread rather
+         * than always creating a new one.
          */
-        init_new_colrecv_thread(medcol, newfd, strbuf, found);
+        for (cur = found; cur != NULL; cur = cur->next) {
+            if (cur->col_fd == -1) {
+                idle = cur;
+                break;
+            }
+        }
+
+        if (idle == NULL) {
+            init_new_colrecv_thread(medcol, newfd, strbuf, found);
+        } else {
+            col_thread_msg_t rmsg;
+            memset(&rmsg, 0, sizeof(rmsg));
+            rmsg.type = MED_COLL_MESSAGE_RECONNECT;
+            rmsg.arg = newfd;
+            libtrace_message_queue_put(&(idle->in_main), &rmsg);
+        }
     }
 
     return newfd;
@@ -1780,7 +1813,11 @@ void mediator_clean_collectors(mediator_collector_t *medcol) {
                             sizeof(iter->forwarder_id), iter);
                 }
             } else {
-                if (iter->was_dropped) {
+                /* don't reap all threads for a particular collector as
+                 * we may need to keep one around to report the error that
+                 * caused them to fail
+                 */
+                if (iter->was_dropped && (iter != col || iter->next != NULL)) {
                     tofree = iter;
                 }
             }
