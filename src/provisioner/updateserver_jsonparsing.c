@@ -2880,7 +2880,7 @@ int modify_mediator_configuration(update_con_info_t *cinfo,
     if (parseerr) {
         goto endjsonparse;
     }
-    HASH_FIND(hh, state->collectors, &(medid), sizeof(medid), thismed);
+    HASH_FIND(hh, state->mediators, &(medid), sizeof(medid), thismed);
     if (thismed == NULL) {
         logger(LOG_INFO,
                 "OpenLI: received mediator configuration update for a mediator we know nothing about: %u", medid);
