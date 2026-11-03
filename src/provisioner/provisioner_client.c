@@ -208,6 +208,7 @@ static void create_prov_socket_state(prov_client_t *client,
     cs->halted = 0;
     cs->clientrole = fdtype;
     cs->parent = NULL;
+    cs->pending_jsonconfig = NULL;
 
     client->state = cs;
 }
