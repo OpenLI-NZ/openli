@@ -651,17 +651,24 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         return -1;
     }
 
-    HASH_FIND(hh, state->pendingclients, clientname, strlen(clientname),
-            pending);
+    if (cs->parent) {
+        // this is a reannouncement using a socket that has already
+        // been established (probably a config change on the mediator).
+        provmed = (prov_mediator_t *)(cs->parent);
+    } else {
+        // it's a new socket, check for a corresponding "pending" session
+        HASH_FIND(hh, state->pendingclients, clientname, strlen(clientname),
+                pending);
 
-    if (!pending) {
-        logger(LOG_INFO,
-                "OpenLI provisioner: received an announcement from mediator %u via %s, but this mediator is unknown to us?",
-                med->mediatorid, clientname);
-        free(med->ipstr);
-        free(med->portstr);
-        free(med);
-        return -1;
+        if (!pending) {
+            logger(LOG_INFO,
+                    "OpenLI provisioner: received an announcement from mediator %u via %s, but this mediator is unknown to us?",
+                    med->mediatorid, clientname);
+            free(med->ipstr);
+            free(med->portstr);
+            free(med);
+            return -1;
+        }
     }
 
     HASH_FIND(hh, state->mediators, &(med->mediatorid), sizeof(med->mediatorid),
@@ -713,7 +720,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
                 sizeof(provmed->mediatorid), provmed);
     }
 
-    if (provmed->client != NULL) {
+    if (pending && provmed->client != NULL && provmed->client != pending) {
         destroy_provisioner_client(state->epoll_fd, provmed->client,
                 provmed->client->identifier);
     }
@@ -726,9 +733,11 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         cs->pending_jsonconfig = NULL;
     }
 
-    provmed->client = pending;
-    HASH_DELETE(hh, state->pendingclients, pending);
-    cs->parent = (void *)provmed;
+    if (pending) {
+        provmed->client = pending;
+        HASH_DELETE(hh, state->pendingclients, pending);
+        cs->parent = (void *)provmed;
+    }
     update_mediator_client_row(state, provmed);
 
     if (skipannounce) {
