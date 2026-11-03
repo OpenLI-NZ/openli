@@ -609,6 +609,131 @@ static int receive_lea_announce(mediator_state_t *state, uint8_t *msgbody,
     return ret;
 }
 
+/** Forms a message containing the IP address and port of this mediator's
+ *  listening socket (for collector connections) and queues it to be sent
+ *  to the provisioner. The provisioner will then pass that on to all
+ *  registered collectors, so they can connect to us and forward ETSI
+ *  that we can then distribute to the agencies.
+ *
+ *  @param state            The global state for this mediator.
+ *  @param justcreated      A boolean flag indicating whether the connection
+ *                          to the provisioner has recently been completed.
+ *
+ *  @return -1 if an error occurs, 0 otherwise.
+ */
+static int send_mediator_listen_details(mediator_state_t *state,
+        int justcreated) {
+    openli_mediator_t meddeets;
+    struct sockaddr_storage sa;
+    socklen_t salen = sizeof(struct sockaddr_storage);
+    char listenname[NI_MAXHOST];
+    int ret;
+
+    memset(&sa, 0, sizeof(sa));
+    meddeets.mediatorid = state->mediatorid;
+
+    /* Use a combination of getsockname and getnameinfo to get the listening
+     * address, as listenaddr may be NULL, 0.0.0.0, or ::1 because the user
+     * didn't care about the listening interface for some reason (BTW,
+     * listening on all interfaces is NOT recommended!).
+     */
+    if (getsockname(state->listenerev->fd, (struct sockaddr *)(&sa),
+                &salen) < 0) {
+        logger(LOG_INFO, "OpenLI Mediator: getsockname() failed for listener socket: %s.",
+                strerror(errno));
+        return -1;
+    }
+
+    if ((ret = getnameinfo((struct sockaddr *)(&sa), salen, listenname,
+            sizeof(listenname), NULL, 0, NI_NUMERICHOST)) < 0) {
+        logger(LOG_INFO, "OpenLI Mediator: getnameinfo() failed for listener socket: %s.",
+                gai_strerror(ret));
+        return -1;
+    }
+    meddeets.ipstr = listenname;
+
+    /* The configured port should match though, so we can just use that. */
+    meddeets.portstr = state->listenport;
+
+    return send_mediator_details_to_provisioner(&(state->provisioner),
+            &meddeets, justcreated);
+}
+
+/** Closes the socket that is listening for collector connections and
+ *  drops any collectors that are connected through it.
+ *
+ *  @param currstate            The global state for the mediator
+ */
+static inline void halt_listening_socket(mediator_state_t *currstate) {
+
+    /* Disconnect all collectors */
+    mediator_disconnect_all_collectors(&(currstate->collector_threads));
+
+    /* Close listen socket and disable epoll event */
+    remove_openli_fdevent(currstate->listenerev);
+    currstate->listenerev = NULL;
+}
+
+/** Parses an updated "jsonconfig" received from the provisioner and
+ *  applies any changes to the running configuration. Note that not all
+ *  configuration options can be modified via this approach.
+ *
+ *  @param state        The global state for the mediator
+ *  @param msgbody      Pointer to the start of the config update message body
+ *  @param msglen       Length of the update message, in bytes
+ *
+ *  @return -1 if the update is not parsable, or an error occurs when
+ *          applying a config change. 0 if successful.
+ */
+static int receive_config_update(mediator_state_t *state, uint8_t *msgbody,
+        uint16_t msglen) {
+
+    char *newconfig;
+    int rmqchanged = 0, listenchanged = 0, opidchanged = 0, pcapchanged = 0;
+    int tlschanged = 0;
+
+    if (decode_updated_component_configuration(msgbody, msglen,
+            &newconfig) < 0) {
+        logger(LOG_INFO,
+                "OpenLI mediator: failed to decode component configuration update from the provisioner");
+        return -1;
+    }
+
+    if (newconfig == NULL) {
+        return 0;
+    }
+
+    handle_base_mediator_config_changes(state, &(state->configupdates),
+            newconfig, &listenchanged, &opidchanged);
+
+    if (listenchanged) {
+        halt_listening_socket(state);
+        if (start_collector_listener(state) < 0) {
+            logger(LOG_INFO, "OpenLI Mediator: Warning, listening socket did not restart after provisioner modified our listening configuration. Will not be able to accept connections from collectors.");
+            return -1;
+        }
+        send_mediator_listen_details(state, 0);
+    }
+
+    if (opidchanged || pcapchanged || rmqchanged) {
+        update_lea_thread_config(state);
+    }
+
+    if (rmqchanged || tlschanged || opidchanged) {
+        update_coll_recv_thread_config(state);
+    }
+
+    if (apply_yaml_config_updates(state->conffile, &(state->configupdates))
+            < 0) {
+        logger(LOG_INFO, "OpenLI mediator: failed to write updated YAML configuration to local config file: %s", state->conffile);
+    }
+    clean_openli_yaml_config_updates(&(state->configupdates));
+
+    mediator_status_changed = 1;
+    free(newconfig);
+    return 0;
+}
+
 /** Parse and action an instruction from a provisioner to publish an HI1
  *  notification to an agency.
  *
@@ -928,6 +1053,11 @@ static int receive_provisioner(mediator_state_t *state) {
                     return -1;
                 }
                 break;
+            case OPENLI_PROTO_UPDATE_COMPONENT_CONFIG:
+                if (receive_config_update(state, msgbody, msglen) == -1) {
+                    return -1;
+                }
+                break;
             default:
                 if (state->provisioner.disable_log == 0) {
                     logger(LOG_INFO,
@@ -1029,71 +1159,6 @@ static int check_epoll_fd(mediator_state_t *state, struct epoll_event *ev) {
 
     return ret;
 
-}
-
-/** Forms a message containing the IP address and port of this mediator's
- *  listening socket (for collector connections) and queues it to be sent
- *  to the provisioner. The provisioner will then pass that on to all
- *  registered collectors, so they can connect to us and forward ETSI
- *  that we can then distribute to the agencies.
- *
- *  @param state            The global state for this mediator.
- *  @param justcreated      A boolean flag indicating whether the connection
- *                          to the provisioner has recently been completed.
- *
- *  @return -1 if an error occurs, 0 otherwise.
- */
-static int send_mediator_listen_details(mediator_state_t *state,
-        int justcreated) {
-    openli_mediator_t meddeets;
-    struct sockaddr_storage sa;
-    socklen_t salen = sizeof(struct sockaddr_storage);
-    char listenname[NI_MAXHOST];
-    int ret;
-
-    memset(&sa, 0, sizeof(sa));
-    meddeets.mediatorid = state->mediatorid;
-
-    /* Use a combination of getsockname and getnameinfo to get the listening
-     * address, as listenaddr may be NULL, 0.0.0.0, or ::1 because the user
-     * didn't care about the listening interface for some reason (BTW,
-     * listening on all interfaces is NOT recommended!).
-     */
-    if (getsockname(state->listenerev->fd, (struct sockaddr *)(&sa),
-                &salen) < 0) {
-        logger(LOG_INFO, "OpenLI Mediator: getsockname() failed for listener socket: %s.",
-                strerror(errno));
-        return -1;
-    }
-
-    if ((ret = getnameinfo((struct sockaddr *)(&sa), salen, listenname,
-            sizeof(listenname), NULL, 0, NI_NUMERICHOST)) < 0) {
-        logger(LOG_INFO, "OpenLI Mediator: getnameinfo() failed for listener socket: %s.",
-                gai_strerror(ret));
-        return -1;
-    }
-    meddeets.ipstr = listenname;
-
-    /* The configured port should match though, so we can just use that. */
-    meddeets.portstr = state->listenport;
-
-    return send_mediator_details_to_provisioner(&(state->provisioner),
-            &meddeets, justcreated);
-}
-
-/** Closes the socket that is listening for collector connections and
- *  drops any collectors that are connected through it.
- *
- *  @param currstate            The global state for the mediator
- */
-static inline void halt_listening_socket(mediator_state_t *currstate) {
-
-    /* Disconnect all collectors */
-    mediator_disconnect_all_collectors(&(currstate->collector_threads));
-
-    /* Close listen socket and disable epoll event */
-    remove_openli_fdevent(currstate->listenerev);
-    currstate->listenerev = NULL;
 }
 
 /** Updates the global state with any modified values for any of the

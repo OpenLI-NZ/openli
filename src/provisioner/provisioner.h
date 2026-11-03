@@ -581,6 +581,8 @@ void update_intercept_timeformats(provision_state_t *state,
         char *operatorid);
 int announce_configuration_update_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *newconfig);
+int announce_configuration_update_to_mediator(provision_state_t *state,
+        prov_mediator_t *med, const char *newconfig);
 int announce_udpsink_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
 int announce_udpsink_removal_to_collector(provision_state_t *state,

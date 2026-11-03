@@ -244,6 +244,27 @@ int announce_lea_to_mediators(provision_state_t *state,
     return 0;
 }
 
+#define SEND_SINGLE_MEDIATOR_BEGIN \
+    if (med->client == NULL || med->client->commev == NULL) { \
+        return 0; \
+    } \
+    sock = (prov_sock_state_t *)(med->client->state); \
+    if (!sock->trusted || sock->halted) { \
+        return 0; \
+    }
+
+#define SEND_SINGLE_MEDIATOR_END \
+    if (enable_epoll_write(state, med->client->commev) == -1) { \
+        if (sock->log_allowed) { \
+            logger(LOG_INFO, \
+                    "OpenLI: unable to enable epoll write event for mediator %u -- %s", \
+                    med->mediatorid, strerror(errno)); \
+        } \
+        disconnect_provisioner_client(state->epoll_fd, \
+                med->client, med->details->ipstr); \
+        return -1; \
+    }
+
 #define SEND_SINGLE_COLLECTOR_BEGIN \
     if (col->client == NULL || col->client->commev == NULL) { \
         return 0; \
@@ -349,6 +370,24 @@ int announce_configuration_update_to_collector(provision_state_t *state,
     }
 
     SEND_SINGLE_COLLECTOR_END
+    return 1;
+}
+
+int announce_configuration_update_to_mediator(provision_state_t *state,
+        prov_mediator_t *med, const char *newconfig) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_MEDIATOR_BEGIN
+
+    if (push_updated_component_configuration(sock->outgoing, newconfig) == -1) {
+        logger(LOG_INFO, "OpenLI provisioner: unable to send new component configuration to mediator '%s'",
+                med->details->ipstr);
+        disconnect_provisioner_client(state->epoll_fd, med->client,
+                med->details->ipstr);
+        return -1;
+    }
+
+    SEND_SINGLE_MEDIATOR_END
     return 1;
 }
 

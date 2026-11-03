@@ -2845,6 +2845,86 @@ cepterr:
     return -1;
 }
 
+int modify_mediator_configuration(update_con_info_t *cinfo,
+        provision_state_t *state) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_component_options optsjson;
+    prov_mediator_t *thismed;
+    int ret = 0;
+    uint32_t medid;
+    char *jsonconfig = NULL;
+    char *mergedjson = NULL;
+    int parseerr = 0;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        ret = -1;
+        goto endjsonparse;
+    }
+
+    extract_component_options_json_objects(&optsjson, parsed);
+    EXTRACT_JSON_INT_PARAM("name", "mediator ID",
+            optsjson.name, medid, &parseerr, 0, 1000000, true);
+
+    if (parseerr) {
+        goto endjsonparse;
+    }
+    HASH_FIND(hh, state->collectors, &(medid), sizeof(medid), thismed);
+    if (thismed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: received mediator configuration update for a mediator we know nothing about: %u", medid);
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Cannot update configuration for unknown mediator: %u. %s",
+                update_failure_page_start, medid,
+                update_failure_page_end);
+        ret = -1;
+        goto endjsonparse;
+    }
+
+    EXTRACT_JSON_STRING_PARAM("configuration", "config JSON",
+            optsjson.config, jsonconfig, &parseerr, true);
+
+    if (parseerr) {
+        goto endjsonparse;
+    }
+    if (announce_configuration_update_to_mediator(state, thismed,
+            jsonconfig) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to update configuration for mediator: %u. %s",
+                update_failure_page_start, medid,
+                update_failure_page_end);
+        ret = -1;
+    } else {
+        mergedjson = merge_json_objects(thismed->jsonconfig, jsonconfig);
+        if (thismed->jsonconfig) {
+            free(thismed->jsonconfig);
+        }
+        thismed->jsonconfig = mergedjson;
+        update_mediator_client_row(state, thismed);
+    }
+
+endjsonparse:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    if (jsonconfig) {
+        free(jsonconfig);
+    }
+    json_tokener_free(tknr);
+    return ret;
+}
+
 int modify_collector_configuration(update_con_info_t *cinfo,
         provision_state_t *state) {
 

@@ -505,6 +505,10 @@ static int update_configuration_post(update_con_info_t *cinfo,
             }
             break;
         case TARGET_MEDIATOR:
+            if (strcmp(method, "PUT") == 0) {
+                // allow for modification of the mediator config
+                ret = modify_mediator_configuration(cinfo, state);
+            }
             break;
         case TARGET_X2X3LISTENER:
             if (strcmp(method, "POST") == 0) {

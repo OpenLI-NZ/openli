@@ -157,6 +157,8 @@ openlimediator_SOURCES=mediator/mediator.c mediator/mediator.h \
                 agency.h agency.c logger.c logger.h netcomms.c \
                 netcomms.h export_buffer.c intercept.c \
                 export_buffer.h etsili_core.h etsili_core.c \
+                mediator/configupdating_mediator.c yaml_modifier.c \
+                yaml_modifier.h \
                 collector/jenkinshash.c openli_tls.c openli_tls.h \
                 collector/etsiencoding/etsiencoding.h \
                 collector/etsiencoding/etsiencoding.c \

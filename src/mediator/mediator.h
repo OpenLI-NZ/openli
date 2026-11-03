@@ -42,6 +42,7 @@
 #include "mediator_prov.h"
 #include "coll_recv_thread.h"
 #include "lea_send_thread.h"
+#include "yaml_modifier.h"
 
 /** Global state variables for a mediator instance */
 typedef struct med_state {
@@ -116,9 +117,15 @@ typedef struct med_state {
     /** ZeroMQ context for creating ZMQ sockets */
     void *zmq_ctxt;
 
+    openli_yaml_config_pending_updates_t configupdates;
+
 } mediator_state_t;
 
 void mediator_flag_status_change(void);
+
+int handle_base_mediator_config_changes(mediator_state_t *state,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *listenchanged, int *opidchanged);
 
 #endif
 

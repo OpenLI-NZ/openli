@@ -153,6 +153,8 @@ int modify_provisioner_options(update_con_info_t *cinfo,
         provision_state_t *state);
 int modify_collector_configuration(update_con_info_t *cinfo,
         provision_state_t *state);
+int modify_mediator_configuration(update_con_info_t *cinfo,
+        provision_state_t *state);
 int modify_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state);
 
 struct json_object *get_agency(update_con_info_t *cinfo,
