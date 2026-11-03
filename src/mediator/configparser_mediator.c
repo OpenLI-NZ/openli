@@ -61,8 +61,28 @@ char *mediator_config_to_json(mediator_state_t *state) {
     }
 
     if (state->shortoperatorid) {
-        json_object_object_add(jobj, "shortoperatorid",
+        json_object_object_add(jobj, "altoperatorid",
                 json_object_new_string(state->shortoperatorid));
+    }
+
+    if (state->listenaddr) {
+        json_object_object_add(jobj, "listenaddr",
+                json_object_new_string(state->listenaddr));
+    }
+
+    if (state->listenport) {
+        json_object_object_add(jobj, "listenport",
+                json_object_new_string(state->listenport));
+    }
+
+    if (state->provisioner.provaddr) {
+        json_object_object_add(jobj, "provisioneraddr",
+                json_object_new_string(state->provisioner.provaddr));
+    }
+
+    if (state->provisioner.provport) {
+        json_object_object_add(jobj, "provisionerport",
+                json_object_new_string(state->provisioner.provport));
     }
 
     json_object_object_add(jobj, "etsitls",
@@ -70,6 +90,13 @@ char *mediator_config_to_json(mediator_state_t *state) {
     json_object_object_add(jobj, "etsitls_certset",
             json_object_new_boolean(state->sslconf.certfile &&
                     state->sslconf.keyfile));
+    json_object_object_add(jobj, "etsitls_caset",
+            json_object_new_boolean(state->sslconf.cacertfile != NULL));
+
+    if (state->sslconf.tlsgroups) {
+        json_object_object_add(jobj, "tlsgroups",
+                json_object_new_string(state->sslconf.tlsgroups));
+    }
 
     if (state->pcapdirectory) {
         json_object_object_add(jobj, "pcapdirectory",
