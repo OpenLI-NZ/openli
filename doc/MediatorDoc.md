@@ -11,20 +11,24 @@ An example configuration file (with in-line documentation) can found in
 This option should contain a string that uniquely identifies your network.
 The value you provide here will be used to populate the "operator
 identifier" field in any ETSI messages generated directly by the mediator,
-such as keep-alives and HI1 Operations messages. The operator ID must be
-no more than 16 characters in length.
+such as keep-alives and HI1 Operations messages, which are destined for an
+agency that does not have its own specific operator ID already defined in the
+agency configuration, i.e. the option specified here acts as the fallback
+or default value in the absence of any other configured value.
 
-Ideally, the operator ID configured for your mediator(s) should match
-the operator ID that you are using for your collectors.
+The operator ID must be no more than 16 characters in length.
+
+Ideally, the default operator ID configured for your mediator(s) should match
+the default operator ID that you are using for your collectors.
 
 There is also a special type of Operator ID which is used in HI1 Operations
 messages that is limited to 5 characters in length -- this is an annoying
 inconsistency in the ETSI standards that we cannot work around easily. This
 may be set using the `altoperatorid` configuration option. If this
 option is not configured, OpenLI will instead use the first 5 characters from
-your regular operator ID. Once again, this value configured on the mediator
-itself will only be used if the agency does not have an altoperatorid already
-configured.
+your regular operator ID. As with regular operator IDs, the value configured
+on the mediator itself will only be used if the agency does not have an
+altoperatorid already configured.
 
 ### Mediator ID
 Each mediator that you are running needs to be assigned a unique mediator
