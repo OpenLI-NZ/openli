@@ -695,12 +695,14 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
                 status = OPENLI_DEST_STATE_CONNECTING;
             }
         }
-        if (dest->ssllasterror == 0) {
-            logger(LOG_DEBUG, "OpenLI: SSL Handshake with mediator started in forwarding thread %d", fwd->forwardid);
+        if (dest->ssllasterror == 0 && fwd->forwardid == 0) {
+            logger(LOG_DEBUG, "OpenLI: SSL Handshake with mediator started");
         }
     }
     else {
-        logger(LOG_INFO, "OpenLI: collector forwarding thread %d has connected to mediator %s:%s using a non-TLS connection", fwd->forwardid, dest->ipstr, dest->portstr);
+        if (!dest->failmsg && fwd->forwardid == 0) {
+            logger(LOG_INFO, "OpenLI: collector has connected to mediator %s:%s using a non-TLS connection", dest->ipstr, dest->portstr);
+        }
         dest->ssl = NULL;
 
         /* Send the HELLO message right away */
@@ -720,7 +722,6 @@ static int connect_single_target(export_dest_t *dest, SSL_CTX *ctx,
     }
 
     funcret = sockfd;
-    dest->failmsg = 0;
     /* If we disconnected after a partial send, make sure we re-send the
      * whole record and trust that downstream will figure out how to deal
      * with any duplication.
@@ -1016,6 +1017,10 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
             dest->waitingforhandshake = 0;
             if (fwd->forwardid == 0) {
                 col_known_mediator_t *kmed = NULL;
+                logger(LOG_INFO,
+                        "OpenLI: collector has %s to mediator %s:%s using TLS",
+                        dest->failmsg ? "reconnected" : "connected",
+                        dest->ipstr, dest->portstr);
                 pthread_rwlock_wrlock(fwd->shared_mutex);
                 HASH_FIND(hh, fwd->shared->known_mediators, &(dest->mediatorid),
                         sizeof(dest->mediatorid), kmed);
@@ -1025,6 +1030,8 @@ static void complete_ssl_handshake(forwarding_thread_data_t *fwd,
                 }
                 pthread_rwlock_unlock(fwd->shared_mutex);
             }
+            dest->logallowed = 1;
+            dest->failmsg = 0;
         }
     }
 }
@@ -1302,10 +1309,16 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         dest = (export_dest_t *)(*jval);
 
         if (fwd->topoll[i].revents & ZMQ_POLLERR) {
-            logger(LOG_INFO,
-                    "OpenLI: connection to mediator %s:%s has failed in forwarding thread %d: (%s)",
-                    dest->ipstr, dest->portstr, fwd->forwardid,
-                    strerror(errno));
+            int so_error = 0;
+            socklen_t so_len = sizeof(so_error);
+            getsockopt(dest->fd, SOL_SOCKET, SO_ERROR, &so_error, &so_len);
+            if (!dest->failmsg && fwd->forwardid == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: connection to mediator %s:%s has failed: (%s)",
+                        dest->ipstr, dest->portstr,
+                        so_error ? strerror(so_error) : "connection error");
+            }
+            dest->failmsg = 1;
             disconnect_mediator(fwd, dest);
             continue;
         }
@@ -1336,16 +1349,23 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
                 }
             } else if ((r = recv(fwd->topoll[i].fd, recvbuf, 8, 0)) <= 0) {
                 if (r < 0) {
-                    logger(LOG_INFO,
-                        "OpenLI: connection to mediator %s:%s has failed in forwarding thread %d: (%s)",
-                        dest->ipstr, dest->portstr, fwd->forwardid,
-                        strerror(errno));
+                    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+                        continue;
+                    }
+                    if (!dest->failmsg && fwd->forwardid == 0) {
+                        logger(LOG_INFO,
+                            "OpenLI: connection to mediator %s:%s has failed: (%s)",
+                            dest->ipstr, dest->portstr, strerror(errno));
+                    }
                 } else {
-                    logger(LOG_INFO,
-                        "OpenLI: connection to mediator %s:%s has closed in forwarding thread %d",
-                        dest->ipstr, dest->portstr, fwd->forwardid);
+                    if (!dest->failmsg && fwd->forwardid == 0) {
+                        logger(LOG_INFO,
+                            "OpenLI: connection to mediator %s:%s has closed",
+                            dest->ipstr, dest->portstr);
+                    }
                 }
 
+                dest->failmsg = 1;
                 disconnect_mediator(fwd, dest);
                 continue;
             }
@@ -1365,6 +1385,17 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
         if (dest->waitingforhandshake) {
             continue;
         }
+
+        if (dest->failmsg) {
+            if (fwd->forwardid == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: collector forwarders have reconnected to mediator %s:%s using a non-TLS connection",
+                        dest->ipstr, dest->portstr);
+            }
+            dest->logallowed = 1;
+            dest->failmsg = 0;
+        }
+
         if (fwd->ampq_conn || fwd->RMQ_conf.enabled) {
             continue;
         }
@@ -1394,6 +1425,7 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             logger(LOG_INFO,
                     "OpenLI: forwarding thread %d has successfully started transmitting records to mediator %s:%s", fwd->forwardid, dest->ipstr, dest->portstr);
             dest->logallowed = 1;
+            dest->failmsg = 0;
         }
         towait = 0;
         fwd->forcesend[i] = 0;
