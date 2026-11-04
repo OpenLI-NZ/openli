@@ -104,7 +104,7 @@ char *mediator_config_to_json(mediator_state_t *state) {
     }
 
     if (state->pcaptemplate) {
-        json_object_object_add(jobj, "pcaptemplate",
+        json_object_object_add(jobj, "pcapfilename",
                 json_object_new_string(state->pcaptemplate));
     }
 
