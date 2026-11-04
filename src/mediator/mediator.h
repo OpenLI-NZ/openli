@@ -127,6 +127,18 @@ int handle_base_mediator_config_changes(mediator_state_t *state,
         openli_yaml_config_pending_updates_t *pending, char *json,
         int *listenchanged, int *opidchanged);
 
+int handle_pcap_mediator_config_changes(mediator_state_t *state,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *pcapchanged);
+
+int handle_tls_mediator_config_changes(mediator_state_t *state,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *tlschanged);
+
+int handle_rmq_mediator_config_changes(mediator_state_t *state,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *rmqchanged);
+
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

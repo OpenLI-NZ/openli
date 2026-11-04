@@ -189,6 +189,9 @@ static void destroy_med_state(mediator_state_t *state) {
 		free(state->col_clean_timerev);
 	}
 
+    clean_openli_yaml_config_updates(&(state->configupdates));
+    if (state->configupdates.updates) free(state->configupdates.updates);
+
     if (state->zmq_ctxt) {
         zmq_ctx_destroy(state->zmq_ctxt);
     }
@@ -332,6 +335,8 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     if (state->provisioner.provport == NULL) {
         state->provisioner.provport = strdup("8993");
     }
+
+    memset(&(state->configupdates), 0, sizeof(state->configupdates));
 
     return 0;
 }
@@ -666,9 +671,6 @@ static int send_mediator_listen_details(mediator_state_t *state,
  */
 static inline void halt_listening_socket(mediator_state_t *currstate) {
 
-    /* Disconnect all collectors */
-    mediator_disconnect_all_collectors(&(currstate->collector_threads));
-
     /* Close listen socket and disable epoll event */
     remove_openli_fdevent(currstate->listenerev);
     currstate->listenerev = NULL;
@@ -705,6 +707,24 @@ static int receive_config_update(mediator_state_t *state, uint8_t *msgbody,
 
     handle_base_mediator_config_changes(state, &(state->configupdates),
             newconfig, &listenchanged, &opidchanged);
+
+    handle_pcap_mediator_config_changes(state, &(state->configupdates),
+            newconfig, &pcapchanged);
+
+    handle_tls_mediator_config_changes(state, &(state->configupdates),
+            newconfig, &tlschanged);
+
+    handle_rmq_mediator_config_changes(state, &(state->configupdates),
+            newconfig, &rmqchanged);
+
+    if (tlschanged) {
+        if (state->sslconf.ctx) {
+            SSL_CTX_free(state->sslconf.ctx);
+            state->sslconf.ctx = NULL;
+        }
+        create_ssl_context(&(state->sslconf));
+        mediator_disconnect_all_collectors(&(state->collector_threads));
+    }
 
     if (listenchanged) {
         halt_listening_socket(state);
