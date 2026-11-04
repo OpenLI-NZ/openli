@@ -172,8 +172,8 @@ int handle_rmq_mediator_config_changes(mediator_state_t *state,
                 goto rmqfail;
             }
 
-            if (freqint <= 0) {
-                logger(LOG_INFO, "OpenLI mediator: invalid value for RMQheartbeatfreq option in update sent by provisioner, must be > 0: %ld", freqint);
+            if (freqint < 0) {
+                logger(LOG_INFO, "OpenLI mediator: invalid value for RMQheartbeatfreq option in update sent by provisioner, must be >= 0: %ld", freqint);
                 goto rmqfail;
             }
 
