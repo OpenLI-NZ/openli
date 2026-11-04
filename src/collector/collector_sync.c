@@ -724,6 +724,7 @@ int sync_thread_send_provisioner_auth(collector_sync_t *sync) {
         return 0;
     }
     pthread_rwlock_unlock(sync->info_mutex);
+    sync->instruct_events = ZMQ_POLLIN | ZMQ_POLLOUT | ZMQ_POLLERR;
     return 1;
 }
 

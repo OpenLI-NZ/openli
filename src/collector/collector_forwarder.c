@@ -73,6 +73,46 @@ void free_encoded_result(openli_encoded_result_t *res) {
 
 }
 
+static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
+        export_dest_t *med) {
+
+    int err;
+    col_known_mediator_t *found = NULL;
+
+    if (med->fd != -1) {
+        JLD(err, fwd->destinations_by_fd, med->fd);
+        close(med->fd);
+    }
+    med->fd = -1;
+
+    if (med->logallowed && fwd->forwardid == 0) {
+        logger(LOG_INFO, "OpenLI: disconnecting mediator %s:%s",
+                med->ipstr, med->portstr);
+    }
+
+    med->logallowed = 0;
+    if (med->pollindex >= 0 && fwd->topoll) {
+        fwd->topoll[med->pollindex].fd = 0;
+        fwd->topoll[med->pollindex].events = 0;
+    }
+    if (med->ssl){
+        SSL_free(med->ssl);
+        med->ssl = NULL;
+    }
+
+    if (fwd->forwardid == 0) {
+        pthread_rwlock_wrlock(fwd->shared_mutex);
+        HASH_FIND(hh, fwd->shared->known_mediators, &(med->mediatorid),
+                sizeof(med->mediatorid), found);
+        if (found) {
+            found->status = OPENLI_DEST_STATE_DISCONNECTED;
+            __atomic_store_n(&rmq_status_changed, 1, __ATOMIC_RELEASE);
+        }
+        pthread_rwlock_unlock(fwd->shared_mutex);
+    }
+
+}
+
 static int add_new_destination(forwarding_thread_data_t *fwd,
         openli_export_recv_t *msg) {
 
@@ -137,16 +177,12 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
                             found->ipstr, found->portstr, msg->data.med.ipstr,
                             msg->data.med.portstr);
                 }
+                disconnect_mediator(fwd, found);
                 free(found->ipstr);
                 free(found->portstr);
                 found->ipstr = strdup(msg->data.med.ipstr);
                 found->portstr = strdup(msg->data.med.portstr);
                 found->logallowed = 1;
-
-                if (found->fd != -1) {
-                    close(found->fd);
-                    found->fd = -1;
-                }
             }
             found->awaitingconfirm = 0;
             found->halted = 0;
@@ -174,46 +210,6 @@ static int add_new_destination(forwarding_thread_data_t *fwd,
         timerfd_settime(fwd->flagtimerfd, 0, &its, NULL);
     }
     return 1;
-}
-
-static inline void disconnect_mediator(forwarding_thread_data_t *fwd,
-        export_dest_t *med) {
-
-    int err;
-    col_known_mediator_t *found = NULL;
-
-    if (med->fd != -1) {
-        JLD(err, fwd->destinations_by_fd, med->fd);
-        close(med->fd);
-    }
-    med->fd = -1;
-
-    if (med->logallowed && fwd->forwardid == 0) {
-        logger(LOG_INFO, "OpenLI: disconnecting mediator %s:%s",
-                med->ipstr, med->portstr);
-    }
-
-    med->logallowed = 0;
-    if (med->pollindex >= 0 && fwd->topoll) {
-        fwd->topoll[med->pollindex].fd = 0;
-        fwd->topoll[med->pollindex].events = 0;
-    }
-    if (med->ssl){
-        SSL_free(med->ssl);
-        med->ssl = NULL;
-    }
-
-    if (fwd->forwardid == 0) {
-        pthread_rwlock_wrlock(fwd->shared_mutex);
-        HASH_FIND(hh, fwd->shared->known_mediators, &(med->mediatorid),
-                sizeof(med->mediatorid), found);
-        if (found) {
-            found->status = OPENLI_DEST_STATE_DISCONNECTED;
-            __atomic_store_n(&rmq_status_changed, 1, __ATOMIC_RELEASE);
-        }
-        pthread_rwlock_unlock(fwd->shared_mutex);
-    }
-
 }
 
 static void remove_destination(forwarding_thread_data_t *fwd,
@@ -1231,6 +1227,22 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
     if (fwd->topoll[2].revents & ZMQ_POLLIN) {
         struct itimerspec its;
         struct timeval tv;
+        Word_t chk_idx = 0;
+        PWord_t chk_val;
+
+        JLF(chk_val, fwd->destinations_by_id, chk_idx);
+        while (chk_val) {
+            export_dest_t *d = (export_dest_t *)(*chk_val);
+            if (d->fd != -1 && d->failmsg && !d->waitingforhandshake) {
+                if (fwd->forwardid == 0) {
+                    logger(LOG_INFO,
+                            "OpenLI: collector forwarders have reconnected to mediator %s:%s using a non-TLS connection", d->ipstr, d->portstr);
+                }
+                d->logallowed = 1;
+                d->failmsg = 0;
+            }
+            JLN(chk_val, fwd->destinations_by_id, chk_idx);
+        }
 
         connect_export_targets(fwd);
 
@@ -1386,16 +1398,6 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             continue;
         }
 
-        if (dest->failmsg) {
-            if (fwd->forwardid == 0) {
-                logger(LOG_INFO,
-                        "OpenLI: collector forwarders have reconnected to mediator %s:%s using a non-TLS connection",
-                        dest->ipstr, dest->portstr);
-            }
-            dest->logallowed = 1;
-            dest->failmsg = 0;
-        }
-
         if (fwd->ampq_conn || fwd->RMQ_conf.enabled) {
             continue;
         }
@@ -1422,6 +1424,11 @@ static inline int forwarder_main_loop(forwarding_thread_data_t *fwd) {
             }
             disconnect_mediator(fwd, dest);
         } else if (dest->logallowed == 0) {
+            if (fwd->forwardid == 0) {
+                logger(LOG_INFO,
+                        "OpenLI: collector forwarders have reconnected to mediator %s:%s using a non-TLS connection",
+                        dest->ipstr, dest->portstr);
+            }
             logger(LOG_INFO,
                     "OpenLI: forwarding thread %d has successfully started transmitting records to mediator %s:%s", fwd->forwardid, dest->ipstr, dest->portstr);
             dest->logallowed = 1;
