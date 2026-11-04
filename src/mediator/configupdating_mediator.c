@@ -89,10 +89,7 @@ int handle_base_mediator_config_changes(mediator_state_t *state,
                     state->shortoperatorid, true, true);
             *opidchanged = 1;
         }
-    } else if (opid) {
-        if (state->shortoperatorid) {
-            free(state->shortoperatorid);
-        }
+    } else if (opid && state->shortoperatorid == NULL) {
         state->shortoperatorid = strdup((char *)opid);
         if (strlen(state->shortoperatorid) > 5) {
             state->shortoperatorid[5] = '\0';
