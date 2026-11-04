@@ -2882,12 +2882,25 @@ int modify_mediator_configuration(update_con_info_t *cinfo,
     }
     HASH_FIND(hh, state->mediators, &(medid), sizeof(medid), thismed);
     if (thismed == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: received mediator configuration update for a mediator we know nothing about: %u", medid);
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Cannot update configuration for unknown mediator: %u. %s",
-                update_failure_page_start, medid,
-                update_failure_page_end);
+        known_client_t *kc = fetch_single_mediator_client(state, medid);
+
+        if (kc == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: received mediator configuration update for a mediator we know nothing about: %u", medid);
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Cannot update configuration for unknown mediator: %u. %s",
+                    update_failure_page_start, medid,
+                    update_failure_page_end);
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: received mediator configuration update for mediator %u, but the mediator is not currently connected", medid);
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Cannot update configuration for disconnected mediator: %u. %s",
+                    update_failure_page_start, medid,
+                    update_failure_page_end);
+            free_known_client(kc, 1);
+        }
+
         ret = -1;
         goto endjsonparse;
     }
@@ -2962,12 +2975,24 @@ int modify_collector_configuration(update_con_info_t *cinfo,
     }
     HASH_FIND(hh, state->collectors, uuid, strlen(uuid), thiscol);
     if (thiscol == NULL) {
-        logger(LOG_INFO,
-                "OpenLI: received collector configuration update for a collector we know nothing about: %s", uuid);
-        snprintf(cinfo->answerstring, 4096,
-                "%s <p>Cannot update configuration for unknown collector: %s. %s",
-                update_failure_page_start, uuid,
-                update_failure_page_end);
+        known_client_t *kc = fetch_single_collector_client(state, uuid);
+        if (kc == NULL) {
+            logger(LOG_INFO,
+                    "OpenLI: received collector configuration update for a collector we know nothing about: %s", uuid);
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Cannot update configuration for unknown collector: %s. %s",
+                    update_failure_page_start, uuid,
+                    update_failure_page_end);
+        } else {
+
+            logger(LOG_INFO,
+                    "OpenLI: received collector configuration update for a collector that is not currently connected: %s", uuid);
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Cannot update configuration for disconnected collector: %s. %s",
+                    update_failure_page_start, uuid,
+                    update_failure_page_end);
+            free_known_client(kc, 1);
+        }
         ret = -1;
         goto endjsonparse;
     }

@@ -638,7 +638,7 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
     openli_mediator_t *med = (openli_mediator_t *)malloc(
             sizeof(openli_mediator_t));
     openli_mediator_t *tmp = NULL;
-    prov_client_t *pending;
+    prov_client_t *pending = NULL;
     mediator_address_t *knownaddr;
     prov_mediator_t *provmed = NULL, *prevmed = NULL;
     char identifier[1024];
@@ -675,6 +675,8 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
             prevmed);
 
     if (prevmed) {
+        char oldident[1024];
+        mediator_address_t *oldaddr = NULL;
 
         if (prevmed->mediatorid == med->mediatorid &&
                 strcmp(prevmed->details->ipstr, med->ipstr) == 0 &&
@@ -696,6 +698,16 @@ static int update_mediator_details(provision_state_t *state, uint8_t *medmsg,
         tmp = prevmed->details;
         prevmed->details = med;
         provmed = prevmed;
+        if (!skipannounce) {
+            snprintf(oldident, 1024, "%s-%s", tmp->ipstr, tmp->portstr);
+            HASH_FIND(hh, state->knownmeds, oldident, strlen(oldident),
+                    oldaddr);
+            if (oldaddr && oldaddr->medid == provmed->mediatorid) {
+                HASH_DELETE(hh, state->knownmeds, oldaddr);
+                free(oldaddr->ipportstr);
+                free(oldaddr);
+            }
+        }
 
         free(tmp->ipstr);
         free(tmp->portstr);
