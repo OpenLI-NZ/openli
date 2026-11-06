@@ -17,4 +17,4 @@ else
 fi
 
 
-sqlcipher $DBFILE "PRAGMA key=\"${AUTHKEY}\"; CREATE TABLE IF NOT EXISTS authcreds (username text primary key, digesthash blob not null, apikey text null);"
+sqlcipher $DBFILE "PRAGMA key=\"${AUTHKEY}\"; CREATE TABLE IF NOT EXISTS authcreds (username text primary key, digesthash blob not null, apikey text null, role text default 'intercepts');"

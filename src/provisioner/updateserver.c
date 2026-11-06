@@ -75,9 +75,13 @@ const char *unsupported_operation =
 const char *get404 =
         "<html><body>OpenLI provisioner was unable to find the requested resource in its running intercept configuration.</body></html>\n";
 
+const char *auth_forbidden =
+        "<html><body>Access forbidden due to insufficient user privileges for this resource.</body></html>\n";
+
 int init_restauth_db(provision_state_t *state) {
 #ifdef HAVE_SQLCIPHER
     int rc;
+    char *errmsg = NULL;
 
     assert(state != NULL);
 
@@ -104,6 +108,46 @@ int init_restauth_db(provision_state_t *state) {
         return -1;
     }
 
+    // create the table for storing credentials if it doesn't already exist
+    if (sqlite3_exec(state->authdb, "CREATE TABLE IF NOT EXISTS authcreds ("
+            "username text primary key, "
+            "digesthash blob not null, "
+            "apikey text null, "
+            "role text default 'admin');",
+            NULL, NULL, &errmsg) != SQLITE_OK) {
+        logger(LOG_INFO, "OpenLI provisioner: Failed to create and validate authcreds table for REST authentication database %s: %s",
+                state->restauthdbfile,
+                errmsg ? errmsg : sqlite3_errmsg(state->authdb));
+        if (errmsg) {
+            sqlite3_free(errmsg);
+        }
+        sqlite3_close(state->authdb);
+        state->authdb = NULL;
+        return -1;
+    }
+
+    // auto-migrate any databases that were created before we added the role
+    // column
+    if (sqlite3_exec(state->authdb,
+            "ALTER TABLE authcreds ADD COLUMN role TEXT DEFAULT 'admin';",
+            NULL, NULL, &errmsg) != SQLITE_OK) {
+
+        if (errmsg && strstr(errmsg, "duplicate column name")) {
+            sqlite3_free(errmsg);
+        } else {
+            logger(LOG_INFO, "OpenLI provisioner: Failed to add role column to authcreds table for REST authentication database %s: %s",
+                    state->restauthdbfile,
+                    errmsg ? errmsg : sqlite3_errmsg(state->authdb));
+            if (errmsg) {
+                sqlite3_free(errmsg);
+            }
+            sqlite3_close(state->authdb);
+            state->authdb = NULL;
+            return -1;
+        }
+    }
+
+
     logger(LOG_INFO, "OpenLI provisioner: Authentication enabled for the REST API (using DB %s)",
             state->restauthdbfile);
     state->restauthenabled = 1;
@@ -122,6 +166,22 @@ void close_restauth_db(provision_state_t *state) {
 #endif
     state->authdb = NULL;
     return;
+}
+
+static uint32_t convert_role_to_capabilities(const char *role) {
+    if (role == NULL || strcasecmp(role, "admin") == 0) {
+        return OPENLI_PROV_CAP_ALL;
+    }
+
+    if (strcasecmp(role, "intercepts") == 0) {
+        return OPENLI_PROV_CAP_INTERCEPTS;
+    }
+
+    if (strcasecmp(role, "system") == 0) {
+        return OPENLI_PROV_CAP_SYSTEM;
+    }
+
+    return 0;
 }
 
 static int send_auth_failure(struct MHD_Connection *connection,
@@ -236,6 +296,42 @@ static inline int extract_target_from_url(update_con_info_t *cinfo,
 
     memcpy(targetspace, targetstart + 1, targetend - targetstart - 1);
     targetspace[targetend - (targetstart + 1)] = '\0';
+    return 1;
+}
+
+static int check_endpoint_authorization(update_con_info_t *cinfo) {
+    switch(cinfo->target) {
+        case TARGET_AGENCY:
+        case TARGET_SIPSERVER:
+        case TARGET_RADIUSSERVER:
+        case TARGET_GTPSERVER:
+        case TARGET_IMAPSERVER:
+        case TARGET_SMTPSERVER:
+        case TARGET_POP3SERVER:
+        case TARGET_IPINTERCEPT:
+        case TARGET_VOIPINTERCEPT:
+        case TARGET_EMAILINTERCEPT:
+        case TARGET_DEFAULTRADIUS:
+        case TARGET_IPCCFILTER:
+            if (!(cinfo->authcaps & OPENLI_PROV_CAP_INTERCEPTS)) {
+                return 0;
+            }
+            break;
+        case TARGET_COLLECTOR:
+        case TARGET_MEDIATOR:
+        case TARGET_UDPSINK:
+        case TARGET_X2X3LISTENER:
+            if (!(cinfo->authcaps & (OPENLI_PROV_CAP_SYSTEM | OPENLI_PROV_CAP_ORCHESTRATION))) {
+                return 0;
+            }
+            break;
+        case TARGET_OPTIONS:
+
+            break;
+
+        case TARGET_OPENLIVERSION:
+            break;
+    }
     return 1;
 }
 
@@ -566,6 +662,7 @@ void complete_update_request(void *cls UNUSED,
         }
     }
 
+    if (cinfo->authuser) free(cinfo->authuser);
     free(cinfo);
     *con_cls = NULL;
 }
@@ -578,12 +675,12 @@ void complete_update_request(void *cls UNUSED,
 
 #ifdef HAVE_SQLCIPHER
 static unsigned char *lookup_user_digest(provision_state_t *provstate,
-        char *username, unsigned char *digestres) {
+        char *username, unsigned char *digestres, uint32_t *validcaps) {
 
     int rc, step;
     sqlite3_stmt *res;
     const char *sql =
-            "SELECT username, digesthash FROM authcreds where username = ?";
+            "SELECT username, digesthash, role FROM authcreds where username = ?";
     unsigned char *returning = NULL;
     const unsigned char *hashtext;
 
@@ -601,6 +698,7 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
     step = sqlite3_step(res);
     if (step == SQLITE_ROW) {
         int i;
+        const char *role = NULL;
         hashtext = sqlite3_column_blob(res, 1);
 
         if (strlen((const char *)hashtext) < 32) {
@@ -617,6 +715,10 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
             digestres[i] = (CHAR_TO_VALUE(hashtext[i * 2]) << 4) +
                     (CHAR_TO_VALUE(hashtext[(i * 2) + 1]));
         }
+        role = (const char *)sqlite3_column_text(res, 2);
+        if (role && validcaps) {
+            *validcaps = convert_role_to_capabilities(role);
+        }
 
         returning = digestres;
     }
@@ -627,12 +729,12 @@ static unsigned char *lookup_user_digest(provision_state_t *provstate,
 #endif
 
 static int validate_user_apikey(provision_state_t *provstate,
-        const char *apikey) {
+        const char *apikey, char **validuser, uint32_t *validcaps) {
 
 #ifdef HAVE_SQLCIPHER
     int rc, step;
     sqlite3_stmt *res;
-    const char *sql = "SELECT username, apikey FROM authcreds where apikey = ?";
+    const char *sql = "SELECT username, role FROM authcreds where apikey = ?";
 
     rc = sqlite3_prepare_v2(provstate->authdb, sql, -1, &res, 0);
     if (rc != SQLITE_OK) {
@@ -645,7 +747,18 @@ static int validate_user_apikey(provision_state_t *provstate,
 
     step = sqlite3_step(res);
     if (step == SQLITE_ROW) {
-        logger(LOG_INFO, "OpenLI: User %s has used their API key to send a request via the REST API", sqlite3_column_text(res, 0));
+        const char *uname = (const char *)sqlite3_column_text(res, 0);
+        const char *role = (const char *)sqlite3_column_text(res, 1);
+        logger(LOG_INFO, "OpenLI: User %s (role %s) has used their API key to send a request via the REST API", uname ? uname : "unknown",
+                role ? role : "admin?");
+
+        if (validuser && uname) {
+            *validuser = strdup(uname);
+        }
+
+        if (validcaps) {
+            *validcaps = convert_role_to_capabilities(role);
+        }
         sqlite3_finalize(res);
         return MHD_YES;
     }
@@ -656,7 +769,8 @@ static int validate_user_apikey(provision_state_t *provstate,
 }
 
 static int authenticate_request(provision_state_t *provstate,
-        struct MHD_Connection *conn, const char *realm) {
+        struct MHD_Connection *conn, const char *realm,
+        char **validuser, uint32_t *validcaps) {
 
     unsigned char digest[16];
     const char *apikey;
@@ -669,7 +783,8 @@ static int authenticate_request(provision_state_t *provstate,
         apikey = MHD_lookup_connection_value(conn, MHD_HEADER_KIND,
                 "X-API-KEY");
         if (apikey != NULL) {
-            if (validate_user_apikey(provstate, apikey) == 0) {
+            if (validate_user_apikey(provstate, apikey, validuser,
+                        validcaps) == 0) {
                 logger(LOG_INFO,
                         "OpenLI: user attempted to provide an invalid API key");
                 return send_auth_failure(conn, realm, MHD_NO);
@@ -682,7 +797,7 @@ static int authenticate_request(provision_state_t *provstate,
 
     ret = MHD_NO;
 #ifdef HAVE_SQLCIPHER
-    if (lookup_user_digest(provstate, username, digest) == NULL) {
+    if (lookup_user_digest(provstate, username, digest, validcaps) == NULL) {
         logger(LOG_INFO,
                 "OpenLI: user '%s' attempted to authenticate against provisioner update service, but they don't exist in the database", username);
         return send_auth_failure(conn, realm, MHD_NO);
@@ -697,7 +812,10 @@ static int authenticate_request(provision_state_t *provstate,
         return send_auth_failure(conn, realm, ret);
     }
     logger(LOG_INFO, "OpenLI: user '%s' successfully authenticated against provisioner update service", username);
-    free(username);
+
+    // username was malloced by libmicrohttpd, so we can just assign it here
+    // rather than strduping it
+    *validuser = username;
 
     return MHD_YES;
 }
@@ -711,22 +829,31 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
     provision_state_t *provstate = (provision_state_t *)cls;
     MHD_RESULT ret;
     const char *realm = "provisioner@openli.nz";
+    char *authuser = NULL;
+    uint32_t authcaps = 0;
 
     if (*con_cls == NULL) {
         if (provstate->restauthenabled) {
-            ret = authenticate_request(provstate, conn, realm);
+            ret = authenticate_request(provstate, conn, realm, &authuser,
+                    &authcaps);
 
             if (ret != MHD_YES) {
+                if (authuser) free(authuser);
                 return send_auth_failure(conn, realm, ret);
             }
         } else {
             /* TODO log all "anonymous" accesses to this socket? */
+            authcaps = OPENLI_PROV_CAP_ALL;
         }
 
         cinfo = calloc(1, sizeof(update_con_info_t));
         if (cinfo == NULL) {
+            if (authuser) free(authuser);
             return MHD_NO;
         }
+
+        cinfo->authuser = authuser;
+        cinfo->authcaps = authcaps;
 
         if (strncmp(url, "/agency", 7) == 0) {
             cinfo->target = TARGET_AGENCY;
@@ -799,6 +926,12 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
         json_object *respjson = NULL;
         cinfo = (update_con_info_t *)(*con_cls);
 
+        if (!check_endpoint_authorization(cinfo)) {
+            logger(LOG_INFO, "OpenLI: user '%s' forbidden from GET on endpoint %s/",
+                    cinfo->authuser ? cinfo->authuser : "unknown", url);
+            return send_http_page(conn, auth_forbidden, MHD_HTTP_FORBIDDEN);
+        }
+
         respjson = create_get_response(cinfo, provstate, url);
         ret = send_json_object(conn, respjson);
 
@@ -814,10 +947,17 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
             *upload_data_size = 0;
             return ret;
         } else {
+            if (!check_endpoint_authorization(cinfo)) {
+                logger(LOG_INFO, "OpenLI: user '%s' forbidden from %s on endpoint %s/",
+                        cinfo->authuser ? cinfo->authuser : "unknown", method,
+                        url);
+                return send_http_page(conn, auth_forbidden, MHD_HTTP_FORBIDDEN);
+            }
             /* POST / PUT is complete */
             if (update_configuration_post(cinfo, provstate, method) < 0) {
-                return send_http_page(conn, cinfo->answerstring,
-                        MHD_HTTP_BAD_REQUEST);
+                int status = (cinfo->answercode != MHD_HTTP_OK) ?
+                        cinfo->answercode : MHD_HTTP_BAD_REQUEST;
+                return send_http_page(conn, cinfo->answerstring, status);
             }
 
             return send_http_page(conn, cinfo->answerstring, cinfo->answercode);
@@ -825,6 +965,12 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
     } else if (strcmp(method, "DELETE") == 0) {
         cinfo = (update_con_info_t *)(*con_cls);
 
+        if (!check_endpoint_authorization(cinfo)) {
+            logger(LOG_INFO, "OpenLI: user '%s' forbidden from %s on endpoint %s/",
+                    cinfo->authuser ? cinfo->authuser : "unknown", method,
+                    url);
+            return send_http_page(conn, auth_forbidden, MHD_HTTP_FORBIDDEN);
+        }
         if (update_configuration_delete(cinfo, provstate, url) < 0) {
             return send_http_page(conn, cinfo->answerstring,
                     MHD_HTTP_BAD_REQUEST);

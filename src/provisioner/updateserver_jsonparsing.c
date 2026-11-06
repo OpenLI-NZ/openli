@@ -38,6 +38,42 @@
 #include "intercept_timers.h"
 #include "configparser_common.h"
 
+static const char *collector_restricted_keys[] = {
+    "etsitls",
+    "forwardingthreads",
+    "encoderthreads",
+    "seqtrackerthreads",
+    "sipthreads",
+    "emailthreads",
+    "gtpthreads",
+    "sctpthreads",
+    "confirm_restart",
+    "inputs",
+    "provisioneraddr",
+    "provisionerport",
+    NULL
+};
+
+static const char *collector_restart_required_keys[] = {
+    "forwardingthreads",
+    "encoderthreads",
+    "seqtrackerthreads",
+    "sipthreads",
+    "emailthreads",
+    "gtpthreads",
+    "sctpthreads",
+    NULL
+};
+
+static const char *mediator_restricted_keys[] = {
+    "etsitls",
+    "provisioneraddr",
+    "provisionerport",
+    "listenaddr",
+    "listenport",
+    NULL
+};
+
 struct json_agency {
     struct json_object *hi3addr;
     struct json_object *hi3port;
@@ -441,6 +477,69 @@ static int parse_intercept_xids(intercept_common_t *common,
 
 xiderr:
     return -1;
+}
+
+static int check_jsonconfig_keys_restart_required(json_object *config_obj,
+        const char **restartkeys, const char **failkey) {
+
+    int i;
+
+    for (i = 0; restartkeys[i] != NULL; i++) {
+        if (json_object_object_get_ex(config_obj, restartkeys[i], NULL)) {
+            // modifying this config option will require a restart of the
+            // affected component, so we're going to need explicit
+            // confirmation from the requesting party
+            if (failkey) {
+                *failkey = restartkeys[i];
+            }
+            return 1;
+        }
+    }
+    return 0;
+}
+
+static int check_jsonconfig_keys_authorized(json_object *config_obj,
+        const char **restrictedkeys, uint32_t authcaps,
+        const char **failkey) {
+    int i;
+
+    /* If we have orchestration capabilty, we can do anything */
+    if (authcaps & OPENLI_PROV_CAP_ORCHESTRATION) {
+        return 1;
+    }
+
+    for (i = 0; restrictedkeys[i] != NULL; i++) {
+        if (json_object_object_get_ex(config_obj, restrictedkeys[i], NULL)) {
+            // there's a restricted key in our request payload and we don't
+            // have permission to modify this -- DENY
+            if (failkey) {
+                *failkey = restrictedkeys[i];
+            }
+            return 0;
+        }
+    }
+    return 1;
+}
+
+static int check_confirm_restart_flag(struct json_object *parsed,
+        struct json_object *cfgobj) {
+
+    struct json_object *confirmobj = NULL;
+
+    if (cfgobj && json_object_object_get_ex(cfgobj, "confirm_restart",
+            &confirmobj)) {
+        if (json_object_is_type(confirmobj, json_type_boolean)) {
+            return json_object_get_boolean(confirmobj);
+        }
+    }
+    if (parsed && json_object_object_get_ex(parsed, "confirm_restart",
+            &confirmobj)) {
+        if (json_object_is_type(confirmobj, json_type_boolean)) {
+            return json_object_get_boolean(confirmobj);
+        }
+    }
+
+    return 0;
 }
 
 static int parse_intercept_common_json(struct json_intercept *jsonp,
@@ -2849,7 +2948,7 @@ int modify_mediator_configuration(update_con_info_t *cinfo,
         provision_state_t *state) {
 
     struct json_tokener *tknr;
-    struct json_object *parsed = NULL;
+    struct json_object *parsed = NULL, *cfgobj = NULL;
     struct json_component_options optsjson;
     prov_mediator_t *thismed;
     int ret = 0;
@@ -2857,6 +2956,7 @@ int modify_mediator_configuration(update_con_info_t *cinfo,
     char *jsonconfig = NULL;
     char *mergedjson = NULL;
     int parseerr = 0;
+    const char *failkey = NULL;
 
     tknr = json_tokener_new();
     parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
@@ -2905,6 +3005,23 @@ int modify_mediator_configuration(update_con_info_t *cinfo,
         goto endjsonparse;
     }
 
+    if (json_object_object_get_ex(parsed, "configuration", &cfgobj) &&
+            json_object_is_type(cfgobj, json_type_object)) {
+        if (!check_jsonconfig_keys_authorized(cfgobj, mediator_restricted_keys,
+                cinfo->authcaps, &failkey)) {
+            logger(LOG_INFO,
+                    "OpenLI: user '%s' attempted to modify restricted parameter '%s' on mediator %u but did not have permissions to do so",
+                    cinfo->authuser ? cinfo->authuser : "unknown", failkey,
+                    medid);
+            cinfo->answercode = MHD_HTTP_FORBIDDEN;
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Modification of parameter '%s' on a mediator requires elevated privileges. %s",
+                    update_failure_page_start, failkey,
+                    update_failure_page_end);
+            ret = -1;
+            goto endjsonparse;
+        }
+    }
     EXTRACT_JSON_STRING_PARAM("configuration", "config JSON",
             optsjson.config, jsonconfig, &parseerr, true);
 
@@ -2942,7 +3059,8 @@ int modify_collector_configuration(update_con_info_t *cinfo,
         provision_state_t *state) {
 
     struct json_tokener *tknr;
-    struct json_object *parsed = NULL;
+    struct json_object *parsed = NULL, *cfgobj = NULL;
+    const char *failkey = NULL;
     struct json_component_options optsjson;
     prov_collector_t *thiscol;
     int ret = 0;
@@ -2995,6 +3113,37 @@ int modify_collector_configuration(update_con_info_t *cinfo,
         }
         ret = -1;
         goto endjsonparse;
+    }
+
+    if (json_object_object_get_ex(parsed, "configuration", &cfgobj) &&
+            json_object_is_type(cfgobj, json_type_object)) {
+        if (!check_jsonconfig_keys_authorized(cfgobj, collector_restricted_keys,
+                cinfo->authcaps, &failkey)) {
+            logger(LOG_INFO,
+                    "OpenLI: user '%s' attempted to modify restricted parameter '%s' on collector %s but did not have permissions to do so",
+                    cinfo->authuser ? cinfo->authuser : "unknown", failkey,
+                    uuid);
+            cinfo->answercode = MHD_HTTP_FORBIDDEN;
+            snprintf(cinfo->answerstring, 4096,
+                    "%s <p>Modification of parameter '%s' on a collector requires elevated privileges. %s",
+                    update_failure_page_start, failkey,
+                    update_failure_page_end);
+            ret = -1;
+            goto endjsonparse;
+        }
+
+        if (check_jsonconfig_keys_restart_required(cfgobj,
+                collector_restart_required_keys, &failkey)) {
+            if (!check_confirm_restart_flag(parsed, cfgobj)) {
+                cinfo->answercode = MHD_HTTP_CONFLICT;
+                snprintf(cinfo->answerstring, 4096,
+                        "%s <p>Modifying '%s' will induce a collector restart and will disrupt packet capture. Resubmit request with 'confirm_restart': true to proceed with this operation. %s",
+                        update_failure_page_start,
+                        failkey, update_failure_page_end);
+                ret = -1;
+                goto endjsonparse;
+            }
+        }
     }
 
     EXTRACT_JSON_STRING_PARAM("configuration", "config JSON",
@@ -3066,6 +3215,18 @@ int modify_provisioner_options(update_con_info_t *cinfo,
         if (delivcompressstring) {
             uint8_t newdefault = map_email_decompress_option_string(
                     delivcompressstring);
+
+            if (!(cinfo->authcaps & OPENLI_PROV_CAP_INTERCEPTS)) {
+                snprintf(cinfo->answerstring, 4096,
+                        "%s <p>User '%s' does not have permission to modify email-defaultemailcompressed configuration. %s",
+                        update_failure_page_start,
+                        cinfo->authuser ? cinfo->authuser : "unknown",
+                        update_failure_page_end);
+                cinfo->answercode = MHD_HTTP_FORBIDDEN;
+                ret = -1;
+                goto endprovopt;
+            }
+
             if (newdefault == OPENLI_EMAILINT_DELIVER_COMPRESSED_NOT_SET ||
                     newdefault == OPENLI_EMAILINT_DELIVER_COMPRESSED_DEFAULT) {
                 snprintf(cinfo->answerstring, 4096,
@@ -3074,6 +3235,7 @@ int modify_provisioner_options(update_con_info_t *cinfo,
                         delivcompressstring,
                         update_failure_page_end);
                 ret = -1;
+                goto endprovopt;
             } else {
                 state->interceptconf.default_email_deliver_compress =
                         newdefault;
@@ -3088,6 +3250,17 @@ int modify_provisioner_options(update_con_info_t *cinfo,
 
         if (optsjson.rmqenabled) {
             uint8_t newrmq = 255;
+
+            if (!(cinfo->authcaps & OPENLI_PROV_CAP_ORCHESTRATION)) {
+                snprintf(cinfo->answerstring, 4096,
+                        "%s <p>User '%s' does not have permission to modify RMQenabled settings. %s",
+                        update_failure_page_start,
+                        cinfo->authuser ? cinfo->authuser : "unknown",
+                        update_failure_page_end);
+                cinfo->answercode = MHD_HTTP_FORBIDDEN;
+                ret = -1;
+                goto endprovopt;
+            }
 
             if (json_object_is_type(optsjson.rmqenabled, json_type_null)) {
                 newrmq = 255;
@@ -3107,6 +3280,7 @@ int modify_provisioner_options(update_con_info_t *cinfo,
 
     }
 
+endprovopt:
     if (parsed) {
         json_object_put(parsed);
     }

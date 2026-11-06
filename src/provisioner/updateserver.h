@@ -37,6 +37,12 @@
 #define MHD_RESULT enum MHD_Result
 #endif
 
+#define OPENLI_PROV_CAP_INTERCEPTS      (1 << 0)
+#define OPENLI_PROV_CAP_SYSTEM          (1 << 1)
+#define OPENLI_PROV_CAP_ORCHESTRATION   (1 << 2)
+
+#define OPENLI_PROV_CAP_ALL     (OPENLI_PROV_CAP_INTERCEPTS | OPENLI_PROV_CAP_SYSTEM | OPENLI_PROV_CAP_ORCHESTRATION)
+
 typedef struct con_info {
     int connectiontype;
     int answercode;
@@ -46,6 +52,9 @@ typedef struct con_info {
     int target;
     char *jsonbuffer;
     int jsonlen;
+
+    char *authuser;
+    uint32_t authcaps;
 
 } update_con_info_t;
 
