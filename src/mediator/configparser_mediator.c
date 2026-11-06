@@ -404,7 +404,13 @@ static int mediator_parser(void *arg, yaml_document_t *doc UNUSED,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp(keyname, "tlsgroups") == 0) {
-        SET_CONFIG_STRING_OPTION(state->sslconf.tlsgroups, value);
+
+        if (value->data.scalar.length > 0 &&
+                strcasecmp((char *)value->data.scalar.value, "default") != 0) {
+            SET_CONFIG_STRING_OPTION(state->sslconf.tlsgroups, value);
+        } else {
+            state->sslconf.tlsgroups = NULL;
+        }
     }
 
     if (key->type == YAML_SCALAR_NODE &&

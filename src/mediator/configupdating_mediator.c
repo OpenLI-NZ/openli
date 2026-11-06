@@ -217,17 +217,33 @@ int handle_tls_mediator_config_changes(mediator_state_t *state,
         goto tlsfail;
     }
 
-    if (json_object_object_get_ex(parsed, "tlsgroups", &groups_json)
-            && json_object_is_type(groups_json, json_type_string)) {
-        tlsgroups = json_object_get_string(groups_json);
-        if (tlsgroups && (!state->sslconf.tlsgroups ||
-                strcmp(state->sslconf.tlsgroups, tlsgroups) != 0)) {
+    if (json_object_object_get_ex(parsed, "tlsgroups", &groups_json)) {
+        if (json_object_is_type(groups_json, json_type_string)) {
+            tlsgroups = json_object_get_string(groups_json);
+            if (tlsgroups[0] == '\0' || strcasecmp(tlsgroups, "default") == 0) {
+                tlsgroups = NULL;
+            }
+        } else if (json_object_is_type(groups_json, json_type_null)) {
+            tlsgroups = NULL;
+        }
+
+        if ((state->sslconf.tlsgroups == NULL && tlsgroups != NULL) ||
+            (state->sslconf.tlsgroups != NULL && tlsgroups == NULL) ||
+            (state->sslconf.tlsgroups && tlsgroups &&
+                    strcmp(state->sslconf.tlsgroups, tlsgroups) != 0)) {
+
             if (state->sslconf.tlsgroups) {
                 free(state->sslconf.tlsgroups);
+                state->sslconf.tlsgroups = NULL;
             }
-            state->sslconf.tlsgroups = strdup((char *)tlsgroups);
-            UPDATE_SCALAR_CONFIG(pending, "tlsgroups", state->sslconf.tlsgroups,
-                    true, true);
+
+            if (tlsgroups) {
+                state->sslconf.tlsgroups = strdup((char *)tlsgroups);
+                UPDATE_SCALAR_CONFIG(pending, "tlsgroups",
+                        state->sslconf.tlsgroups, true, true);
+            } else {
+                UPDATE_SCALAR_CONFIG(pending, "tlsgroups", "", true, true);
+            }
             *tlschanged = 1;
         }
     }
