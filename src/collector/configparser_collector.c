@@ -601,7 +601,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
         return 0;
     }
 
-    if (parse_col_thread_count(&(glob->encoding_threads), "seqtrackerthreads",
+    if (parse_col_thread_count(&(glob->seqtracker_threads), "seqtrackerthreads",
             key, value, "sequence tracker", 1)) return 0;
     if (parse_col_thread_count(&(glob->encoding_threads), "encoderthreads",
             key, value, "encoder", 1)) return 0;
@@ -650,7 +650,13 @@ static int collector_parser(void *arg, yaml_document_t *doc,
     if (key->type == YAML_SCALAR_NODE &&
             value->type == YAML_SCALAR_NODE &&
             strcasecmp((char *)key->data.scalar.value, "tlsgroups") == 0) {
-        SET_CONFIG_STRING_OPTION(glob->sslconf.tlsgroups, value);
+
+        if (value->data.scalar.length > 0 &&
+                strcasecmp((char *)value->data.scalar.value, "default") != 0) {
+            SET_CONFIG_STRING_OPTION(glob->sslconf.tlsgroups, value);
+        } else {
+            glob->sslconf.tlsgroups = NULL;
+        }
         return 0;
     }
 
@@ -908,6 +914,21 @@ char *collector_config_to_json(collector_global_t *glob) {
                 json_object_new_string(glob->sharedinfo.intpointid));
     }
 
+    json_object_object_add(jobj, "seqtrackerthreads",
+            json_object_new_int(glob->seqtracker_threads));
+    json_object_object_add(jobj, "encoderthreads",
+            json_object_new_int(glob->encoding_threads));
+    json_object_object_add(jobj, "forwardingthreads",
+            json_object_new_int(glob->forwarding_threads));
+    json_object_object_add(jobj, "sipthreads",
+            json_object_new_int(glob->sip_threads));
+    json_object_object_add(jobj, "emailthreads",
+            json_object_new_int(glob->email_threads));
+    json_object_object_add(jobj, "gtpthreads",
+            json_object_new_int(glob->gtp_threads));
+    json_object_object_add(jobj, "sctpthreads",
+            json_object_new_int(glob->sctp_threads));
+
     medtgts = json_object_new_array();
 
     HASH_ITER(hh, glob->sharedinfo.known_mediators, kmed, ktmp) {
@@ -941,6 +962,11 @@ char *collector_config_to_json(collector_global_t *glob) {
         json_object_object_add(jobj, "etsitls", json_object_new_boolean(true));
     } else {
         json_object_object_add(jobj, "etsitls", json_object_new_boolean(false));
+    }
+
+    if (glob->sslconf.tlsgroups) {
+        json_object_object_add(jobj, "tlsgroups",
+                json_object_new_string(glob->sslconf.tlsgroups));
     }
 
     pthread_rwlock_unlock(&(glob->config_mutex));

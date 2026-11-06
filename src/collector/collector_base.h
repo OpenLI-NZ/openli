@@ -60,6 +60,7 @@
 #define MAX_ENCODED_RESULT_BATCH 10
 
 extern volatile sig_atomic_t collector_halt;
+extern volatile sig_atomic_t collector_restart;
 
 typedef struct sync_epoll {
     uint8_t fdtype;

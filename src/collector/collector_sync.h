@@ -51,6 +51,7 @@ typedef struct saved_udpsink_mapping {
 typedef struct colsync_data {
 
     sync_thread_global_t *glob;
+    collector_global_t *parent_global;
     collector_identity_t *info;
     pthread_rwlock_t *info_mutex;
     collector_sip_config_t *sipconfig;
@@ -146,6 +147,11 @@ int handle_identity_config_changes(collector_identity_t *ident,
 int handle_rmq_config_changes(openli_RMQ_config_t *rmqconf,
         openli_yaml_config_pending_updates_t *pending, char *json,
         int *changed);
+int handle_tls_config_changes(collector_global_t *glob,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *flagchanged, int *groupschanged);
+int handle_workerthread_config_changes(char *json, int *restart_confirmed,
+        openli_yaml_config_pending_updates_t *pending);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

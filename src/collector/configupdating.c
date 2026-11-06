@@ -232,3 +232,146 @@ sipconffail:
     json_tokener_free(tknr);
     return ret;
 }
+
+int handle_tls_config_changes(collector_global_t *glob,
+        openli_yaml_config_pending_updates_t *pending, char *json,
+        int *flagchanged, int *groupschanged) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    struct json_object *flag_json = NULL, *groups_json = NULL;
+    int ret = -1;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, json, strlen(json));
+
+    if (parsed == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse JSON configuration received from provisioner: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        goto tlsconffail;
+    }
+
+    if (json_object_object_get_ex(parsed, "tlsgroups", &groups_json)) {
+        const char *newgroups = NULL;
+
+        if (json_object_is_type(groups_json, json_type_string)) {
+            newgroups = json_object_get_string(groups_json);
+
+            if (newgroups[0] == '\0' || strcasecmp(newgroups, "default") == 0) {
+                newgroups = NULL;
+            }
+        } else if (json_object_is_type(groups_json, json_type_null)) {
+            newgroups = NULL;
+        }
+
+        if ((glob->sslconf.tlsgroups == NULL && newgroups != NULL) ||
+            (glob->sslconf.tlsgroups != NULL && newgroups == NULL) ||
+            (glob->sslconf.tlsgroups && newgroups &&
+                    strcmp(glob->sslconf.tlsgroups, newgroups) != 0)) {
+
+            if (glob->sslconf.tlsgroups) {
+                free(glob->sslconf.tlsgroups);
+                glob->sslconf.tlsgroups = NULL;
+            }
+
+            if (newgroups) {
+                glob->sslconf.tlsgroups = strdup((char *)newgroups);
+                UPDATE_SCALAR_CONFIG(pending, "tlsgroups",
+                        glob->sslconf.tlsgroups, true, true);
+            } else {
+                UPDATE_SCALAR_CONFIG(pending, "tlsgroups", "", true, true);
+            }
+            *groupschanged = 1;
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "etsitls", &flag_json) &&
+            json_object_is_type(flag_json, json_type_boolean)) {
+        bool newflag = json_object_get_boolean(flag_json);
+        if (newflag != (bool)glob->etsitls) {
+            glob->etsitls = newflag ? 1 : 0;
+            UPDATE_SCALAR_CONFIG(pending, "etsitls",
+                    GENERATE_CONFIG_BOOLEAN(glob->etsitls), false, true);
+            *flagchanged = 1;
+        }
+    }
+
+    ret = 0;
+tlsconffail:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
+}
+
+static void update_thread_count_param(struct json_object *parsed,
+        openli_yaml_config_pending_updates_t *pending, const char *key,
+        int minval, int *changed) {
+
+    struct json_object *valobj = NULL;
+    int c;
+    char buf[32];
+
+    if (json_object_object_get_ex(parsed, key, &valobj) &&
+            json_object_is_type(valobj, json_type_int)) {
+
+        c = json_object_get_int(valobj);
+        if (c >= minval) {
+            snprintf(buf, sizeof(buf), "%d", c);
+            UPDATE_SCALAR_CONFIG(pending, (char *)key, buf, false, true);
+            *changed = 1;
+        } else {
+            logger(LOG_INFO,
+                    "OpenLI: ignoring invalid thread count %d for '%s' (minimum is %d)",
+                    c, key, minval);
+        }
+    }
+}
+
+int handle_workerthread_config_changes(char *json, int *restart_confirmed,
+        openli_yaml_config_pending_updates_t *pending) {
+
+    struct json_tokener *tknr;
+    struct json_object *parsed = NULL;
+    int ret = -1, changed = 0;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, json, strlen(json));
+
+    *restart_confirmed = 0;
+
+    if (parsed == NULL) {
+        logger(LOG_INFO, "OpenLI: unable to parse JSON configuration received from provisioner: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        goto workerfail;
+    }
+
+    update_thread_count_param(parsed, pending, "forwardingthreads", 1,
+            &changed);
+    update_thread_count_param(parsed, pending, "encoderthreads", 1,
+            &changed);
+    update_thread_count_param(parsed, pending, "seqtrackerthreads", 1,
+            &changed);
+    update_thread_count_param(parsed, pending, "sipthreads", 1,
+            &changed);
+    update_thread_count_param(parsed, pending, "emailthreads", 0,
+            &changed);
+    update_thread_count_param(parsed, pending, "sctpthreads", 0,
+            &changed);
+    update_thread_count_param(parsed, pending, "gtpthreads", 0,
+            &changed);
+
+    if (changed) {
+        *restart_confirmed = 1;
+    }
+
+    ret = 0;
+
+workerfail:
+    if (parsed) {
+        json_object_put(parsed);
+    }
+    json_tokener_free(tknr);
+    return ret;
+}

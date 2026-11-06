@@ -60,6 +60,7 @@
 volatile int reload_config = 0;
 volatile int config_write_required = 0;
 volatile sig_atomic_t collector_halt = 0;
+volatile sig_atomic_t collector_restart = 0;
 volatile int purge_session_flag = 0;
 volatile int rmq_status_changed = 0;
 
@@ -3288,6 +3289,12 @@ static void *start_ip_sync_thread(void *params) {
 
             pthread_mutex_unlock(&(glob->configupdate_mutex));
 
+            if (collector_restart) {
+                logger(LOG_INFO, "OpenLI: a configuration update requires the collector to restart. Preparing to restart with new configuration...");
+                collector_halt = 1;
+                break;
+            }
+
             jsonconfig = collector_config_to_json(glob);
             pthread_rwlock_wrlock(&glob->config_mutex);
             if (glob->sharedinfo.jsonconfig) {
@@ -3439,6 +3446,9 @@ int main(int argc, char *argv[]) {
     colinput_t *inp, *tmp;
     char name[1024];
     x_input_t *xinp, *xtmp;
+    static char **saved_argv;
+
+    saved_argv = argv;
 
     collector_halt = 0;
     todaemon = 0;
@@ -3865,6 +3875,14 @@ int main(int argc, char *argv[]) {
 
     if (todaemon && pidfile) {
         remove_pidfile(pidfile);
+    }
+
+    if (collector_restart) {
+        logger(LOG_INFO, "OpenLI: restarting collector to apply new configuration");
+        execv(saved_argv[0], saved_argv);
+        logger(LOG_ERR, "OpenLI: collector failed to restart: %s",
+                strerror(errno));
+        return 1;
     }
 
     return 0;

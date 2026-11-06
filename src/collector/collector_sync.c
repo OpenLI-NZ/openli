@@ -58,6 +58,7 @@ collector_sync_t *init_sync_data(collector_global_t *glob) {
 			malloc(sizeof(collector_sync_t));
 
     sync->glob = &(glob->syncip);
+    sync->parent_global = glob;
     sync->allusers = NULL;
     sync->x2x3_queues = NULL;
     sync->ipintercepts = NULL;
@@ -622,7 +623,8 @@ static int update_collector_global_config(collector_sync_t *sync,
         uint8_t *provmsg, uint16_t msglen) {
 
     char *newconfig = NULL;
-    int rmqchanged = 0;
+    int rmqchanged = 0, tlschanged = 0, tlsgroupchanged = 0, i;
+    int to_restart = 0;
 
     if (decode_updated_component_configuration(provmsg, msglen,
             &newconfig) < 0) {
@@ -650,13 +652,69 @@ static int update_collector_global_config(collector_sync_t *sync,
     handle_identity_config_changes(sync->info, &(sync->glob->configupdates),
             newconfig);
 
+    handle_tls_config_changes(sync->parent_global, &(sync->glob->configupdates),
+            newconfig, &tlschanged, &tlsgroupchanged);
+
     handle_rmq_config_changes(sync->rmqconfig, &(sync->glob->configupdates),
             newconfig, &rmqchanged);
     pthread_rwlock_unlock(sync->info_mutex);
 
+    handle_workerthread_config_changes(newconfig, &to_restart,
+            &(sync->glob->configupdates));
+
+    if (to_restart) {
+        collector_restart = 1;
+    }
+
     __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
 
+    if (tlsgroupchanged) {
+        x_input_t *xinp, *xtmp;
+        /* Need to re-create the SSL context to include the new groups list */
+        if (sync->parent_global->sslconf.ctx) {
+            SSL_CTX_free(sync->parent_global->sslconf.ctx);
+            sync->parent_global->sslconf.ctx = NULL;
+        }
+        if (create_ssl_context(&(sync->parent_global->sslconf)) < 0) {
+            logger(LOG_ERR, "OpenLI: failed to re-create SSL context after provisioner updated our tlsgroups");
+        } else if (sync->parent_global->sslconf.tlsgroups) {
+            logger(LOG_INFO, "OpenLI: re-created SSL context with updated tlsgroups (%s)", sync->parent_global->sslconf.tlsgroups);
+        } else {
+            logger(LOG_INFO, "OpenLI: re-created SSL context with default tlsgroups");
+        }
+
+        /* Make sure the xinputs use the new TLS context as well */
+        pthread_rwlock_wrlock(sync->xinput_mutex);
+        HASH_ITER(hh, *(sync->glob_xinputs), xinp, xtmp) {
+            pthread_mutex_lock(&(xinp->sslmutex));
+            xinp->ssl_ctx = sync->parent_global->sslconf.ctx;
+            xinp->ssl_ctx_bad = 0;
+            pthread_mutex_unlock(&(xinp->sslmutex));
+        }
+        pthread_rwlock_unlock(sync->xinput_mutex);
+    }
     pthread_mutex_unlock(sync->glob->configupdate_mutex);
+
+    if (tlschanged || tlsgroupchanged) {
+        logger(LOG_INFO, "TLS configuration updated by provisioner -- updating forwarders and reconnecting mediators");
+
+        for (i = 0; i < sync->parent_global->forwarding_threads; i++) {
+            pthread_mutex_lock(&(sync->parent_global->forwarders[i].sslmutex));
+            sync->parent_global->forwarders[i].tlsrequired =
+                    sync->parent_global->etsitls;
+            if (sync->parent_global->sslconf.ctx &&
+                    sync->parent_global->etsitls) {
+                sync->parent_global->forwarders[i].ctx =
+                        sync->parent_global->sslconf.ctx;
+            } else {
+                sync->parent_global->forwarders[i].ctx = NULL;
+            }
+
+            pthread_mutex_unlock(&(sync->parent_global->forwarders[i].sslmutex));
+        }
+        sync_reconnect_all_mediators(sync);
+    }
+
     if (rmqchanged) {
         logger(LOG_INFO,
                 "OpenLI: RMQ buffering on collectors %s by provisioner config update",
