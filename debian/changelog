@@ -1,3 +1,35 @@
+openli (1.1.24-1) unstable; urgency=medium
+
+  * Collector: fixed bug where fragmented vendor mirrored packets were not
+    being reassembled prior to interception, resulting in truncated
+    payload being delivered via the OpenLI handovers.
+  * Debian: fix packaging bug where the collector package was not requiring
+    tcmalloc as an explicit dependency.
+  * REST API: GET responses for the collectors and mediators endpoints now
+    include a lot more detail about the current configuration and state
+    of each component, including the status of their various external
+    connections (e.g. handovers, RMQ sockets, and inter-component
+    communication channels).
+  * REST API: API user accounts may not have one of three roles: admin,
+    system, and intercepts. Certain API actions are now restricted to
+    particular roles, i.e. "risky" actions that may disrupt ongoing
+    intercepts are now limited to users with the "admin" role.
+  * REST API: added ability to toggle whether a collector uses RMQ for
+    forwarding via the REST API.
+  * REST API: added ability to toggle whether a collector or mediator
+    uses TLS for their communication with each other (admin only).
+  * REST API: added ability to modify (most) mediator configuration.
+  * REST API: added ability to modify config options relating to email
+    interception (session timeouts, default domain, etc).
+  * REST API: added ability to modify configuration options for collector
+    inputs (e.g. thread counts, filters, hasher) -- admin only.
+  * REST API: added ability to modify the number of worker threads of all
+    types on a collector (forwarding threads, SIP workers, etc.) -- admin
+    only. Note that changing these will restart the collector process, so
+    use with caution.
+
+ -- Shane Alcock <salcock@searchlight.nz>  Mon, 16 Oct 2026 10:48:44 +1300
+
 openli (1.1.23-1) unstable; urgency=medium
 
   * Intercepts are now keyed by (LIID, authCC) rather than just LIID, to
