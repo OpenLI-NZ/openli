@@ -690,7 +690,7 @@ static inline void halt_listening_socket(mediator_state_t *currstate) {
 static int receive_config_update(mediator_state_t *state, uint8_t *msgbody,
         uint16_t msglen) {
 
-    char *newconfig;
+    char *newconfig = NULL;
     int rmqchanged = 0, listenchanged = 0, opidchanged = 0, pcapchanged = 0;
     int tlschanged = 0;
 
