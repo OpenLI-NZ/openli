@@ -436,6 +436,7 @@ Clear_Patricia (patricia_tree_t *patricia, patricia_cleanup_fn_t func)
                 Xrn = (patricia_node_t *) 0;
             }
         }
+        patricia->head = NULL;
     }
     assert (patricia->num_active_node == 0);
     /* Delete (patricia); */
