@@ -3383,6 +3383,7 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
 
     if (sockfd == -1) {
         sync->instruct_log = 0;
+        sync->instruct_fail = 1;
         return 0;
     }
 
@@ -3411,10 +3412,8 @@ int sync_connect_provisioner(collector_sync_t *sync, SSL_CTX *ctx) {
             SSL_free(sync->ssl);
             sync->ssl = NULL;
             sync->instruct_fail = 1;
-            /* Our SSL configuration is probably bad, so retrying is not going
-             * to help?
-             */
-            return -1;
+            close(sockfd);
+            return 0;
         }
 
         logger(LOG_DEBUG, "OpenLI: SSL Handshake to provisioner finished");
@@ -4173,11 +4172,7 @@ int sync_thread_main(collector_sync_t *sync) {
             sync->hellosreceived >= sync->glob->total_col_threads) {
         if ((rc = recv_from_provisioner(sync)) <= 0) {
             sync_disconnect_provisioner(sync, 0);
-            if (rc == 0 || rc == -1) {
-                return 0;
-            } else {
-                return -1;
-            }
+            return 0;
         }
     }
 

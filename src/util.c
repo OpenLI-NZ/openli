@@ -309,8 +309,11 @@ int connect_socket(char *ipstr, char *portstr, uint8_t isretry,
     hints.ai_socktype = SOCK_STREAM;
 
     if ((x = getaddrinfo(ipstr, portstr, &hints, &res)) != 0) {
-        logger(LOG_INFO, "OpenLI: Error while trying to look up %s:%s -- %s.",
-                ipstr, portstr, gai_strerror(x));
+        if (!isretry) {
+            logger(LOG_INFO,
+                    "OpenLI: Error while trying to look up %s:%s -- %s.",
+                    ipstr, portstr, gai_strerror(x));
+        }
         return -1;
     }
 

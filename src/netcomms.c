@@ -2025,6 +2025,11 @@ int transmit_net_buffer(net_buffer_t *nb, openli_proto_msgtype_t *err) {
                 /* Non-blocking TLS write is pending */
                 return 1;
             }
+            if (sslr == SSL_ERROR_ZERO_RETURN || (errno == 0 &&
+                    sslr == SSL_ERROR_SYSCALL)) {
+                *err = OPENLI_PROTO_PEER_DISCONNECTED;
+                return -1;
+            }
             *err = OPENLI_PROTO_SEND_ERROR;
             return -1;
         }
@@ -3446,9 +3451,16 @@ openli_proto_msgtype_t receive_net_buffer(net_buffer_t *nb, uint8_t **msgbody,
             if (sslr == SSL_ERROR_WANT_READ || sslr == SSL_ERROR_WANT_WRITE) {
                 return OPENLI_PROTO_NO_MESSAGE;
             } else if (sslr == SSL_ERROR_ZERO_RETURN ||
-                    (sslr == SSL_ERROR_SYSCALL && ret == 0)) {
+                    (sslr == SSL_ERROR_SYSCALL && (errno == 0 || ret == 0))) {
                 return OPENLI_PROTO_PEER_DISCONNECTED;
             }
+#ifdef SSL_R_UNEXPECTED_EOF_WHILE_READING
+            if (sslr == SSL_ERROR_SSL &&
+                    ERR_GET_REASON(ERR_peek_last_error()) ==
+                    SSL_R_UNEXPECTED_EOF_WHILE_READING) {
+                return OPENLI_PROTO_PEER_DISCONNECTED;
+            }
+#endif
             return OPENLI_PROTO_RECV_ERROR;
         }
 
