@@ -2839,7 +2839,7 @@ static void init_collector_global(collector_global_t *glob) {
     glob->emailconf.listenaddr = NULL;
     glob->emailconf.authpassword = NULL;
 
-    glob->etsitls = 1;
+    glob->etsitls = 255;
     glob->sipconfig.ignore_sdpo_matches = 0;
     glob->sipconfig.ignore_sessionid_matches = 0;
     glob->sipconfig.use_sessiondir = 0;
@@ -2954,6 +2954,19 @@ static collector_global_t *parse_global_config(char *configfile) {
         }
     }
 
+    if (create_ssl_context(&(glob->sslconf)) < 0) {
+        return NULL;
+    }
+
+    if (glob->etsitls == 255) {
+        // default to enabled if valid certs are present
+        if (glob->sslconf.ctx == NULL) {
+            glob->etsitls = 0;
+        } else {
+            glob->etsitls = 1;
+        }
+    }
+
     jsonconfig = collector_config_to_json(glob);
     pthread_rwlock_wrlock(&glob->config_mutex);
     glob->sharedinfo.jsonconfig = jsonconfig;
@@ -3038,10 +3051,6 @@ static collector_global_t *parse_global_config(char *configfile) {
     logger(LOG_DEBUG, "OpenLI: session idle timeout for SMTP sessions: %u minutes", glob->email_timeouts.smtp);
     logger(LOG_DEBUG, "OpenLI: session idle timeout for IMAP sessions: %u minutes", glob->email_timeouts.imap);
     logger(LOG_DEBUG, "OpenLI: session idle timeout for POP3 sessions: %u minutes", glob->email_timeouts.pop3);
-
-    if (create_ssl_context(&(glob->sslconf)) < 0) {
-        return NULL;
-    }
 
     if (glob->sharedinfo.cinstatedb_file == NULL) {
         glob->sharedinfo.cinstatedb_file = strdup("/var/lib/openli/cinstate.db");
@@ -3150,6 +3159,10 @@ static int reload_collector_config(collector_global_t *glob,
     if (create_ssl_context(&(newstate.sslconf)) < 0) {
         ret = -1;
         goto endreload;
+    }
+
+    if (newstate.etsitls == 255) {
+        newstate.etsitls = (newstate.sslconf.ctx != NULL) ? 1 : 0;
     }
 
     tlschanged = reload_ssl_config(&(glob->sslconf), &(newstate.sslconf));

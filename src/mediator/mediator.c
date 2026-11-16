@@ -213,7 +213,7 @@ static int init_mediator_config(mediator_state_t *state,
     state->mediatorid = 0;
     state->listenaddr = NULL;
     state->listenport = NULL;
-    state->etsitls = 1;
+    state->etsitls = 255;
 
     state->sslconf.certfile = NULL;
     state->sslconf.keyfile = NULL;
@@ -302,6 +302,15 @@ static int init_med_state(mediator_state_t *state, char *configfile) {
     if (create_ssl_context(&(state->sslconf)) < 0) {
         return -1;
     }
+
+    if (state->etsitls == 255) {
+        if (state->sslconf.ctx == NULL) {
+            state->etsitls = 0;
+        } else {
+            state->etsitls = 1;
+        }
+    }
+
     /* Initialise state and config for the LEA send threads */
     state->agency_threads.threads = NULL;
     state->agency_threads.next_handover_id = 0;
@@ -1431,6 +1440,10 @@ static int reload_mediator_config(mediator_state_t *currstate) {
     if (create_ssl_context(&(newstate.sslconf)) < 0) {
         clear_med_config(&newstate);
         return -1;
+    }
+
+    if (newstate.etsitls == 255) {
+        newstate.etsitls = (newstate.sslconf.ctx != NULL) ? 1 : 0;
     }
 
     lock_med_collector_config(&(currstate->collector_threads.config));
