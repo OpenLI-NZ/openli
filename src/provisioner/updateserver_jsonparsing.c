@@ -1313,7 +1313,6 @@ int remove_vendormirror(update_con_info_t *cinfo, provision_state_t *state,
         goto endremove;
     }
 
-    memset(&cs, 0, sizeof(coreserver_t));
     cs.servertype = vtype;
     cs.ipstr = ipaddr;
     cs.portstr = portstr;
