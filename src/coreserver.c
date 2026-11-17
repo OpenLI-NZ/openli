@@ -52,6 +52,10 @@ const char *coreserver_type_to_string(uint8_t cstype) {
             return "GTP";
         case OPENLI_CORE_SERVER_ALUMIRROR:
             return "ALU-Mirror";
+        case OPENLI_CORE_SERVER_JMIRROR:
+            return "JMirror";
+        case OPENLI_CORE_SERVER_CISCOMIRROR:
+            return "Cisco-Mirror";
     }
     return "Unknown";
 }

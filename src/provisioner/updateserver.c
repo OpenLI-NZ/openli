@@ -321,6 +321,7 @@ static int check_endpoint_authorization(update_con_info_t *cinfo) {
         case TARGET_MEDIATOR:
         case TARGET_UDPSINK:
         case TARGET_X2X3LISTENER:
+        case TARGET_VENDORMIRROR:
             if (!(cinfo->authcaps & (OPENLI_PROV_CAP_SYSTEM | OPENLI_PROV_CAP_ORCHESTRATION))) {
                 return 0;
             }
@@ -418,6 +419,9 @@ static int update_configuration_delete(update_con_info_t *cinfo,
             break;
         case TARGET_UDPSINK:
             ret = remove_collector_udp_sink(cinfo, state, target);
+            break;
+        case TARGET_VENDORMIRROR:
+            ret = remove_vendormirror(cinfo, state, target);
             break;
 
         case TARGET_MEDIATOR:
@@ -614,6 +618,11 @@ static int update_configuration_post(update_con_info_t *cinfo,
         case TARGET_UDPSINK:
             if (strcmp(method, "POST") == 0) {
                 ret = add_new_collector_udp_sink(cinfo, state);
+            }
+            break;
+        case TARGET_VENDORMIRROR:
+            if (strcmp(method, "POST") == 0) {
+                ret = add_new_vendormirror(cinfo, state);
             }
             break;
     }
@@ -896,6 +905,9 @@ MHD_RESULT handle_update_request(void *cls, struct MHD_Connection *conn,
             cinfo->target = TARGET_OPTIONS;
         } else if (strncmp(url, "/ipccfilter", strlen("/ipccfilter")) == 0) {
             cinfo->target = TARGET_IPCCFILTER;
+        } else if (strncmp(url, "/vendormirror",
+                strlen("/vendormirror")) == 0) {
+            cinfo->target = TARGET_VENDORMIRROR;
         } else {
             free(cinfo);
             return MHD_NO;

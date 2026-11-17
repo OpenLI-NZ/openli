@@ -46,6 +46,8 @@ enum {
     OPENLI_CORE_SERVER_SMTP,
     OPENLI_CORE_SERVER_IMAP,
     OPENLI_CORE_SERVER_POP3,
+    OPENLI_CORE_SERVER_JMIRROR,
+    OPENLI_CORE_SERVER_CISCOMIRROR,
 };
 
 typedef struct packetinfo {
@@ -68,7 +70,7 @@ typedef struct coreserver {
     char *serverkey;
     uint8_t servertype;
     char *ipstr;
-    char *portstr;    // kinda deprecated, but need for backwards compat
+    char *portstr;
     char *lower_portstr;
     char *upper_portstr;
     struct addrinfo *info;

@@ -591,6 +591,10 @@ int announce_x2x3_listener_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
 int announce_x2x3_listener_removal_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port);
+int announce_vendormirror_to_collector(provision_state_t *state,
+        prov_collector_t *col, coreserver_t *cs);
+int announce_vendormirror_removal_from_collector(provision_state_t *state,
+        prov_collector_t *col, coreserver_t *cs);
 int announce_digest_config_to_collectors(provision_state_t *state,
         prov_agency_t *lea);
 void announce_ics_private_key_to_collectors(provision_state_t *state);

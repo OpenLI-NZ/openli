@@ -585,7 +585,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "jmirrors") == 0) {
         if (parse_core_server_list(&glob->jmirrors,
-                OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
+                OPENLI_CORE_SERVER_JMIRROR, doc, value) == -1) {
             return -1;
         }
         return 0;
@@ -595,7 +595,7 @@ static int collector_parser(void *arg, yaml_document_t *doc,
             value->type == YAML_SEQUENCE_NODE &&
             strcasecmp((char *)key->data.scalar.value, "ciscomirrors") == 0) {
         if (parse_core_server_list(&glob->ciscomirrors,
-                OPENLI_CORE_SERVER_ALUMIRROR, doc, value) == -1) {
+                OPENLI_CORE_SERVER_CISCOMIRROR, doc, value) == -1) {
             return -1;
         }
         return 0;
@@ -891,6 +891,28 @@ int parse_collector_config(char *configfile, collector_global_t *glob) {
     return 0;
 }
 
+static void add_coreserver_list_to_json(json_object *jobj, const char *key,
+        coreserver_t *cslist) {
+
+    json_object *jarr = json_object_new_array();
+    coreserver_t *cs, *tmp;
+
+    HASH_ITER(hh, cslist, cs, tmp) {
+        json_object *jcs = json_object_new_object();
+        if (cs->ipstr) {
+            json_object_object_add(jcs, "ip",
+                    json_object_new_string(cs->ipstr));
+        }
+        if (cs->portstr) {
+            json_object_object_add(jcs, "port",
+                    json_object_new_string(cs->portstr));
+        }
+        json_object_array_add(jarr, jcs);
+    }
+
+    json_object_object_add(jobj, key, jarr);
+}
+
 char *collector_config_to_json(collector_global_t *glob) {
 
     json_object *jobj = json_object_new_object();
@@ -971,6 +993,13 @@ char *collector_config_to_json(collector_global_t *glob) {
         json_object_object_add(jobj, "tlsgroups",
                 json_object_new_string(glob->sslconf.tlsgroups));
     }
+
+    add_coreserver_list_to_json(jobj, "alumirrors", glob->alumirrors);
+    add_coreserver_list_to_json(jobj, "jmirrors", glob->jmirrors);
+    add_coreserver_list_to_json(jobj, "ciscomirrors", glob->ciscomirrors);
+
+    json_object_object_add(jobj, "cisconoradius",
+            json_object_new_boolean(glob->sharedinfo.cisco_noradius));
 
     inputs = json_object_new_array();
     HASH_ITER(hh, glob->inputs, inp, inptmp) {

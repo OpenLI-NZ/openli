@@ -665,6 +665,12 @@ void handle_push_coreserver(colthread_local_t *loc, coreserver_t *cs) {
         case OPENLI_CORE_SERVER_GTP:
             servlist = &(loc->gtpservers);
             break;
+        case OPENLI_CORE_SERVER_ALUMIRROR:
+        case OPENLI_CORE_SERVER_JMIRROR:
+        case OPENLI_CORE_SERVER_CISCOMIRROR:
+            update_coreserver_fast_filter(loc, cs, 1);
+            free_single_coreserver(cs);
+            return;
         default:
             logger(LOG_INFO,
                     "OpenLI: unexpected core server type received by collector thread: %d",
@@ -710,6 +716,12 @@ void handle_remove_coreserver(colthread_local_t *loc, coreserver_t *cs) {
         case OPENLI_CORE_SERVER_GTP:
             servlist = &(loc->gtpservers);
             break;
+        case OPENLI_CORE_SERVER_ALUMIRROR:
+        case OPENLI_CORE_SERVER_JMIRROR:
+        case OPENLI_CORE_SERVER_CISCOMIRROR:
+            remove_coreserver_fast_filter(loc, cs, 1);
+            free_single_coreserver(cs);
+            return;
         default:
             logger(LOG_INFO,
                     "OpenLI: unexpected core server type received by collector thread: %d",

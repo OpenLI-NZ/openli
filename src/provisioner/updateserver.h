@@ -100,6 +100,7 @@ enum {
     TARGET_X2X3LISTENER,
     TARGET_UDPSINK,
     TARGET_IPCCFILTER,
+    TARGET_VENDORMIRROR,
 };
 
 extern const char *update_success_page;
@@ -141,6 +142,8 @@ int remove_collector_udp_sink(update_con_info_t *cinfo,
         provision_state_t *state, const char *fullid);
 int remove_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state,
         const char *name, uint8_t cascade);
+int remove_vendormirror(update_con_info_t *cinfo, provision_state_t *state,
+        const char *fullid);
 
 int add_new_agency(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_defaultradius(update_con_info_t *cinfo, provision_state_t *state);
@@ -153,6 +156,7 @@ int add_new_x2x3_listener(update_con_info_t *cinfo, provision_state_t *state);
 int add_new_collector_udp_sink(update_con_info_t *cinfo,
         provision_state_t *state);
 int add_new_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state);
+int add_new_vendormirror(update_con_info_t *cinfo, provision_state_t *state);
 
 int modify_agency(update_con_info_t *cinfo, provision_state_t *state);
 int modify_ipintercept(update_con_info_t *cinfo, provision_state_t *state);

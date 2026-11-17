@@ -156,6 +156,8 @@ int handle_input_config_changes(collector_global_t *glob,
         openli_yaml_config_pending_updates_t *pending, char *json);
 int handle_workerthread_config_changes(char *json, int *restart_confirmed,
         openli_yaml_config_pending_updates_t *pending);
+int handle_vendormirror_config_change(collector_global_t *glob,
+        sync_thread_global_t *syncglob, coreserver_t *cs, uint8_t removal);
 #endif
 
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

@@ -283,7 +283,9 @@ void remove_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,
     coreserver_fast_filter_v4_t *fast;
 
     if (cs->info == NULL) {
-        return;
+        if (prepare_coreserver(cs) < 0) {
+            return;
+        }
     }
 
     if (cs->info->ai_family == AF_INET) {

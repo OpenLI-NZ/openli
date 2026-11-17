@@ -1891,6 +1891,7 @@ static int remove_mediator(collector_sync_t *sync, uint8_t *provmsg,
 static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
     coreserver_t *cs, *found;
+    int addedvm;
 
     cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
 
@@ -1902,20 +1903,34 @@ static int forward_new_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
-            found);
-    if (found) {
-        /* Already in the core server list? */
-        found->awaitingconfirm = 0;
+    if (cs->servertype == OPENLI_CORE_SERVER_ALUMIRROR ||
+            cs->servertype == OPENLI_CORE_SERVER_JMIRROR ||
+            cs->servertype == OPENLI_CORE_SERVER_CISCOMIRROR) {
+        addedvm = handle_vendormirror_config_change(sync->parent_global,
+                sync->glob, cs, 0);
+        if (addedvm) {
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
+            logger(LOG_INFO,
+                    "OpenLI: collector has added %s to its %s list.",
+                    cs->serverkey, coreserver_type_to_string(cs->servertype));
+        }
         free_single_coreserver(cs);
     } else {
-        /* New core server, pass on to all collector threads */
-        HASH_ADD_KEYPTR(hh, sync->coreservers, cs->serverkey,
-                strlen(cs->serverkey), cs);
-        push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
-        logger(LOG_INFO,
-                "OpenLI: collector has added %s to its %s core server list.",
-                cs->serverkey, coreserver_type_to_string(cs->servertype));
+        HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
+                found);
+        if (found) {
+            /* Already in the core server list? */
+            found->awaitingconfirm = 0;
+            free_single_coreserver(cs);
+        } else {
+            /* New core server, pass on to all collector threads */
+            HASH_ADD_KEYPTR(hh, sync->coreservers, cs->serverkey,
+                    strlen(cs->serverkey), cs);
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_CORESERVER);
+            logger(LOG_INFO,
+                    "OpenLI: collector has added %s to its %s core server list.",
+                    cs->serverkey, coreserver_type_to_string(cs->servertype));
+        }
     }
     return 1;
 }
@@ -1924,6 +1939,7 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         uint16_t msglen) {
 
     coreserver_t *cs, *found;
+    int removedvm;
 
     cs = (coreserver_t *)calloc(1, sizeof(coreserver_t));
     if (decode_coreserver_withdraw(provmsg, msglen, cs) == -1) {
@@ -1934,20 +1950,34 @@ static int forward_remove_coreserver(collector_sync_t *sync, uint8_t *provmsg,
         return -1;
     }
 
-    HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
-            found);
-    if (!found) {
-        if (sync->instruct_log) {
-            logger(LOG_INFO, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
-                    coreserver_type_to_string(cs->servertype), cs->serverkey);
+    if (cs->servertype == OPENLI_CORE_SERVER_ALUMIRROR ||
+            cs->servertype == OPENLI_CORE_SERVER_JMIRROR ||
+            cs->servertype == OPENLI_CORE_SERVER_CISCOMIRROR) {
+
+        removedvm = handle_vendormirror_config_change(sync->parent_global,
+                sync->glob, cs, 1);
+        if (removedvm) {
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+            logger(LOG_INFO,
+                    "OpenLI: collector has removed %s from its %s list.",
+                    cs->serverkey, coreserver_type_to_string(cs->servertype));
         }
     } else {
-        push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
-        logger(LOG_INFO,
-                "OpenLI: collector has removed %s from its %s core server list.",
-                cs->serverkey, coreserver_type_to_string(cs->servertype));
-        HASH_DELETE(hh, sync->coreservers, found);
-        free_single_coreserver(found);
+        HASH_FIND(hh, sync->coreservers, cs->serverkey, strlen(cs->serverkey),
+            found);
+        if (!found) {
+            if (sync->instruct_log) {
+                logger(LOG_INFO, "OpenLI sync: asked to remove %s server %s, but we don't have any record of it?",
+                        coreserver_type_to_string(cs->servertype), cs->serverkey);
+            }
+        } else {
+            push_coreserver_msg(sync, cs, OPENLI_PUSH_REMOVE_CORESERVER);
+            logger(LOG_INFO,
+                    "OpenLI: collector has removed %s from its %s core server list.",
+                    cs->serverkey, coreserver_type_to_string(cs->servertype));
+            HASH_DELETE(hh, sync->coreservers, found);
+            free_single_coreserver(found);
+        }
     }
     free_single_coreserver(cs);
     return 1;

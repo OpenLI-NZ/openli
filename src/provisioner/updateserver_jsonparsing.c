@@ -237,6 +237,26 @@ struct json_component_options {
         goto agencyerr; \
     }
 
+static inline uint8_t parse_vendormirror_type(const char *str) {
+    if (!str) {
+        return OPENLI_CORE_SERVER_UNKNOWN;
+    }
+
+    if (strcasecmp(str, "alu") == 0 || strcasecmp(str, "alumirror") == 0 ||
+            strcasecmp(str, "alu-mirror") == 0) {
+        return OPENLI_CORE_SERVER_ALUMIRROR;
+    }
+
+    if (strcasecmp(str, "cisco") == 0 || strcasecmp(str, "ciscomirror") == 0 ||
+            strcasecmp(str, "cisco-mirror") == 0) {
+        return OPENLI_CORE_SERVER_CISCOMIRROR;
+    }
+
+    if (strcasecmp(str, "juniper") == 0 || strcasecmp(str, "jmirror") == 0) {
+        return OPENLI_CORE_SERVER_JMIRROR;
+    }
+    return OPENLI_CORE_SERVER_UNKNOWN;
+}
 
 static inline void extract_agency_json_objects(struct json_agency *agjson,
         struct json_object *parsed) {
@@ -1235,6 +1255,70 @@ endremx2x3:
     return ret;
 }
 
+int remove_vendormirror(update_con_info_t *cinfo, provision_state_t *state,
+        const char *fullid) {
+
+    char *copy, *tok;
+    char *uuid, *vendorstr, *ipaddr, *portstr;
+    prov_collector_t *col;
+    uint8_t vtype;
+    coreserver_t cs;
+    int ret = 0;
+
+    copy = strdup(fullid);
+    tok = strtok(copy, ",");
+    if (tok == NULL) goto endremove;
+    uuid = tok;
+
+    tok = strtok(NULL, ",");
+    if (tok == NULL) goto endremove;
+    vendorstr = tok;
+
+    tok = strtok(NULL, ",");
+    if (tok == NULL) goto endremove;
+    ipaddr = tok;
+
+    tok = strtok(NULL, ",");
+    if (tok == NULL) goto endremove;
+    portstr = tok;
+
+    vtype = parse_vendormirror_type(vendorstr);
+    if (vtype == OPENLI_CORE_SERVER_UNKNOWN) {
+        logger(LOG_INFO, "OpenLI: unknown vendor type '%s' in vendor mirror removal request", vendorstr);
+        goto endremove;
+    }
+
+    memset(&cs, 0, sizeof(coreserver_t));
+    cs.servertype = vtype;
+    cs.ipstr = ipaddr;
+    cs.portstr = portstr;
+
+    if (construct_coreserver_key(&cs) == NULL) {
+        goto endremove;
+    }
+
+    HASH_FIND(hh, state->collectors, uuid, strlen(uuid), col);
+    if (!col) {
+        goto endremove;
+    }
+
+    if (announce_vendormirror_removal_from_collector(state, col, &cs) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to remove vendor mirror from collector: %s (%s). %s",
+                update_failure_page_start, uuid, cs.serverkey,
+                update_failure_page_end);
+        ret = -1;
+        goto endremove;
+    }
+
+    ret = 1;
+
+endremove:
+    if (cs.serverkey) free(cs.serverkey);
+    free(copy);
+    return ret;
+}
+
 int remove_coreserver(update_con_info_t *cinfo UNUSED, provision_state_t *state,
         const char *idstr, uint8_t srvtype) {
 
@@ -1525,6 +1609,102 @@ x2x3err:
     }
     json_tokener_free(tknr);
     return ret;
+}
+
+int add_new_vendormirror(update_con_info_t *cinfo, provision_state_t *state) {
+    struct json_object *parsed = NULL;
+    struct json_tokener *tknr;
+    prov_collector_t *thiscol = NULL;
+
+    struct json_object *ipaddr = NULL, *port = NULL, *uuid = NULL;
+    struct json_object *vendor = NULL;
+    char *ipaddr_str = NULL, *port_str = NULL, *uuid_str = NULL;
+    char *vendor_str = NULL;
+    uint8_t vtype = OPENLI_CORE_SERVER_UNKNOWN;
+    coreserver_t *cs = NULL;
+
+    int parseerr = 0;
+    int ret = -1;
+
+    tknr = json_tokener_new();
+    parsed = json_tokener_parse_ex(tknr, cinfo->jsonbuffer, cinfo->jsonlen);
+    if (parsed == NULL) {
+        logger(LOG_INFO,
+                "OpenLI: unable to parse JSON received over update socket: %s",
+                json_tokener_error_desc(json_tokener_get_error(tknr)));
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>OpenLI provisioner was unable to parse vendor mirror JSON received over update socket: %s. %s",
+                update_failure_page_start,
+                json_tokener_error_desc(json_tokener_get_error(tknr)),
+                update_failure_page_end);
+        goto mirrorerr;
+    }
+
+    json_object_object_get_ex(parsed, "uuid", &(uuid));
+    json_object_object_get_ex(parsed, "ipaddress", &(ipaddr));
+    json_object_object_get_ex(parsed, "port", &(port));
+    json_object_object_get_ex(parsed, "type", &(vendor));
+
+    EXTRACT_JSON_STRING_PARAM("ipaddress", "Vendor Mirror", ipaddr,
+            ipaddr_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("port", "Vendor Mirror", port,
+            port_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("uuid", "Vendor Mirror", uuid,
+            uuid_str, &parseerr, true);
+    EXTRACT_JSON_STRING_PARAM("type", "Vendor Mirror", vendor,
+            vendor_str, &parseerr, true);
+
+    if (parseerr) goto mirrorerr;
+
+    vtype = parse_vendormirror_type(vendor_str);
+    if (vtype == OPENLI_CORE_SERVER_UNKNOWN) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Unknown vendor mirror type '%s'. Supported types are: alumirror, jmirror, ciscomirror. %s",
+                update_failure_page_start, vendor_str, update_failure_page_end);
+        goto mirrorerr;
+    }
+
+    cs = calloc(1, sizeof(coreserver_t));
+    cs->servertype = vtype;
+    cs->ipstr = strdup(ipaddr_str);
+    cs->lower_portstr = strdup(port_str);
+    cs->upper_portstr = strdup(port_str);
+    cs->portstr = strdup(port_str);
+
+    if (construct_coreserver_key(cs) == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Unable to construct core server key for vendor mirror. %s",
+                update_failure_page_start, update_failure_page_end);
+        goto mirrorerr;
+    }
+
+    HASH_FIND(hh, state->collectors, uuid_str, strlen(uuid_str), thiscol);
+    if (!thiscol) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Unknown collector UUID: '%s'. %s",
+                update_failure_page_start, uuid_str, update_failure_page_end);
+        goto mirrorerr;
+    }
+
+    if (announce_vendormirror_to_collector(state, thiscol, cs) < 0) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Error when sending vendor mirror announcement to collector '%s'. %s",
+                update_failure_page_start, uuid_str, update_failure_page_end);
+        goto mirrorerr;
+    }
+
+    ret = 0;
+
+mirrorerr:
+    if (cs) free_single_coreserver(cs);
+    if (uuid_str) free(uuid_str);
+    if (port_str) free(port_str);
+    if (vendor_str) free(vendor_str);
+    if (ipaddr_str) free(ipaddr_str);
+    if (parsed) json_object_put(parsed);
+    json_tokener_free(tknr);
+    return ret;
+
 }
 
 int add_new_ipcc_filter(update_con_info_t *cinfo, provision_state_t *state) {

@@ -30,6 +30,7 @@
 
 #include "logger.h"
 #include "collector.h"
+#include "coreserver.h"
 
 static void stop_collector_input(collector_global_t *glob, colinput_t *inp) {
     char prefix[1024];
@@ -118,6 +119,7 @@ int handle_identity_config_changes(collector_identity_t *ident,
     struct json_tokener *tknr;
     struct json_object *parsed = NULL;
     struct json_object *operatorid_json, *intpointid_json, *netelemid_json;
+    struct json_object *cisconoradius_json;
     int ret = -1;
     const char *operatorid = NULL;
     const char *intpointid = NULL;
@@ -177,6 +179,24 @@ int handle_identity_config_changes(collector_identity_t *ident,
 
             UPDATE_SCALAR_CONFIG(pending, "interceptpointid",
                     ident->intpointid, true, true);
+        }
+    }
+
+    if (json_object_object_get_ex(parsed, "cisconoradius",
+                &cisconoradius_json)) {
+        uint8_t newval = 255;
+        if (json_object_is_type(cisconoradius_json, json_type_boolean)) {
+            newval = json_object_get_boolean(cisconoradius_json) ? 1 : 0;
+        } else if (json_object_is_type(cisconoradius_json, json_type_int)) {
+            newval = json_object_get_int(cisconoradius_json) ? 1 : 0;
+        }
+
+        if (newval != 255 && newval != ident->cisco_noradius) {
+            ident->cisco_noradius = newval;
+            UPDATE_SCALAR_CONFIG(pending, "cisconoradius",
+                    GENERATE_CONFIG_BOOLEAN(ident->cisco_noradius),
+                    false, true);
+            logger(LOG_INFO, "OpenLI: now %s RADIUS will be included in Cisco mirrored traffic", ident->cisco_noradius ? "not expecting" : "expecting");
         }
     }
 
@@ -1046,4 +1066,101 @@ inpfail:
     json_tokener_free(tknr);
     return ret;
 
+}
+
+int handle_vendormirror_config_change(collector_global_t *glob,
+        sync_thread_global_t *syncglob, coreserver_t *cs, uint8_t removal) {
+
+
+    coreserver_t **target_list = NULL, *found, *copy;
+    const char *yaml_key = NULL;
+    openli_yaml_config_object_t newobj;
+    openli_yaml_config_pending_updates_t *pending;
+    const char *pstr;
+
+    if (cs->servertype == OPENLI_CORE_SERVER_ALUMIRROR) {
+        target_list = &(glob->alumirrors);
+        yaml_key = "alumirrors";
+    } else if (cs->servertype == OPENLI_CORE_SERVER_JMIRROR) {
+        target_list = &(glob->jmirrors);
+        yaml_key = "jmirrors";
+    } else if (cs->servertype == OPENLI_CORE_SERVER_CISCOMIRROR) {
+        target_list = &(glob->ciscomirrors);
+        yaml_key = "ciscomirrors";
+    } else {
+        return 0;
+    }
+
+    if (!target_list) {
+        return 0;
+    }
+
+    pthread_rwlock_wrlock(&(glob->config_mutex));
+    HASH_FIND(hh, *target_list, cs->serverkey, strlen(cs->serverkey), found);
+
+    if (!removal) {
+        if (found) {
+            found->awaitingconfirm = 0;
+            pthread_rwlock_unlock(&(glob->config_mutex));
+            return 0;
+        }
+
+        copy = deep_copy_coreserver(cs);
+        prepare_coreserver(copy);
+        HASH_ADD_KEYPTR(hh, *target_list, copy->serverkey,
+                strlen(copy->serverkey), copy);
+    } else {
+        if (!found) {
+            pthread_rwlock_unlock(&(glob->config_mutex));
+            return 0;
+        }
+
+        HASH_DELETE(hh, *target_list, found);
+        free_single_coreserver(found);
+    }
+
+    pthread_rwlock_unlock(&(glob->config_mutex));
+
+    pending = &(syncglob->configupdates);
+
+    if (cs->portstr) {
+        pstr = strdup(cs->portstr);
+    } else if (cs->lower_portstr) {
+        pstr = strdup(cs->lower_portstr);
+    } else {
+        pstr = NULL;
+    }
+
+    newobj.fields = calloc(2, sizeof(openli_yaml_config_object_field_t));
+    newobj.fields[0].key = strdup("ip");
+    newobj.fields[0].value = strdup(cs->ipstr);
+    newobj.fields[0].is_string = false;
+
+    if (pstr) {
+        newobj.fields[1].key = strdup("port");
+        newobj.fields[1].value = (char *)pstr;
+        newobj.fields[1].is_string = false;
+        newobj.field_count = 2;
+    } else {
+        newobj.field_count = 1;
+    }
+
+    pthread_mutex_lock(syncglob->configupdate_mutex);
+    prepare_new_openli_yaml_config_update(pending);
+
+    if (removal) {
+        generate_array_remove_object_openli_yaml_config_update(
+                &(pending->updates[pending->update_count]),
+                yaml_key, &newobj);
+    } else {
+        generate_array_object_append_openli_yaml_config_update(
+                &(pending->updates[pending->update_count]),
+                yaml_key, &newobj, 1, true);
+    }
+    pending->update_count ++;
+    __atomic_store_n(&config_write_required, 1, __ATOMIC_RELEASE);
+    pthread_mutex_unlock(syncglob->configupdate_mutex);
+    destroy_openli_yaml_config_array_object(&newobj);
+
+    return 1;
 }

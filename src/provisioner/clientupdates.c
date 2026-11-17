@@ -322,6 +322,42 @@ int announce_x2x3_listener_to_collector(provision_state_t *state,
 
 }
 
+int announce_vendormirror_to_collector(provision_state_t *state,
+        prov_collector_t *col, coreserver_t *cs) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_coreserver_onto_net_buffer(sock->outgoing, cs, cs->servertype)
+            < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send new %s information to collector '%s'",
+                coreserver_type_to_string(cs->servertype), col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+}
+
+int announce_vendormirror_removal_from_collector(provision_state_t *state,
+        prov_collector_t *col, coreserver_t *cs) {
+
+    prov_sock_state_t *sock;
+    SEND_SINGLE_COLLECTOR_BEGIN
+    if (push_coreserver_withdraw_onto_net_buffer(sock->outgoing, cs,
+            cs->servertype) < 0) {
+        logger(LOG_INFO,
+                "OpenLI provisioner: unable to send %s withdrawal to collector '%s'",
+                coreserver_type_to_string(cs->servertype), col->identifier);
+        disconnect_provisioner_client(state->epoll_fd, col->client,
+                col->identifier);
+        return -1;
+    }
+    SEND_SINGLE_COLLECTOR_END
+    return 1;
+}
+
 int announce_udpsink_to_collector(provision_state_t *state,
         prov_collector_t *col, const char *ipaddr, const char *port) {
     prov_sock_state_t *sock;
