@@ -1263,28 +1263,53 @@ int remove_vendormirror(update_con_info_t *cinfo, provision_state_t *state,
     prov_collector_t *col;
     uint8_t vtype;
     coreserver_t cs;
-    int ret = 0;
+    int ret = -1;
+
+    memset(&cs, 0, sizeof(cs));
 
     copy = strdup(fullid);
     tok = strtok(copy, ",");
-    if (tok == NULL) goto endremove;
+    if (tok == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Vendor mirror deletion requires 4 comma-separated parameters: uuid,vendortype,ip,port. Received '%s'. %s",
+                update_failure_page_start, fullid, update_failure_page_end);
+        goto endremove;
+    }
     uuid = tok;
 
     tok = strtok(NULL, ",");
-    if (tok == NULL) goto endremove;
+    if (tok == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Vendor mirror deletion requires 4 comma-separated parameters: uuid,vendortype,ip,port. Received '%s'. %s",
+                update_failure_page_start, fullid, update_failure_page_end);
+        goto endremove;
+    }
     vendorstr = tok;
 
     tok = strtok(NULL, ",");
-    if (tok == NULL) goto endremove;
+    if (tok == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Vendor mirror deletion requires 4 comma-separated parameters: uuid,vendortype,ip,port. Received '%s'. %s",
+                update_failure_page_start, fullid, update_failure_page_end);
+        goto endremove;
+    }
     ipaddr = tok;
 
     tok = strtok(NULL, ",");
-    if (tok == NULL) goto endremove;
+    if (tok == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Vendor mirror deletion requires 4 comma-separated parameters: uuid,vendortype,ip,port. Received '%s'. %s",
+                update_failure_page_start, fullid, update_failure_page_end);
+        goto endremove;
+    }
     portstr = tok;
 
     vtype = parse_vendormirror_type(vendorstr);
     if (vtype == OPENLI_CORE_SERVER_UNKNOWN) {
         logger(LOG_INFO, "OpenLI: unknown vendor type '%s' in vendor mirror removal request", vendorstr);
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Unknown vendor type in vendor mirror removal request. Received '%s' -- supported types are alumirror, jmirror, ciscomirror. %s",
+                update_failure_page_start, vendorstr, update_failure_page_end);
         goto endremove;
     }
 
@@ -1294,11 +1319,17 @@ int remove_vendormirror(update_con_info_t *cinfo, provision_state_t *state,
     cs.portstr = portstr;
 
     if (construct_coreserver_key(&cs) == NULL) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Failed to construct core server key for vendor mirror. %s",
+                update_failure_page_start, update_failure_page_end);
         goto endremove;
     }
 
     HASH_FIND(hh, state->collectors, uuid, strlen(uuid), col);
     if (!col) {
+        snprintf(cinfo->answerstring, 4096,
+                "%s <p>Unknown or disconnected collector UUID: '%s'. %s",
+                update_failure_page_start, uuid, update_failure_page_end);
         goto endremove;
     }
 
@@ -1307,7 +1338,6 @@ int remove_vendormirror(update_con_info_t *cinfo, provision_state_t *state,
                 "%s <p>Failed to remove vendor mirror from collector: %s (%s). %s",
                 update_failure_page_start, uuid, cs.serverkey,
                 update_failure_page_end);
-        ret = -1;
         goto endremove;
     }
 
