@@ -3914,14 +3914,18 @@ int main(int argc, char *argv[]) {
 
     /* Start email ingesting daemon, if required */
     if (glob->emailconf.enabled) {
-        glob->emailsockfd = create_listener(glob->emailconf.listenaddr,
-                glob->emailconf.listenport, "email ingestor socket");
-        if (glob->emailsockfd == -1) {
-            logger(LOG_INFO, "OpenLI: WARNING unable to create listening socket for email ingestion service");
-        } else if (start_email_mhd_daemon(&(glob->emailconf),
-                    glob->emailsockfd, glob->email_ingestor, &glob->sslconf)
-                == NULL) {
-            logger(LOG_INFO, "OpenLI: WARNING unable to start email ingestion service");
+        if (glob->email_threads <= 0) {
+            logger(LOG_INFO, "OpenLI: WARNING email ingestion service has been configured but you have no email worker threads to process the ingested messages");
+        } else {
+            glob->emailsockfd = create_listener(glob->emailconf.listenaddr,
+                    glob->emailconf.listenport, "email ingestor socket");
+            if (glob->emailsockfd == -1) {
+                logger(LOG_INFO, "OpenLI: WARNING unable to create listening socket for email ingestion service");
+            } else if (start_email_mhd_daemon(&(glob->emailconf),
+                        glob->emailsockfd, glob->email_ingestor, &glob->sslconf)
+                    == NULL) {
+                logger(LOG_INFO, "OpenLI: WARNING unable to start email ingestion service");
+            }
         }
     }
 
