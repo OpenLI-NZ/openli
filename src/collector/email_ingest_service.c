@@ -250,15 +250,21 @@ static void email_request_completed(void *cls UNUSED,
         void **con_cls, enum MHD_RequestTerminationCode toe UNUSED) {
 
     email_connection_t *con_info = (email_connection_t *)(*con_cls);
+    uint32_t workerid = 0;
 
     if (con_info == NULL) {
         return;
     }
 
-    if (con_info->thismsg) {
+    if (con_info->thismsg && con_info->parentstate->email_worker_count > 0) {
         int r = 0;
         while (1) {
-            r = zmq_send(con_info->parentstate->zmq_publishers[0],
+            if (con_info->thismsg->session_id) {
+                workerid = hashlittle(con_info->thismsg->session_id,
+                        strlen(con_info->thismsg->session_id),
+                        0x4e616d65) % con_info->parentstate->email_worker_count;
+            }
+            r = zmq_send(con_info->parentstate->zmq_publishers[workerid],
                     &(con_info->thismsg), sizeof(openli_email_captured_t *),
                     0);
             if (r < 0 && errno == EAGAIN) {
@@ -273,6 +279,8 @@ static void email_request_completed(void *cls UNUSED,
 
             break;
         }
+    } else if (con_info->thismsg) {
+        free_captured_email(con_info->thismsg);
     }
 
     if (con_info->postproc) {
