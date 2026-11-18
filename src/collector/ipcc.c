@@ -578,4 +578,157 @@ openli_export_recv_t *create_ipcc_job_from_ipcontent(uint8_t *ipcontent,
     return msg;
 }
 
+void find_ipaddrs_from_l3(uint8_t *l3, uint32_t bodylen, uint8_t **srcaddr,
+        uint8_t **dstaddr, uint8_t *ipversion) {
+
+    uint8_t ihl;
+
+    *srcaddr = *dstaddr = NULL;
+    *ipversion = 0;
+
+    if (l3 == NULL || bodylen == 0) {
+        return;
+    }
+
+    *ipversion = l3[0] >> 4;
+    if (*ipversion == 4) {
+        ihl = (l3[0] & 0x0F) * 4;
+        if (bodylen >= 20) {
+            if (ihl >= 20 && bodylen >= ihl) {
+                *srcaddr = l3 + 12;
+                *dstaddr = l3 + 16;
+            }
+        }
+    } else if (*ipversion == 6) {
+        if (bodylen >= 40) {
+            *srcaddr = l3 + 8;
+            *dstaddr = l3 + 24;
+        }
+    }
+
+
+}
+
+uint8_t match_ipaddr_to_liid(colthread_local_t *loc,
+        const char *liid, uint8_t ipversion, const void *addr,
+        uint32_t *sessid, intercept_common_t *common) {
+
+    uint8_t ret = 0;
+    prefix_t pfx;
+    patricia_node_t *pnode;
+    ipsession_t *sess, *stmp;
+    liid_set_t **all, *sliid;
+    ipv4_target_t *tgt;
+
+    if (addr == NULL || liid == NULL) {
+        return 255;
+    }
+    if (common == NULL || common->liid_key == NULL) {
+        return 255;
+    }
+
+    memset(&pfx, 0, sizeof(pfx));
+
+    if (ipversion == 4) {
+        if (!loc->activeipv4intercepts && !loc->activestaticintercepts &&
+                !loc->activedynamicsubnets) {
+            return ret;
+        }
+
+        if (loc->activeipv4intercepts != NULL) {
+            HASH_FIND(hh, loc->activeipv4intercepts, addr, sizeof(uint32_t),
+                    tgt);
+            if (tgt) {
+                HASH_ITER(hh, tgt->intercepts, sess, stmp) {
+                    if (!sess->common.liid) {
+                        continue;
+                    }
+                    if (strcmp(sess->common.liid, liid) == 0) {
+                        *sessid = sess->cin;
+                        return 1;
+                    }
+                }
+            }
+        }
+
+        memcpy(&(pfx.add.sin), addr, 4);
+        pfx.bitlen = 32;
+        pfx.family = AF_INET;
+        pfx.ref_count = 0;
+
+        if (loc->activedynamicsubnets != NULL) {
+            pnode = patricia_search_best2(loc->dynamicv4ranges, &pfx, 1);
+            while (pnode) {
+                all = (liid_set_t **)(&(pnode->data));
+                HASH_FIND(hh, *all, common->liid_key, common->liid_key_len,
+                        sliid);
+                if (sliid) {
+                    *sessid = sliid->cin;
+                    return 1;
+                }
+                pnode = pnode->parent;
+            }
+        }
+
+        if (loc->activestaticintercepts) {
+            pnode = patricia_search_best2(loc->staticv4ranges, &pfx, 1);
+            while (pnode) {
+                all = (liid_set_t **)(&(pnode->data));
+                HASH_FIND(hh, *all, common->liid_key, common->liid_key_len,
+                        sliid);
+                if (sliid) {
+                    *sessid = sliid->cin;
+                    return 1;
+                }
+                pnode = pnode->parent;
+            }
+        }
+
+
+    } else if (ipversion == 6) {
+        if (!loc->activeipv6intercepts && !loc->activestaticintercepts) {
+            return ret;
+        }
+
+        memcpy(&(pfx.add.sin6), addr, 16);
+        pfx.bitlen = 128;
+        pfx.family = AF_INET6;
+        pfx.ref_count = 0;
+
+        if (loc->activeipv6intercepts != NULL) {
+            pnode = patricia_search_best2(loc->dynamicv6ranges, &pfx, 1);
+            while (pnode) {
+                all = (liid_set_t **)(&(pnode->data));
+                HASH_FIND(hh, *all, common->liid_key, common->liid_key_len,
+                        sliid);
+                if (sliid) {
+                    *sessid = sliid->cin;
+                    return 1;
+                }
+                pnode = pnode->parent;
+            }
+        }
+
+        if (loc->activestaticintercepts != NULL) {
+
+            pnode = patricia_search_best2(loc->staticv6ranges, &pfx, 1);
+            while (pnode) {
+                all = (liid_set_t **)(&(pnode->data));
+                HASH_FIND(hh, *all, common->liid_key, common->liid_key_len,
+                        sliid);
+                if (sliid) {
+                    *sessid = sliid->cin;
+                    return 1;
+                }
+                pnode = pnode->parent;
+            }
+        }
+
+    } else {
+        return 255;
+    }
+
+    return ret;
+}
+
 // vim: set sw=4 tabstop=4 softtabstop=4 expandtab :

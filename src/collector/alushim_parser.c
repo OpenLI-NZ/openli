@@ -166,9 +166,12 @@ int check_alu_intercept_payload(colthread_local_t *loc, uint8_t *payload,
     vendmirror_intercept_t *alu, *tmp;
     vendmirror_intercept_list_t *vmilist;
     uint32_t shimintid, cin, bodylen;
-    uint8_t direction;
+    uint8_t direction, ipversion = 0, *srcaddr, *dstaddr;
     openli_cc_prefix_filter_t *cc_exclude;
     void *l3;
+    uint32_t usingcin, radcin;
+
+    srcaddr = dstaddr = NULL;
 
     if ((cs = match_packet_to_coreserver(alusources, pinfo, 1, NULL)) == NULL) {
         return 0;
@@ -189,6 +192,8 @@ int check_alu_intercept_payload(colthread_local_t *loc, uint8_t *payload,
     if (vmilist == NULL) {
         return 0;
     }
+
+    find_ipaddrs_from_l3(l3, bodylen, &srcaddr, &dstaddr, &ipversion);
 
     /* Direction 0 = ingress (i.e. coming from the subscriber) */
 
@@ -211,10 +216,24 @@ int check_alu_intercept_payload(colthread_local_t *loc, uint8_t *payload,
             }
         }
 
+        usingcin = cin;
+        radcin = 0;
+        if (direction == ETSI_DIR_FROM_TARGET) {
+            match_ipaddr_to_liid(loc, alu->common.liid, ipversion,
+                    srcaddr, &radcin, &(alu->common));
+        } else if (direction == ETSI_DIR_TO_TARGET) {
+            match_ipaddr_to_liid(loc, alu->common.liid, ipversion,
+                    dstaddr, &radcin, &(alu->common));
+        }
+
+        if (radcin != 0) {
+            usingcin = radcin;
+        }
+
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[alu->common.seqtrackerid], &(alu->common),
-                pinfo->tv, cin, direction, l3, bodylen) == 0) {
+                pinfo->tv, usingcin, direction, l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 

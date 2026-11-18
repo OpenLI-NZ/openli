@@ -86,6 +86,9 @@ int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
     vendmirror_intercept_t *cept, *tmp;
     vendmirror_intercept_list_t *vmilist;
     openli_cc_prefix_filter_t *cc_exclude;
+    uint8_t ipversion, *srcaddr, *dstaddr;
+    uint8_t srcmatch, dstmatch, dir;
+    uint32_t srccin, dstcin, usingcin;
 
     l3 = decode_cisco_from_udp_payload(payload, rem, &cept_id, &bodylen);
     if (l3 == NULL) {
@@ -96,6 +99,8 @@ int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
     if (vmilist == NULL) {
         return 0;
     }
+
+    find_ipaddrs_from_l3(l3, bodylen, &srcaddr, &dstaddr, &ipversion);
 
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
@@ -113,11 +118,27 @@ int generate_cc_from_cisco_payload(colthread_local_t *loc, uint8_t *payload,
             }
         }
 
+        usingcin = srccin = dstcin = cept_id;
+        srcmatch = match_ipaddr_to_liid(loc, cept->common.liid, ipversion,
+                srcaddr, &srccin, &(cept->common));
+        dstmatch = match_ipaddr_to_liid(loc, cept->common.liid, ipversion,
+                dstaddr, &dstcin, &(cept->common));
+
+        if (srcmatch == 1 && dstmatch == 0) {
+            dir = ETSI_DIR_FROM_TARGET;
+            if (srccin != 0) usingcin = srccin;
+        } else if (dstmatch == 1 && srcmatch == 0) {
+            dir = ETSI_DIR_TO_TARGET;
+            if (dstcin != 0) usingcin = dstcin;
+        } else {
+            dir = ETSI_DIR_INDETERMINATE;
+        }
+
+
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
-                pinfo->tv, cept_id, ETSI_DIR_INDETERMINATE,
-                l3, bodylen) == 0) {
+                pinfo->tv, usingcin, dir, l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 

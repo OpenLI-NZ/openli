@@ -481,6 +481,11 @@ void deregister_sync_queues(sync_thread_global_t *glob,
 // implemented in ipcc.c
 openli_cc_prefix_filter_t *lookup_cc_prefix_filter(colthread_local_t *loc,
         char *liid);
+uint8_t match_ipaddr_to_liid(colthread_local_t *loc,
+        const char *liid, uint8_t ipversion, const void *addr,
+        uint32_t *sessid, intercept_common_t *common);
+void find_ipaddrs_from_l3(uint8_t *l3, uint32_t bodylen, uint8_t **srcaddr,
+        uint8_t **dstaddr, uint8_t *ipversion);
 
 // implemented in collector.c
 int update_coreserver_fast_filter(colthread_local_t *loc, coreserver_t *cs,

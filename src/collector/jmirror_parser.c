@@ -84,6 +84,10 @@ int check_jmirror_intercept_payload(colthread_local_t *loc, uint8_t *start,
     vendmirror_intercept_list_t *vmilist;
     uint8_t *l3;
     openli_cc_prefix_filter_t *cc_exclude;
+    uint8_t *srcaddr = NULL, *dstaddr = NULL;
+    uint8_t srcmatch, dstmatch, dir;
+    uint32_t srccin, dstcin, usingcin;
+    uint8_t ipversion = 0;
 
     if ((cs = match_packet_to_coreserver(jmirror_sources, pinfo, 1,
             NULL)) == NULL) {
@@ -92,7 +96,7 @@ int check_jmirror_intercept_payload(colthread_local_t *loc, uint8_t *start,
 
     l3 = decode_jmirror_from_udp_payload(start, rem, &cin, &cept_id,
             &bodylen);
-    if (l3 == NULL) {
+    if (l3 == NULL || bodylen == 0) {
         return 0;
     }
 
@@ -100,6 +104,8 @@ int check_jmirror_intercept_payload(colthread_local_t *loc, uint8_t *start,
     if (vmilist == NULL) {
         return 0;
     }
+
+    find_ipaddrs_from_l3(l3, bodylen, &srcaddr, &dstaddr, &ipversion);
 
     HASH_ITER(hh, vmilist->intercepts, cept, tmp) {
         if (pinfo->tv.tv_sec < cept->common.tostart_time) {
@@ -115,12 +121,27 @@ int check_jmirror_intercept_payload(colthread_local_t *loc, uint8_t *start,
                 continue;
             }
         }
+        usingcin = srccin = dstcin = cin;
+
+        srcmatch = match_ipaddr_to_liid(loc, cept->common.liid, ipversion,
+                srcaddr, &srccin, &(cept->common));
+        dstmatch = match_ipaddr_to_liid(loc, cept->common.liid, ipversion,
+                dstaddr, &dstcin, &(cept->common));
+
+        if (srcmatch == 1 && dstmatch == 0) {
+            dir = ETSI_DIR_FROM_TARGET;
+            if (srccin != 0) usingcin = srccin;
+        } else if (dstmatch == 1 && srcmatch == 0) {
+            dir = ETSI_DIR_TO_TARGET;
+            if (dstcin != 0) usingcin = dstcin;
+        } else {
+            dir = ETSI_DIR_INDETERMINATE;
+        }
 
         /* Create an appropriate IPCC and export it */
         if (push_vendor_mirrored_ipcc_job(
                 loc->zmq_pubsocks[cept->common.seqtrackerid], &(cept->common),
-                pinfo->tv, cin, ETSI_DIR_INDETERMINATE,
-                l3, bodylen) == 0) {
+                pinfo->tv, usingcin, dir, l3, bodylen) == 0) {
             /* for some reason, we failed to create or send the IPCC to
              * the sequencing thread? */
 
