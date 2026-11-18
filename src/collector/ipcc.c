@@ -307,8 +307,9 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
     prefix_t prefix;
     openli_export_recv_t *msg;
     ipv6_target_t *tgt;
-    ipsession_t *sess, *tmp;
+    ipsession_t *sess;
     openli_cc_prefix_filter_t *cc_exclude = NULL;
+    ipv6_target_key_t key;
 
     memset(&prefix, 0, sizeof(prefix_t));
     memcpy(&(prefix.add.sin6), &(cmp->sin6_addr), 16);
@@ -320,17 +321,22 @@ static void singlev6_conn_contents(struct sockaddr_in6 *cmp,
 
     while (pnode) {
         liid_set_t **all, *sliid, *tmp2;
+        memset(&key, 0, sizeof(key));
+        if (pnode->prefix) {
+            memcpy(key.address, &(pnode->prefix->add.sin6), 16);
+            key.prefixlen = pnode->prefix->bitlen;
+        }
+        HASH_FIND(hh, loc->activeipv6intercepts, &key, sizeof(key), tgt);
 
         all = (liid_set_t **)(&(pnode->data));
         HASH_ITER(hh, *all, sliid, tmp2) {
-            HASH_FIND(hh, loc->activeipv6intercepts, sliid->key, sliid->keylen,
-                    tgt);
             if (!tgt) {
                 logger(LOG_INFO,
                         "OpenLI: matched an IPv6 range for intercept %s but this intercept is not present in activeipv6intercepts?",
                         sliid->key);
             } else {
-                HASH_ITER(hh, tgt->intercepts, sess, tmp) {
+                HASH_FIND(hh, tgt->intercepts, sliid->key, sliid->keylen, sess);
+                if (sess) {
                     if (sess->common.tomediate ==
                             OPENLI_INTERCEPT_OUTPUTS_IRIONLY) {
                         continue;

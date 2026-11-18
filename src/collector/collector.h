@@ -194,10 +194,13 @@ typedef struct ipv4_target {
     UT_hash_handle hh;
 } ipv4_target_t;
 
-typedef struct ipv6_target {
+typedef struct ipv6_target_key {
     uint8_t address[16];
     uint8_t prefixlen;
-    char *prefixstr;
+} PACKED ipv6_target_key_t;
+
+typedef struct ipv6_target {
+    ipv6_target_key_t key;
     ipsession_t *intercepts;
 
     UT_hash_handle hh;

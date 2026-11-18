@@ -277,10 +277,29 @@ static int add_ipv4_subnet_intercept(colthread_local_t *loc, ipsession_t *sess)
     return 0;
 }
 
+static inline void mask_ipv6_prefix(uint8_t *addr, uint8_t prefixlen) {
+
+    int fullbytes = prefixlen / 8;
+    int rembits = prefixlen % 8;
+
+    if (fullbytes >= 16) {
+        return;
+    }
+
+    if (rembits > 0) {
+        addr[fullbytes] &= (uint8_t)(0xFF << (8 - rembits));
+        fullbytes ++;
+    }
+
+    memset(addr + fullbytes, 0, 16 - fullbytes);
+
+}
+
 static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
 
     struct sockaddr_in6 *sin6;
     ipv6_target_t *tgt;
+    ipv6_target_key_t key;
     ipsession_t *check;
     char prefixstr[100];
     char inet[INET6_ADDRSTRLEN];
@@ -304,19 +323,22 @@ static int add_ipv6_intercept(colthread_local_t *loc, ipsession_t *sess) {
         return -1;
     }
 
-    HASH_FIND(hh, loc->activeipv6intercepts, prefixstr, strlen(prefixstr), tgt);
+    memset(&key, 0, sizeof(key));
+    memcpy(key.address, sin6->sin6_addr.s6_addr, 16);
+    key.prefixlen = sess->prefixlen;
+    mask_ipv6_prefix(key.address, key.prefixlen);
+
+    HASH_FIND(hh, loc->activeipv6intercepts, &key, sizeof(key), tgt);
     if (tgt == NULL) {
         tgt = (ipv6_target_t *)malloc(sizeof(ipv6_target_t));
         if (!tgt) {
             logger(LOG_INFO, "OpenLI: ran out of memory while adding IPv6 intercept address.");
             return -1;
         }
-        memcpy(tgt->address, sin6->sin6_addr.s6_addr, 16);
-        tgt->prefixlen = sess->prefixlen;
-        tgt->prefixstr = strdup(prefixstr);
         tgt->intercepts = NULL;
-        HASH_ADD_KEYPTR(hh, loc->activeipv6intercepts, tgt->prefixstr,
-                strlen(tgt->prefixstr), tgt);
+        memcpy(&(tgt->key), &key, sizeof(key));
+        HASH_ADD_KEYPTR(hh, loc->activeipv6intercepts, &(tgt->key),
+                sizeof(tgt->key), tgt);
     }
 
     HASH_FIND(hh, tgt->intercepts, sess->streamkey, strlen(sess->streamkey),
@@ -414,6 +436,7 @@ static inline ipsession_t *find_ipv6_intercept(colthread_local_t *loc,
     struct sockaddr_in6 *sin6;
     ipsession_t *found;
     char inet[INET6_ADDRSTRLEN];
+    ipv6_target_key_t key;
 
     sin6 = (struct sockaddr_in6 *)(tofind->targetip);
     if (sin6 == NULL) {
@@ -430,7 +453,12 @@ static inline ipsession_t *find_ipv6_intercept(colthread_local_t *loc,
     snprintf(prefixstr, pfxstrlen, "%s/%u", inet, tofind->prefixlen);
     *v6 = NULL;
 
-    HASH_FIND(hh, loc->activeipv6intercepts, prefixstr, strlen(prefixstr), *v6);
+    memset(&key, 0, sizeof(key));
+    memcpy(key.address, sin6->sin6_addr.s6_addr, 16);
+    key.prefixlen = tofind->prefixlen;
+    mask_ipv6_prefix(key.address, key.prefixlen);
+
+    HASH_FIND(hh, loc->activeipv6intercepts, &key, sizeof(key), *v6);
     if ((*v6) == NULL) {
         return NULL;
     }
@@ -511,7 +539,6 @@ static int remove_ipv6_intercept(colthread_local_t *loc, ipsession_t *torem) {
 
     if (HASH_CNT(hh, v6->intercepts) == 0) {
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
-        free(v6->prefixstr);
         free(v6);
     }
 

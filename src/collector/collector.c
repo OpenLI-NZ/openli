@@ -369,7 +369,6 @@ static void purge_active_sessions(colthread_local_t *loc) {
     HASH_ITER(hh, loc->activeipv6intercepts, v6, tmp2) {
         free_all_ipsessions(&(v6->intercepts));
         HASH_DELETE(hh, loc->activeipv6intercepts, v6);
-        free(v6->prefixstr);
         free(v6);
     }
 
